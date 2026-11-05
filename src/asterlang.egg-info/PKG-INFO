@@ -1,0 +1,7 @@
+Metadata-Version: 2.4
+Name: asterlang
+Version: 0.0.1
+Summary: Aster
+Requires-Python: >=3.10
+License-File: LICENSE
+Dynamic: license-file
