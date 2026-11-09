@@ -1,0 +1,87 @@
+class Counter {
+    private int value = 0;
+
+    public fn increment() -> void {
+        self->value += 1;
+    }
+
+    public fn getValue() -> int {
+        return self->value;
+    }
+}
+
+Counter* counter = new Counter();
+counter->increment();
+#---
+class Person {
+    private str name;
+
+    constructor(str name) {
+        self->name = name;
+    }
+
+    public fn getName() -> str {
+        return self->name;
+    }
+}
+#---
+# 접근 제한자 (생략하면 private)
+class A {
+    public int a;
+    protected int b;
+    private int c;
+    internal int d;
+    int e;
+    int f = 3;
+}
+#---
+class Dog extends Animal implements Pet, Walker {}
+#---
+interface MyInterface {}
+interface Shape {
+    fn area() -> float;
+    public fn name() -> str;
+}
+#---
+# 프로퍼티: 선언과 접근자를 분리한다
+class Person {
+    private str _name;
+
+    public @property
+    str name;
+
+    getter name {
+        return self->_name;
+    }
+
+    setter name(str value) {
+        self->_name = value;
+    }
+}
+#---
+# 소프트 키워드는 다른 곳에서는 이름으로 쓸 수 있다
+class A {
+    int getter;
+    int setter = 1;
+    int property;
+}
+int constructor = 1;
+#---
+# 제네릭 클래스와 메서드 [D16]. 제약은 없다.
+class Box<T> extends Base<T> implements Holder<T> {
+    private T value;
+
+    constructor(T v) {
+        self->value = v;
+    }
+
+    public fn get() -> T {
+        return self->value;
+    }
+
+    public fn map<U>(U other) -> U {
+        return other;
+    }
+}
+Box<int>* b = new Box<int>(3);
+Box<Box<int>>* nested = new Box<Box<int>>(b);
