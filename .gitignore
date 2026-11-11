@@ -1,4 +1,3 @@
 .vscode
-OPEN_QUESTIONS.md
 .venv
-__pycache__
+dev
