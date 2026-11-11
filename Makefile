@@ -1,8 +1,6 @@
 CC ?= cc
 CFLAGS ?= -std=c11 -O2 -g -Wall -Wextra -IInclude
 LDLIBS ?= -lm
-# Windows Store의 python.exe 별칭은 make가 실행한 뒤 종료되지 않는다. py 런처를 기본으로 쓴다.
-PYTHON ?= py
 
 # MSYS make가 자식 프로세스에 TEMP를 넘기지 않아 gcc가 C:\WINDOWS에 임시 파일을 만들려다 실패한다.
 TMPDIR ?= /tmp
@@ -14,9 +12,13 @@ export TMP = $(TMPDIR)
 UNAME_S := $(shell uname -s 2>/dev/null)
 ifneq (,$(filter MINGW% MSYS% CYGWIN%,$(UNAME_S)))
 EXE = .exe
+# Windows Store의 python.exe 별칭은 make가 실행한 뒤 종료되지 않는다. py 런처를 기본으로 쓴다.
+PYTHON ?= py
 else
 EXE =
+PYTHON ?= python3
 endif
+BIN = aster$(EXE)
 PREFIX ?= $(HOME)/.local
 BINDIR ?= $(PREFIX)/bin
 
@@ -45,10 +47,10 @@ HEADERS = Include/internal/token.h \
           Include/internal/typecheck.h \
           Include/internal/pkg.h
 
-aster: $(SRCS) $(HEADERS)
+$(BIN): $(SRCS) $(HEADERS)
 	$(CC) $(CFLAGS) $(SRCS) -o $@ $(LDLIBS)
 
-check: aster
+check: $(BIN)
 	$(PYTHON) Tools/check_frontend.py
 	$(PYTHON) Tools/check_runtime.py
 
@@ -56,9 +58,9 @@ regen:
 	$(PYTHON) Tools/build/generate_token.py Grammar/Tokens Include/internal/token.h Parser/token.c
 	$(PYTHON) Parser/asdl_c.py Parser/Aster.asdl -H Include/internal/ast.h -C Python/Aster-ast.c
 
-install: aster
+install: $(BIN)
 	mkdir -p "$(DESTDIR)$(BINDIR)"
-	cp aster "$(DESTDIR)$(BINDIR)/aster$(EXE)"
+	cp $(BIN) "$(DESTDIR)$(BINDIR)/aster$(EXE)"
 	@echo "설치 완료: $(DESTDIR)$(BINDIR)/aster$(EXE)  (PATH에 $(BINDIR)을 추가하세요)"
 
 clean:

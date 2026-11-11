@@ -3316,6 +3316,7 @@ static char *read_stdin_line(int *eof)
 
 static RValue *inst_get(Interp *in, RValue *self, const char *name)
 {
+    (void)in;
     InstField *f;
     if (!self || self->kind != RV_OBJECT)
         return NULL;
@@ -3746,7 +3747,9 @@ void Module_AddExport(AstModule *module, Interp *in, const char *name)
 
 RValue *Module_GetExported(Interp *in, AstModule *module, const char *name)
 {
-    RValue **cell = Env_LookupCell(module->env, name);
+    RValue **cell;
+    (void)in;
+    cell = Env_LookupCell(module->env, name);
     size_t i;
     int explicitly_exported = module->nexports > 0;
     int public_name = name[0] != '_';

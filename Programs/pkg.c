@@ -22,13 +22,13 @@ typedef struct {
 static int file_exists(const char *path)
 {
     struct stat st;
-    return path && stat(path, &st) == 0 && (st.st_mode & S_IFMT) == S_IFREG;
+    return path && stat(path, &st) == 0 && S_ISREG(st.st_mode);
 }
 
 static int dir_exists(const char *path)
 {
     struct stat st;
-    return path && stat(path, &st) == 0 && (st.st_mode & S_IFMT) == S_IFDIR;
+    return path && stat(path, &st) == 0 && S_ISDIR(st.st_mode);
 }
 
 static char *xstrndup(Arena *arena, const char *s, size_t n)

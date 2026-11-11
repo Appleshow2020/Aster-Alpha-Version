@@ -13,6 +13,7 @@ Lib/test/test_run의 각 .ast를 실행해 표준 출력을 같은 이름의 .ou
 from __future__ import annotations
 
 import argparse
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -22,7 +23,8 @@ RUN_DIR = ROOT / "Lib/test/test_run"
 
 
 def find_binary() -> Path:
-    for name in ("aster.exe", "aster"):
+    names = ("aster.exe", "aster") if os.name == "nt" else ("aster", "aster.exe")
+    for name in names:
         candidate = ROOT / name
         if candidate.is_file():
             return candidate

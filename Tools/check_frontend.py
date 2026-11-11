@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import subprocess
+import os
 import sys
 from pathlib import Path
 
@@ -45,7 +46,8 @@ class Failure:
 
 
 def find_binary() -> Path:
-    for name in ("aster.exe", "aster"):
+    names = ("aster.exe", "aster") if os.name == "nt" else ("aster", "aster.exe")
+    for name in names:
         candidate = ROOT / name
         if candidate.is_file():
             return candidate

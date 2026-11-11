@@ -1,4 +1,5 @@
 .vscode
 .venv
 /build/
-aster.exe
+/aster
+/aster.exe

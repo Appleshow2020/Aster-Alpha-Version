@@ -11,7 +11,7 @@
 #include "internal/runtime.h"
 #include "internal/typecheck.h"
 
-#define ASTER_VERSION "0.3.0"
+#define ASTER_VERSION "Alpha 1.0.1"
 
 static char *read_stream(FILE *f, size_t *size)
 {
@@ -126,7 +126,7 @@ static int directory_exists(const char *path)
     struct stat st;
     if (!path || !path[0])
         return 0;
-    return stat(path, &st) == 0 && (st.st_mode & S_IFMT) == S_IFDIR;
+    return stat(path, &st) == 0 && S_ISDIR(st.st_mode);
 }
 
 static char *dir_of_file(const char *path, Arena *arena)
