@@ -10,108 +10,113 @@
 
 module Aster
 {
-    mod = Module(identifier* package, stmt* body)
-
-    stmt = FunctionDef(identifier name, identifier* type_params, param* params,
-                       ret returns, stmt* body)
-         | ClassDef(identifier name, identifier* type_params, typeref? base,
-                    typeref* interfaces, member* members)
-         | InterfaceDef(identifier name, signature* methods)
-         -- alias가 있으면 typedef struct, 없으면 plain struct
-         | StructDef(identifier tag, identifier? alias, struct_member* members)
-         | VarDecl(typeref ty, identifier name, initializer init)
-         | Assign(expr target, assign_op op, expr value)
-         -- orelse가 빈 리스트면 else 없음. else if는 orelse = [If(...)]
-         | If(expr test, stmt* body, stmt* orelse)
-         | While(expr test, stmt* body)
-         -- init: VarDecl 또는 Assign, step: Assign
-         | For(stmt init, expr test, stmt step, stmt* body)
-         | ForRange(typeref ty, identifier name, range_expr iter, stmt* body)
-         | Try(stmt* body, handler* handlers, stmt* finalbody)
-         | Return(expr? value)
-         -- exc_type가 None이면: value가 str이면 Exception, 예외 값이면 그 예외.
-         -- exc_type가 있으면 value는 str이어야 한다 (typecheck).
-         | Throw(expr value, identifier? exc_type)
-         | Break
-         | Continue
-         -- wildcard가 1이면 'import a.b.*;' 이다. (ASDL에는 bool이 없으므로 int를 쓴다.)
-         | Import(identifier* path, int wildcard)
-         -- name이 None이면 'from m import *;' 이다.
-         | ImportFrom(identifier* module, identifier? name)
-         | ExprStmt(expr value)
-         attributes (int lineno, int col_offset, int end_lineno, int end_col_offset)
+     mod = Module(identifier* package, stmt* body)
+ 
+     stmt = FunctionDef(identifier name, identifier* type_params, param* params,
+                        ret returns, stmt* body)
+          | ClassDef(identifier name, identifier* type_params, typeref? base,
+                     typeref* interfaces, member* members)
+          | InterfaceDef(identifier name, signature* methods)
+          -- alias가 있으면 typedef struct, 없으면 plain struct
+          | StructDef(identifier tag, identifier? alias, struct_member* members)
+          | VarDecl(typeref ty, identifier name, initializer init)
+          | Assign(expr target, assign_op op, expr value)
+          -- orelse가 빈 리스트면 else 없음. else if는 orelse = [If(...)]
+          | If(expr test, stmt* body, stmt* orelse)
+          | While(expr test, stmt* body)
+          -- init: VarDecl 또는 Assign, step: Assign
+          | For(stmt init, expr test, stmt step, stmt* body)
+          | ForRange(typeref ty, identifier name, range_expr iter, stmt* body)
+          | Try(stmt* body, handler* handlers, stmt* finalbody)
+          | Return(expr? value)
+          -- exc_type가 None이면: value가 str이면 Exception, 예외 값이면 그 예외.
+          -- exc_type가 있으면 value는 str이어야 한다 (typecheck).
+          | Throw(expr value, identifier? exc_type)
+          | Break
+          | Continue
+          -- wildcard가 1이면 'import a.b.*;' 이다. (ASDL에는 bool이 없으므로 int를 쓴다.)
+          | Import(identifier* path, int wildcard)
+          -- name이 None이면 'from m import *;' 이다.
+          | ImportFrom(identifier* module, identifier? name)
+          | ExprStmt(expr value)
+          attributes (int lineno, int col_offset, int end_lineno, int end_col_offset)
 
     -- params가 빈 리스트면 '() => ...' 형태이다.
-    expr = Lambda(lparam* params, ret returns, expr body)
-         | Pipe(expr value, expr func)
-         | Coalesce(expr left, expr right)
-         | BoolOp(boolop op, expr left, expr right)
-         | UnaryOp(unaryop op, expr operand)
-         | BinOp(expr left, operator op, expr right)
-         | Compare(expr left, cmpop op, expr right)
-         | Is(expr value, typeref ty)
-         | In(expr item, expr container)
-         | Cast(typeref ty, expr value)
-         | AddressOf(expr value)
-         | Deref(expr value)
-         | SizeOf(typeref ty)
-         | Call(expr func, expr* args)
-         -- 결과는 주소(Cls*)이다.
-         | New(identifier cls, typeref* type_args, expr* args)
-         | Attribute(expr value, identifier attr)
-         -- p->x
-         | PtrAttribute(expr value, identifier attr)
-         | Name(identifier id)
-         | Self
-         -- int, float, str, bool, None(null)
-         | Constant(constant value)
-         attributes (int lineno, int col_offset, int end_lineno, int end_col_offset)
+     expr = Lambda(lparam* params, ret returns, expr body)
+          | Pipe(expr value, expr func)
+          | Coalesce(expr left, expr right)
+          | BoolOp(boolop op, expr left, expr right)
+          | UnaryOp(unaryop op, expr operand)
+          | BinOp(expr left, operator op, expr right)
+          | Compare(expr left, cmpop op, expr right)
+          | Is(expr value, typeref ty)
+          | In(expr item, expr container)
+          | Cast(typeref ty, expr value)
+          | AddressOf(expr value)
+          | Deref(expr value)
+          | SizeOf(typeref ty)
+          | Call(expr func, expr* args)
+          -- 결과는 주소(Cls*)이다.
+          | New(identifier cls, typeref* type_args, expr* args)
+          | Attribute(expr value, identifier attr)
+          -- p->x
+          | PtrAttribute(expr value, identifier attr)
+          | Name(identifier id)
+          | Self
+          -- int, float, str, bool, None(null)
+          | Constant(constant value)
+          | Array(expr* elements)
+          | Subscript(expr value, expr index)
+          | Slice(expr? lower, expr? upper, expr? step)
+          | FString(expr* values)
+          | FormattedValue(expr value, int conversion, expr? format_spec)
+          attributes (int lineno, int col_offset, int end_lineno, int end_col_offset)
 
-    typeref = Primitive(prim kind)
-            -- args가 빈 리스트이면 제네릭이 아닌 타입
-            | Named(identifier name, typeref* args)
-            | StructRef(identifier tag)
-            | Pointer(typeref base)
-            | Nullable(typeref base)
-
-    prim = IntT | FloatT | BoolT | StrT | NullT
-
-    ret = VoidRet | ValueRet(typeref ty)
-
-    param = (typeref ty, identifier name)
-    -- 람다의 단일 매개변수는 타입을 생략할 수 있다.
-    lparam = (typeref? ty, identifier name)
-    signature = (access? access, identifier name, param* params, ret returns)
-    handler = (typeref ty, identifier name, stmt* body)
-    range_expr = (expr start, expr stop, expr? step)
-
-    initializer = NoInit
-                | ExprInit(expr value)
-                | PositionalInit(expr* values)
-                | DesignatedInit(designation* items)
-    designation = (identifier field, expr value)
-
-    access = Public | Protected | Private | Internal
-
-    -- access가 None이면 기본값(private)을 의미 분석에서 적용한다.
-    member = Field(access? access, typeref ty, identifier name, expr? value)
-           | Method(access? access, identifier name, identifier* type_params,
-                    param* params, ret returns, stmt* body)
-           | Constructor(param* params, stmt* body)
-           | Property(access? access, typeref ty, identifier name)
-           | Getter(identifier name, stmt* body)
-           | Setter(identifier name, param param, stmt* body)
-           attributes (int lineno, int col_offset, int end_lineno, int end_col_offset)
-
-    -- inits가 빈 리스트면 초기화 리스트를 쓰지 않은 생성자이다.
-    struct_member = StructField(typeref ty, identifier name)
-                  | StructCtor(param* params, member_init* inits, stmt* body)
-    member_init = (identifier field, expr value)
-
-    boolop = And | Or
-    unaryop = UAdd | USub | Not
-    operator = Add | Sub | Mult | Div | FloorDiv | Mod | Pow
-    cmpop = Eq | NotEq | Lt | LtE | Gt | GtE
-    assign_op = AssignEq | AssignAdd | AssignSub | AssignMult | AssignDiv
-              | AssignFloorDiv | AssignMod | AssignPow
+     typeref = Primitive(prim kind)
+             -- args가 빈 리스트이면 제네릭이 아닌 타입
+             | Named(identifier name, typeref* args)
+             | StructRef(identifier tag)
+             | Pointer(typeref base)
+             | Nullable(typeref base)
+ 
+     prim = IntT | FloatT | BoolT | StrT | NullT
+ 
+     ret = VoidRet | ValueRet(typeref ty)
+ 
+     param = (typeref ty, identifier name)
+     -- 람다의 단일 매개변수는 타입을 생략할 수 있다.
+     lparam = (typeref? ty, identifier name)
+     signature = (access? access, identifier name, param* params, ret returns)
+     handler = (typeref ty, identifier name, stmt* body)
+     range_expr = (expr start, expr stop, expr? step)
+ 
+     initializer = NoInit
+                 | ExprInit(expr value)
+                 | PositionalInit(expr* values)
+                 | DesignatedInit(designation* items)
+     designation = (identifier field, expr value)
+ 
+     access = Public | Protected | Private | Internal
+ 
+     -- access가 None이면 기본값(private)을 의미 분석에서 적용한다.
+     member = Field(access? access, typeref ty, identifier name, expr? value)
+            | Method(access? access, identifier name, identifier* type_params,
+                     param* params, ret returns, stmt* body)
+            | Constructor(param* params, stmt* body)
+            | Property(access? access, typeref ty, identifier name)
+            | Getter(identifier name, stmt* body)
+            | Setter(identifier name, param param, stmt* body)
+            attributes (int lineno, int col_offset, int end_lineno, int end_col_offset)
+ 
+     -- inits가 빈 리스트면 초기화 리스트를 쓰지 않은 생성자이다.
+     struct_member = StructField(typeref ty, identifier name)
+                   | StructCtor(param* params, member_init* inits, stmt* body)
+     member_init = (identifier field, expr value)
+ 
+     boolop = And | Or
+     unaryop = UAdd | USub | Not
+     operator = Add | Sub | Mult | Div | FloorDiv | Mod | Pow
+     cmpop = Eq | NotEq | Lt | LtE | Gt | GtE
+     assign_op = AssignEq | AssignAdd | AssignSub | AssignMult | AssignDiv
+               | AssignFloorDiv | AssignMod | AssignPow
 }
