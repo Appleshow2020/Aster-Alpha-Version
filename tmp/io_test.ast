@@ -1,0 +1,8 @@
+Files.writeString("tmp/io_test.txt", "alpha\nbeta");
+println(Files.exists("tmp/io_test.txt"));
+println(Files.readString("tmp/io_test.txt"));
+for (str line in Files.readLines("tmp/io_test.txt")) {
+  println("[" + line + "]");
+}
+println(Files.delete("tmp/io_test.txt"));
+println(Files.exists("tmp/io_test.txt"));

@@ -1,0 +1,13 @@
+class Animal {
+    protected str name;
+    constructor(str n) { self->name = n; }
+    public fn speak() -> str { return self->name + " makes a sound"; }
+}
+
+class Dog extends Animal {
+    constructor(str n) { super(n); }
+    public fn speak() -> str { return super.speak() + "!"; }
+}
+
+Dog* d = new Dog("Rex");
+println(d->speak());

@@ -1,0 +1,5 @@
+println("hello");
+print("a", "b");
+println();
+println(1, 2.5, true, null);
+System.stdout.println("system", 42);

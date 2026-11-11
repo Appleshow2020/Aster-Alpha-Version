@@ -1,0 +1,9 @@
+import modules.helper as h;
+println(h.greet("aster"));
+println(h.answer);
+
+from modules.helper import greet;
+println(greet("from"));
+
+from modules.helper import *;
+println(answer);

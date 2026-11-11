@@ -1,0 +1,40 @@
+class Animal {
+    protected str name;
+    constructor(str n) { self->name = n; }
+    public fn speak() -> str { return self->name + " makes a sound"; }
+}
+
+class Dog extends Animal {
+    constructor(str n) { self->name = n; }
+    public fn speak() -> str { return self->name + " barks"; }
+}
+
+class Box {
+    private int _v;
+    public @property
+    int value;
+    getter value { return self->_v; }
+    setter value(int value) { self->_v = value; }
+    constructor(int v) { self->_v = v; }
+    public fn bump() -> void { self->value += 1; }
+}
+
+class Counter {
+    private int value = 10;
+    public fn get() -> int { return self->value; }
+}
+
+Animal* a = new Animal("cat");
+Dog* d = new Dog("Rex");
+println(a->speak());
+println(d->speak());
+
+Box* b = new Box(5);
+b->bump();
+println(b->value);
+
+Animal* p = d;
+println(p->speak());
+
+Counter* c = new Counter();
+println(c->get());

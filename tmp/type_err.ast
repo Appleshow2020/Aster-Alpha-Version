@@ -1,0 +1,8 @@
+int x = "hello";
+str s = 3;
+int y = 1 + 2;
+x = "bad";
+fn f(int a) -> int { return a; }
+f("str");
+var g = f;
+g(1, 2);

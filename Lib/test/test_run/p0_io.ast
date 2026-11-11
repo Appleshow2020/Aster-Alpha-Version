@@ -1,0 +1,7 @@
+Scanner sc = new Scanner(System.in);
+str first = sc.nextLine();
+println("first=" + first);
+println("number=" + sc.nextInt());
+println("word=" + sc.next());
+println("rest=" + sc.next());
+sc.close();

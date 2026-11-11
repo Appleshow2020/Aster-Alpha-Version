@@ -1,0 +1,26 @@
+fn fib(int n) -> int {
+    if (n < 2) { return n; }
+    return fib(n - 1) + fib(n - 2);
+}
+
+fn outer() -> int {
+    fn inner(int a) -> int { return a * 2; }
+    return inner(4);
+}
+
+fn id<T>(T v) -> T { return v; }
+
+double = x => x * 2 -> int;
+add1 = (int x) => x + 1 -> int;
+
+fn capture() -> int {
+    int base = 10;
+    add = (int x) => x + base -> int;
+    return add(5);
+}
+
+println(fib(10));
+println(10 |> double |> add1);
+println(outer());
+println(id(7), id("s"));
+println(capture());

@@ -1,0 +1,7 @@
+import greeter;
+println(greeter.greet("aster"));
+println(greeter.answer);
+from greeter import greet as g;
+println(g("alias"));
+from greeter import *;
+println(greet("star"));

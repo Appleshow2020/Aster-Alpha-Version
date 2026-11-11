@@ -1,0 +1,30 @@
+# 논리 연산자는 단어만
+bool ok = a > 0 and not (b > 10) or c;
+#---
+# is, in
+bool found = "a" in text;
+bool isInt = value is int;
+bool isBox = value is Box<int>;
+bool isNull = value is null;
+#---
+# 파이프라인, null 병합
+int r = 10 |> double |> add1;
+int v = a ?? b ?? 0;
+#---
+# 산술
+int p = 2 ** 3 ** 2;
+int q = 7 // 2 + 7 % 2;
+float f = -a + +b;
+int m = a * *p;
+int e = a**b;
+#---
+# 비교
+bool t = a < b and c >= d and e != f and g == h and i <= j and k > l;
+#---
+# sizeof
+int s = sizeof(int) + sizeof(struct Point) + sizeof(int**);
+#---
+# 호출과 접근
+a.b.c(1, 2);
+p->f(1);
+self->value = new Counter()->value;

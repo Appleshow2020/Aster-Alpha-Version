@@ -1,0 +1,29 @@
+exception AppError extends Exception;
+
+class Animal {
+    protected str name;
+    constructor(str n) { self->name = n; }
+    public fn speak() -> str { return self->name + " makes a sound"; }
+}
+
+class Dog extends Animal {
+    constructor(str n) { super(n); }
+    public fn speak() -> str { return super.speak() + "!"; }
+}
+
+Dog* d = new Dog("Rex");
+println(d->speak());
+
+try {
+    throw AppError("bad input");
+} catch (AppError e) {
+    println(e.name + ": " + e.message);
+}
+
+try {
+    throw "plain text";
+} catch (AppError e) {
+    println("wrong handler");
+} catch (Exception e) {
+    println("fallback: " + e.message);
+}

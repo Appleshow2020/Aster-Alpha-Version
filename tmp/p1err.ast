@@ -1,0 +1,6 @@
+const int X = 1;
+extern fn native_add(int a, int b) -> int;
+fn main() -> void {
+    X = 2;
+}
+main();

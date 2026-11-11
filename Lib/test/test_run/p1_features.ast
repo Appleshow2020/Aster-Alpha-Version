@@ -1,0 +1,63 @@
+enum Color { RED, GREEN, BLUE }
+
+const int LIMIT = 3;
+
+class Counter {
+    static int total = 0;
+    public static fn next() -> int {
+        Counter.total = Counter.total + 1;
+        return Counter.total;
+    }
+}
+
+class Point2 {
+    private int x;
+    private int y;
+    constructor(int x, int y) { self->x = x; self->y = y; }
+    public fn sum() -> int { return self->x + self->y; }
+}
+
+fn main() -> void {
+    println(Color.GREEN.name);
+    println(Color.BLUE.ordinal);
+    println(LIMIT);
+    println(Counter.next());
+    println(Counter.next());
+    println(Counter.total);
+
+    var (a, b) = (10, 20);
+    println(a + b);
+
+    var xs = [1, 2, 3, 4, 5];
+    println([x * x for x in xs if x % 2 == 0]);
+    println({x for x in xs if x > 3});
+    println({x: x + 100 for x in xs if x < 3});
+
+    var more = [0, *xs, 6];
+    println(len(more));
+    var merged = {*xs};
+    println(len(merged));
+    var d1 = {"a": 1};
+    var d2 = {**d1, "b": 2};
+    println(d2["a"] + d2["b"]);
+
+    xs[1:3] = [9, 8, 7];
+    println(xs);
+
+    var (p, q) = [4, 5];
+    println(p * q);
+
+    assert a == 10;
+    assert b == 20, "b must be 20";
+
+    for (int i = 0; i < 5; i++) {
+        if (i == 1) { continue; }
+        if (i == 3) { break; }
+        println(i);
+    }
+
+    Point2* pt = new Point2(3, 4);
+    println(pt->sum());
+}
+
+main();

@@ -1,0 +1,61 @@
+# ';' 빠짐
+int count = 3
+#---
+int count = ;
+#---
+count = 3 y;
+#---
+return return;
+#---
+# void는 타입이 아니다
+void x;
+#---
+void v = 1;
+#---
+# nullable의 nullable은 없고, 포인터 뒤에는 ?를 붙이지 못한다
+int?? x;
+#---
+int?* p;
+#---
+# 생성자 호출 형태는 new만 쓴다 [D3]
+Point p6(10, 20);
+#---
+Counter c = new Counter;
+#---
+# 대입의 좌변은 이름, 속성 접근, 역참조만 가능하다
+3 = x;
+#---
+f(x) = 3;
+#---
+# self는 키워드다
+self = 3;
+#---
+# 비교는 연쇄하지 않는다
+a < b < c;
+#---
+# 문장 자리에 맨 블록은 없다
+{ int x; }
+#---
+# 빈 문장은 없다
+;
+#---
+throw;
+#---
+throw "msg" as;
+#---
+import ;
+#---
+import aster.time.;
+#---
+from aster.time import ;
+#---
+# from-import는 이름 하나씩
+from aster.time import a, b;
+#---
+package a.b
+#---
+# 접근 제한자는 클래스 멤버에서만 쓴다
+public int x;
+#---
+# 키워드는 이름이 될 수 없다
+int class = 1;

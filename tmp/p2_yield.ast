@@ -1,0 +1,21 @@
+fn squares(int n) -> list<int> {
+    for (int i = 1; i <= n; i++) {
+        if (i % 2 == 0) { continue; }
+        yield i * i;
+    }
+}
+
+fn main() -> void {
+    var g = squares(5);
+    for (int v in g) { println(v); }
+
+    var h = squares(3);
+    println(next(h));
+    println(next(h));
+    println(len(h));
+    println(list(h));
+
+    for (int v in squares(2)) { println(v); }
+}
+
+main();

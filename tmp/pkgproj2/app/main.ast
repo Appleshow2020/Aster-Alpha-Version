@@ -1,0 +1,2 @@
+import mathx;
+println(mathx.triple(5));

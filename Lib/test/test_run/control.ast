@@ -1,0 +1,26 @@
+for (int i; i = 1..7..2) {
+    print(i, "");
+}
+println();
+
+int sum = 0;
+for (int j = 0; j < 10; j += 1) {
+    if (j == 3) { continue; }
+    if (j == 6) { break; }
+    sum += j;
+}
+println(sum);
+
+int n = 0;
+while (n < 5) {
+    n += 1;
+}
+println(n);
+
+if (n > 3 and n < 10) {
+    println("mid");
+} else if (n >= 10) {
+    println("big");
+} else {
+    println("small");
+}

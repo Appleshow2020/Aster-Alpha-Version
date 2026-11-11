@@ -1,0 +1,10 @@
+var s = {1, 2, 3};
+set<int> t = {4, 5};
+println(len(s));
+println(len(t));
+
+dict<str, int> d = {"a": 1};
+println(d["a"]);
+
+var empty = {};
+println(len(empty));

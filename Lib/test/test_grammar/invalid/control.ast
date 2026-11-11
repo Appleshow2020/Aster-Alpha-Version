@@ -1,0 +1,31 @@
+# 본문은 반드시 중괄호 블록이다
+if (x) y = 1;
+#---
+if x { }
+#---
+else { }
+#---
+while count < 5 { }
+#---
+while (true) x = 1;
+#---
+for (int i = 0; i < 5) { }
+#---
+# 범위 for의 두 변수 이름은 같아야 한다
+for (int i; j = 1..6) { }
+#---
+for (int i; i = 1..6..) { }
+#---
+for (;;) { }
+#---
+for (int i; i = 1) { }
+#---
+try { }
+#---
+catch (Exception e) { }
+#---
+try { } catch (Exception) { }
+#---
+try { } catch { }
+#---
+if (x) { } else if { }

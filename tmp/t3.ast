@@ -1,0 +1,2 @@
+enum Color { RED, GREEN }
+println(Color.GREEN.name);

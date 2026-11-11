@@ -1,0 +1,12 @@
+println(2 ** 10, 7 // 2, 7 % 3, -7 // 2, -7 % 3, 7 % -3);
+println(7 / 2, -7 / 2);
+println(3.5 / 2.0, 3.0 * 2.0, 1.5 + 2.25);
+println(1 == 1 and 2 != 3, not false, true or false);
+println("abc" in "xabcx", "zz" in "abc");
+
+int? a = null;
+int? b = 5;
+println(a ?? b ?? 0);
+
+int v = (int) 3.9 + (int) -1.2;
+println(v);

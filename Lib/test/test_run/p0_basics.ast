@@ -1,0 +1,21 @@
+var total = 0;
+for (int i in range(1, 6)) {
+    total += i;
+}
+println(total);
+
+for (str ch in "abc") {
+    print(ch + "-");
+}
+println("");
+
+str s = "  Aster  ";
+println("[" + s.trim() + "]");
+println(s.trim().toUpperCase());
+println("abc".length());
+println(len("a,b,c".split(",")));
+println(int("12") + 30);
+println(float("2.5") * 2.0);
+println(f"{total} items: {s.trim()}");
+println("x=" + 3);
+println("7".to_int() + 1);

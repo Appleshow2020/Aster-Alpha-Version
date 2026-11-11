@@ -1,0 +1,34 @@
+fn safeDivide(int a, int b) -> int {
+    if (b == 0) { throw "division by zero" as ValueError; }
+    return a / b;
+}
+
+try {
+    println(safeDivide(10, 0));
+} catch (ValueError e) {
+    println("caught " + e.message);
+}
+
+try {
+    int x = 1;
+    x = x / 0;
+} catch (ArithmeticError e) {
+    println("arith caught");
+}
+
+fn withFinally() -> int {
+    try {
+        return 1;
+    } finally {
+        println("finally runs");
+    }
+}
+println(withFinally());
+
+try {
+    throw "plain";
+} catch (Exception e) {
+    println("plain: " + e.message);
+} finally {
+    println("outer finally");
+}

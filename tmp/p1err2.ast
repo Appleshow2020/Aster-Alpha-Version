@@ -1,0 +1,4 @@
+fn main() -> void {
+    assert false, "boom";
+}
+main();

@@ -1,0 +1,11 @@
+str? s = null;
+println(s?.length() ?? -1);
+s = "hello";
+println(s?.length() ?? -1);
+
+int? n = null;
+println(n ?? 7);
+println(n == null);
+
+str? empty = null;
+println(empty?.toUpperCase() ?? "(none)");

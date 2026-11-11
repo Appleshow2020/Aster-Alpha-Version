@@ -1,0 +1,7 @@
+Scanner sc = new Scanner(System.in);
+if (sc.hasNextLine()) {
+  str line = sc.nextLine();
+  println("line=" + line);
+}
+println("int=" + sc.nextInt());
+sc.close();

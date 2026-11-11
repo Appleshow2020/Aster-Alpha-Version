@@ -1,0 +1,21 @@
+typedef struct Point {
+    int x;
+    int y;
+    Point(int a, int b): x(a), y(b) {}
+} Point;
+
+struct Point p = { .x = 1, .y = 2 };
+Point* q = new Point(3, 4);
+println(p.x, p.y, q->x, q->y);
+
+struct Point copy = p;
+copy.x = 99;
+println(p.x, copy.x);
+
+int* py = &p.y;
+*py = 7;
+println(p.x, p.y, copy.x, copy.y);
+
+memset(&p, 0, sizeof(struct Point));
+println(p.x, p.y);
+println(sizeof(bool), sizeof(int), sizeof(struct Point));

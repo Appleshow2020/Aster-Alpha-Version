@@ -1,0 +1,22 @@
+fn odds(int n) -> list<int> {
+    for (int i = 1; i <= n; i++) {
+        if (i % 2 == 0) { continue; }
+        yield i * i;
+    }
+}
+
+fn main() -> void {
+    for (int v in odds(5)) { println(v); }
+
+    var h = odds(3);
+    println(next(h));
+    println(next(h));
+    println(len(h));
+    println(list(h));
+
+    var empty = odds(0);
+    for (int v in empty) { println(v); }
+    println(len(empty));
+}
+
+main();

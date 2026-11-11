@@ -1,0 +1,48 @@
+a = [3, 1, 2];
+a.append(4);
+a.insert(1, 9);
+println(a);
+println(a.pop(), a.pop(0));
+println(a);
+println(a.index(2), a.count(9));
+a.sort();
+println(a);
+a.reverse();
+println(a);
+
+b = a.copy();
+b.remove(1);
+b.extend([7, 8]);
+println(a, b);
+a[0] = 100;
+a[0] += 5;
+println(a);
+
+t = (1, 2, 1);
+println(t.index(1), t.count(1));
+
+d = {"x": 1, "y": 2};
+println(d.get("x"), d.get("z"), d.get("z", 0), d.pop("y"));
+println(d);
+d.setdefault("x", 9);
+d.setdefault("w", 5);
+println(d);
+d.update({"x": 7});
+println(d, d.copy());
+d.clear();
+println(d);
+
+s = {1, 2, 3};
+s.add(4);
+s.discard(1);
+s.remove(2);
+println(s);
+println(s.issubset({3, 4, 5}), s.issuperset({3}),
+        s.intersection({3, 9}), s.difference({3}), s.union({8}));
+println(s.pop(), s);
+s.clear();
+println(s, len(s));
+
+f = frozenset({1, 2});
+println(f.union({3}), f.intersection({2, 9}), f.difference({2}),
+        f.issubset({1, 2, 3}), f.copy());

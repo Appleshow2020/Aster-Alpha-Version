@@ -1,0 +1,6 @@
+# Aster package manifest
+name = app
+version = 0.1.0
+
+[deps]
+mathx = vendor/mathx

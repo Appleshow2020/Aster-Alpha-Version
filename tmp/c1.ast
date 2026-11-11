@@ -1,0 +1,2 @@
+const int X = 1;
+X = 2;
