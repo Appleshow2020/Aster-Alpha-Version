@@ -1,3 +1,4 @@
+import System.stdout.*;
 fn odds(int n) -> list<int> {
     for (int i = 1; i <= n; i++) {
         if (i % 2 == 0) { continue; }
@@ -11,12 +12,11 @@ fn main() -> void {
     var h = odds(3);
     println(next(h));
     println(next(h));
-    println(len(h));
     println(list(h));
 
     var empty = odds(0);
     for (int v in empty) { println(v); }
-    println(len(empty));
+    println(len(list(empty)));
 }
 
 main();

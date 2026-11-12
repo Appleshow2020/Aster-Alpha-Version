@@ -6,7 +6,7 @@
 
 static void missing(const char *field, const char *node)
 {
-    fprintf(stderr, "내부 오류: %s의 필수 필드 '%s'가 비어 있습니다\n", node, field);
+    fprintf(stderr, "internal error: required field '%s' of %s is null\n", node, field);
     abort();
 }
 
@@ -780,6 +780,23 @@ expr_ty _Aster_Array(asdl_seq *elements, int lineno, int col_offset, int end_lin
     return p;
 }
 
+expr_ty _Aster_Range(expr_ty start, expr_ty stop, expr_ty step, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena)
+{
+    expr_ty p;
+    if (!start) missing("start", "Range");
+    if (!stop) missing("stop", "Range");
+    p = Arena_Alloc(arena, sizeof(*p));
+    p->kind = Range_kind;
+    p->v.Range.start = start;
+    p->v.Range.stop = stop;
+    p->v.Range.step = step;
+    p->lineno = lineno;
+    p->col_offset = col_offset;
+    p->end_lineno = end_lineno;
+    p->end_col_offset = end_col_offset;
+    return p;
+}
+
 expr_ty _Aster_Subscript(expr_ty value, expr_ty index, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena)
 {
     expr_ty p;
@@ -1037,6 +1054,18 @@ typeref_ty _Aster_Nullable(typeref_ty base, Arena *arena)
     p = Arena_Alloc(arena, sizeof(*p));
     p->kind = Nullable_kind;
     p->v.Nullable.base = base;
+    return p;
+}
+
+typeref_ty _Aster_FunctionTy(asdl_seq *params, ret_ty returns, Arena *arena)
+{
+    typeref_ty p;
+    if (!params) missing("params", "FunctionTy");
+    if (!returns) missing("returns", "FunctionTy");
+    p = Arena_Alloc(arena, sizeof(*p));
+    p->kind = FunctionTy_kind;
+    p->v.FunctionTy.params = params;
+    p->v.FunctionTy.returns = returns;
     return p;
 }
 
@@ -1804,6 +1833,16 @@ static void dump_expr(FILE *out, expr_ty n)
         dump_seq(out, n->v.Array.elements, dumpv_expr);
         fputc(')', out);
         break;
+    case Range_kind:
+        fputs("Range(", out);
+        fputs("start=", out);
+        dump_expr(out, n->v.Range.start);
+        fputs(", stop=", out);
+        dump_expr(out, n->v.Range.stop);
+        fputs(", step=", out);
+        dump_expr(out, n->v.Range.step);
+        fputc(')', out);
+        break;
     case Subscript_kind:
         fputs("Subscript(", out);
         fputs("value=", out);
@@ -1955,6 +1994,14 @@ static void dump_typeref(FILE *out, typeref_ty n)
         fputs("Nullable(", out);
         fputs("base=", out);
         dump_typeref(out, n->v.Nullable.base);
+        fputc(')', out);
+        break;
+    case FunctionTy_kind:
+        fputs("FunctionTy(", out);
+        fputs("params=", out);
+        dump_seq(out, n->v.FunctionTy.params, dumpv_typeref);
+        fputs(", returns=", out);
+        dump_ret(out, n->v.FunctionTy.returns);
         fputc(')', out);
         break;
     }

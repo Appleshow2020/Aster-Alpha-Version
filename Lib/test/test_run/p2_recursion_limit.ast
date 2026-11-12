@@ -1,0 +1,12 @@
+import System;
+import System.stdout.*;
+
+println(System.getRecursionLimit());
+System.setRecursionLimit(16);
+println(System.getRecursionLimit());
+
+fn dive(int n) -> int {
+    return dive(n + 1);
+}
+
+println(dive(0));

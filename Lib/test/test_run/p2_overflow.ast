@@ -1,0 +1,7 @@
+import System.stdout.*;
+fn main() -> void {
+    int big = 9223372036854775807;
+    println(big + 1);
+}
+
+main();

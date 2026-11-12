@@ -261,11 +261,11 @@ static int dep_resolvable(const char *root, const char *alias)
 static void print_usage(void)
 {
     puts("usage: aster pkg <command> [args]");
-    puts("  init [name]        현재 디렉터리에 aster.pkg를 만든다");
-    puts("  add NAME PATH      의존성을 추가한다 (PATH는 패키지의 부모 디렉터리)");
-    puts("  remove NAME        의존성을 제거한다");
-    puts("  list               의존성 목록을 출력한다");
-    puts("  check              의존성이 실제로 있는지 검사한다");
+    puts("  init [name]        create aster.pkg in the current directory");
+    puts("  add NAME PATH      add a dependency (PATH is the package's parent directory)");
+    puts("  remove NAME        remove a dependency");
+    puts("  list               list dependencies");
+    puts("  check              verify that dependencies exist");
 }
 
 static int pkg_init(Arena *arena, int argc, char **argv)
@@ -273,17 +273,17 @@ static int pkg_init(Arena *arena, int argc, char **argv)
     Manifest m;
     const char *name = argc > 0 ? argv[0] : NULL;
     if (file_exists(MANIFEST)) {
-        puts("aster.pkg가 이미 있습니다");
+        puts("aster.pkg already exists");
         return 1;
     }
     memset(&m, 0, sizeof m);
     m.name = name ? name : "app";
     m.version = "0.1.0";
     if (!write_manifest(".", &m)) {
-        fputs("aster.pkg를 쓸 수 없습니다\n", stderr);
+        fputs("cannot write aster.pkg\n", stderr);
         return 1;
     }
-    printf("생성: aster.pkg (name = %s)\n", m.name);
+    printf("created: aster.pkg (name = %s)\n", m.name);
     (void)arena;
     return 0;
 }
@@ -302,7 +302,7 @@ static int pkg_add(Arena *arena, int argc, char **argv)
     alias = argv[0];
     path = argv[1];
     if (!dir_exists(path)) {
-        fprintf(stderr, "디렉터리가 없습니다: %s\n", path);
+        fprintf(stderr, "no such directory: %s\n", path);
         return 1;
     }
     /* 패키지 디렉터리 자체를 줬다면 부모를 저장한다. */
@@ -312,14 +312,14 @@ static int pkg_add(Arena *arena, int argc, char **argv)
     else if (!strcmp(base_name(path), alias) && file_exists(join_path(arena, path, "__init__.ast"))) {
         root = parent_dir(arena, path);
         if (!root) {
-            fprintf(stderr, "%s의 부모 디렉터리를 찾을 수 없습니다\n", path);
+            fprintf(stderr, "cannot find the parent directory of %s\n", path);
             return 1;
         }
     }
     else {
-        fprintf(stderr, "%s에서 '%s' 패키지를 찾을 수 없습니다 "
-                        "(%s/%s.ast 또는 %s/%s/__init__.ast 필요)\n",
-                path, alias, path, alias, path, alias);
+        fprintf(stderr, "cannot find package '%s' under %s "
+                        "(expected %s/%s.ast or %s/%s/__init__.ast)\n",
+                alias, path, path, alias, path, alias);
         return 1;
     }
 
@@ -331,10 +331,10 @@ static int pkg_add(Arena *arena, int argc, char **argv)
     manifest_push_dep(arena, &m, xstrndup(arena, alias, strlen(alias)),
                       xstrndup(arena, root, strlen(root)));
     if (!write_manifest(".", &m)) {
-        fputs("aster.pkg를 쓸 수 없습니다\n", stderr);
+        fputs("cannot write aster.pkg\n", stderr);
         return 1;
     }
-    printf("추가: %s -> %s\n", alias, root);
+    printf("added: %s -> %s\n", alias, root);
     return 0;
 }
 
@@ -346,18 +346,18 @@ static int pkg_remove(Arena *arena, int argc, char **argv)
         return 2;
     }
     if (!load_manifest_at(arena, ".", &m)) {
-        fputs("aster.pkg가 없습니다\n", stderr);
+        fputs("aster.pkg not found\n", stderr);
         return 1;
     }
     if (!manifest_remove_dep(&m, argv[0])) {
-        fprintf(stderr, "그런 의존성이 없습니다: %s\n", argv[0]);
+        fprintf(stderr, "no such dependency: %s\n", argv[0]);
         return 1;
     }
     if (!write_manifest(".", &m)) {
-        fputs("aster.pkg를 쓸 수 없습니다\n", stderr);
+        fputs("cannot write aster.pkg\n", stderr);
         return 1;
     }
-    printf("제거: %s\n", argv[0]);
+    printf("removed: %s\n", argv[0]);
     return 0;
 }
 
@@ -368,7 +368,7 @@ static int pkg_list(Arena *arena, int argc, char **argv)
     (void)argc;
     (void)argv;
     if (!load_manifest_at(arena, ".", &m)) {
-        fputs("aster.pkg가 없습니다 (aster pkg init)\n", stderr);
+        fputs("aster.pkg not found (run 'aster pkg init')\n", stderr);
         return 1;
     }
     if (m.name)
@@ -376,7 +376,7 @@ static int pkg_list(Arena *arena, int argc, char **argv)
     if (m.version)
         printf("version: %s\n", m.version);
     if (m.ndeps == 0)
-        puts("의존성 없음");
+        puts("no dependencies");
     for (i = 0; i < m.ndeps; i++)
         printf("%s = %s\n", m.deps[i].alias, m.deps[i].path);
     return 0;
@@ -390,7 +390,7 @@ static int pkg_check(Arena *arena, int argc, char **argv)
     (void)argc;
     (void)argv;
     if (!load_manifest_at(arena, ".", &m)) {
-        fputs("aster.pkg가 없습니다 (aster pkg init)\n", stderr);
+        fputs("aster.pkg not found (run 'aster pkg init')\n", stderr);
         return 1;
     }
     for (i = 0; i < m.ndeps; i++) {
@@ -399,7 +399,7 @@ static int pkg_check(Arena *arena, int argc, char **argv)
             printf("ok   %s = %s\n", m.deps[i].alias, root);
         }
         else {
-            printf("fail %s = %s (모듈을 찾을 수 없음)\n",
+            printf("fail %s = %s (module not found)\n",
                    m.deps[i].alias, root);
             failed = 1;
         }

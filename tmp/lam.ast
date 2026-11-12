@@ -1,0 +1,6 @@
+var double_it = (int x) -> int => x*2;
+var tri = (x) -> int => x*3;
+var bare = () -> int => 7;
+println(double_it(4), tri(3), bare());
+var f = x -> int => x + 1;
+println(f(9));

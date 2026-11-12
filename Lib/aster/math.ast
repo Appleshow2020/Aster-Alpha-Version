@@ -1,0 +1,112 @@
+/* aster.math: libm/ucrtbase 수학 함수 래퍼 */
+
+export const float PI = 3.141592653589793;
+export const float E = 2.718281828459045;
+export const float TAU = 6.283185307179586;
+
+export extern fn sqrt(float x) -> float;
+export extern fn cbrt(float x) -> float;
+export extern fn pow(float x, float y) -> float;
+export extern fn exp(float x) -> float;
+export extern fn expm1(float x) -> float;
+export extern fn log(float x) -> float;
+export extern fn log2(float x) -> float;
+export extern fn log10(float x) -> float;
+export extern fn log1p(float x) -> float;
+export extern fn sin(float x) -> float;
+export extern fn cos(float x) -> float;
+export extern fn tan(float x) -> float;
+export extern fn asin(float x) -> float;
+export extern fn acos(float x) -> float;
+export extern fn atan(float x) -> float;
+export extern fn atan2(float y, float x) -> float;
+export extern fn sinh(float x) -> float;
+export extern fn cosh(float x) -> float;
+export extern fn tanh(float x) -> float;
+export extern fn fabs(float x) -> float;
+export extern fn floor(float x) -> float;
+export extern fn ceil(float x) -> float;
+export extern fn round(float x) -> float;
+export extern fn trunc(float x) -> float;
+export extern fn fmod(float x, float y) -> float;
+export extern fn hypot(float x, float y) -> float;
+
+export fn abs(float x) -> float {
+    return fabs(x);
+}
+
+export fn degrees(float radians) -> float {
+    return radians * 180.0 / PI;
+}
+
+export fn radians(float degrees) -> float {
+    return degrees * PI / 180.0;
+}
+
+export fn isclose(float a, float b) -> bool {
+    return fabs(a - b) <= 0.000000001;
+}
+
+export fn sign(float x) -> int {
+    if (x > 0.0) { return 1; }
+    if (x < 0.0) { return -1; }
+    return 0;
+}
+
+export fn clamp(float x, float lo, float hi) -> float {
+    if (x < lo) { return lo; }
+    if (x > hi) { return hi; }
+    return x;
+}
+
+export fn isFinite(float x) -> bool {
+    var huge = 1.0;
+    var i = 0;
+    while (i < 309) {
+        huge = huge * 10.0;
+        i = i + 1;
+    }
+    return x == x and x < huge and x > -huge;
+}
+
+export fn factorial(int n) -> int {
+    var result = 1;
+    var i = 2;
+    while (i <= n) {
+        result = result * i;
+        i = i + 1;
+    }
+    return result;
+}
+
+export fn gcd(int a, int b) -> int {
+    var x = a;
+    var y = b;
+    while (y != 0) {
+        var t = y;
+        y = x % y;
+        x = t;
+    }
+    if (x < 0) { return -x; }
+    return x;
+}
+
+export fn lcm(int a, int b) -> int {
+    if (a == 0 or b == 0) { return 0; }
+    var g = gcd(a, b);
+    var x = a / g;
+    if (x < 0) { x = -x; }
+    if (b < 0) { return x * -b; }
+    return x * b;
+}
+
+export fn isPrime(int n) -> bool {
+    if (n < 2) { return false; }
+    if (n % 2 == 0) { return n == 2; }
+    var i = 3;
+    while (i * i <= n) {
+        if (n % i == 0) { return false; }
+        i = i + 2;
+    }
+    return true;
+}

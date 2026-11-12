@@ -1,0 +1,10 @@
+import System.stdout.*;
+import aster.math;
+from aster.json import stringify;
+from aster.time import seconds;
+import aster.json as jsonmod;
+
+println(math.sqrt(16.0));
+println(math.degrees(math.PI));
+println(jsonmod.stringify(42));
+println(typeName(seconds()));

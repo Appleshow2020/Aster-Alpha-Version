@@ -1,0 +1,35 @@
+/* aster.io: 파일 읽기/쓰기 (Files 내장 객체 래퍼) */
+
+import System;
+
+export fn readFile(str path) -> str {
+    return Files.readString(path);
+}
+
+export fn writeFile(str path, str content) -> void {
+    Files.writeString(path, content);
+}
+
+export fn readLines(str path) -> list<str> {
+    return Files.readLines(path);
+}
+
+export fn exists(str path) -> bool {
+    return Files.exists(path);
+}
+
+export fn deleteFile(str path) -> void {
+    Files.delete(path);
+}
+
+export fn print(str text) -> void {
+    System.out.print(text);
+}
+
+export fn println(str text) -> void {
+    System.out.println(text);
+}
+
+export fn eprintln(str text) -> void {
+    System.err.println(text);
+}

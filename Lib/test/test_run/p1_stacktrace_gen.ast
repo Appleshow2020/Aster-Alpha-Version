@@ -1,0 +1,14 @@
+import System.stdout.*;
+fn gen() -> list<int> {
+    yield 1;
+    int z = 0;
+    yield 5 / z;
+}
+
+fn drive() -> void {
+    for (int v in gen()) {
+        println(v);
+    }
+}
+
+drive();

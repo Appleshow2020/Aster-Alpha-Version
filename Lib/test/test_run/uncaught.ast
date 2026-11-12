@@ -1,3 +1,4 @@
+import System.stdout.*;
 println("start");
 int x = 1 / 0;
 println("not reached");

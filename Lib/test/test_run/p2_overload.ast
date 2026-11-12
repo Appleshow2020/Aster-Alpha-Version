@@ -1,3 +1,4 @@
+import System.stdout.*;
 fn area(int w, int h) -> int { return w * h; }
 fn area(int side) -> int { return side * side; }
 fn area(float r) -> float { return 3.14 * r * r; }

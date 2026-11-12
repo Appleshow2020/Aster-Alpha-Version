@@ -1,3 +1,4 @@
+import System.stdout.*;
 a = [3, 1, 2];
 a.append(4);
 a.insert(1, 9);

@@ -1,0 +1,34 @@
+import System.stdout.*;
+fn numbers(int n) -> list<int> {
+    println("begin");
+    for (int i = 0; i < n; i++) { yield i; }
+    println("end");
+}
+
+class Countdown {
+    private int left;
+
+    constructor(int n) { self->left = n; }
+
+    public fn __iter__() -> Countdown { return self; }
+
+    public fn __next__() -> int {
+        if (self->left <= 0) { throw StopIteration(); }
+        self->left -= 1;
+        return self->left;
+    }
+}
+
+fn main() -> void {
+    var g = numbers(3);
+    println("created");
+    println(next(g));
+    for (int v in numbers(2)) { println(v); }
+    println(list(g));
+    println(list(g));
+
+    for (int v in new Countdown(3)) { println(v); }
+    println([n * n for n in numbers(4) if n % 2 == 0]);
+}
+
+main();

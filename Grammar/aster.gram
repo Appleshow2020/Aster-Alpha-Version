@@ -139,13 +139,16 @@ assign_op:
 # void는 type에 없다: 변수/필드/매개변수 타입으로 쓰는 것이 문법 단계에서 거부된다.
 # nullable은 맨 끝에만 온다: int?  int*?  (int?* 는 불가)  [명세 변경: 원래 프롬프트는 금지]
 # null?, null* 는 문법은 통과하고 typecheck에서 거부한다.
-# [D6b] 함수 타입 표기는 없다.
+# 함수 타입: fn(int, str) -> bool   (반환 없음은 'void')
 type: type_base pointer_suffix* ['?']
 type_base:
     | primitive_type
     | 'struct' NAME                    # [Q2.1] struct Point p;
+    | function_type
     | NAME [type_args]                 # 클래스, 구조체 태그/별칭, 파이썬 예외 이름, 제네릭 Box<int>
 primitive_type: 'int' | 'float' | 'bool' | 'str' | 'null'
+# 'fn'은 하드 키워드라 타입 위치에서 함수 타입으로 읽힌다. 실패하면 되돌아간다.
+function_type: 'fn' '(' [type (',' type)*] ')' '->' return_type
 # '**'는 포인터 두 단계로 읽는다 (int** pp).  [D2]
 pointer_suffix: '*' | '**'
 # '>>' 토큰이 없으므로 중첩(Box<Box<int>>)이 된다.
@@ -164,7 +167,7 @@ return_type: 'void' | type
 function_def: 'fn' NAME [type_params] '(' [parameters] ')' '->' return_type block
 # 본문 없는 선언. 맨 위 문장으로만 쓸 수 있고 ';'로 끝난다.
 # (파서는 compound_stmt 목록에서 시도하지만 실제 형태는 simple_stmt에 가깝다.)
-# 실행 시 extern 함수를 호출하면 RuntimeError가 난다.
+# 실행 시 프로세스의 같은 이름 C 심볼을 찾아 호출한다 (dlsym / LoadLibrary).
 extern_def: 'extern' 'fn' NAME '(' [parameters] ')' '->' return_type ';'
 type_params: '<' NAME (',' NAME)* '>'
 parameters: parameter (',' parameter)*
@@ -174,6 +177,7 @@ parameter: type NAME
 # (export fn/class/interface/exception/struct/typedef struct/변수)
 export_decl: 'export' exported_decl
 exported_decl:
+    | extern_def
     | function_def
     | class_def
     | interface_def
@@ -213,6 +217,8 @@ class_member:
 access_modifier: 'public' | 'protected' | 'private' | 'internal'
 
 field_decl: [access_modifier] ['static'] type NAME ['=' expression] ';'
+# 연산자 오버로딩 훅(__add__, __eq__, __str__, __len__, __getitem__ 등)은
+# 이름이 특별한 일반 메서드다. 별도 문법이 없다.
 method_def: [access_modifier] ['static'] 'fn' NAME [type_params] '(' [parameters] ')' '->' return_type block
 
 # 생성자는 반환 타입을 쓰지 않는다.
@@ -294,23 +300,31 @@ expression:
     | pipe_expr
 
 # [D1][D6] 반환 타입 필수.
-#   단일 매개변수는 타입 생략 가능:   x => x*x -> int
-#   다중 매개변수는 타입 필수:        (int a, int b) => a+b -> int
-#   매개변수 없음은 '()' 가 필요하다:  () => 식 -> T     ('()'와 '=>'가 있어야 람다)
+#   새 문법:  매개변수 -> 반환타입 => 본문
+#     var f = (int x) -> int => x * 2;
+#     var g = x -> int => x * 3;
+#     var h = () -> int => 7;
+#   옛 문법도 유지한다:  x => 식 -> T,  (int a, int b) => 식 -> T
 #
-# [D7] lambda_body는 파서 플래그 no_arrow=True 로 읽는다.
+#   타입 검사기는 람다를 fn(...) -> T 타입 변수로 선언하는 것을 거부한다.
+#   람다 변수는 var/생략(타입 추론) 또는 람다의 반환 타입으로 선언한다.
+#     var a = (int x) -> int => x * 2;
+#     float b = (int x) -> float => (float)x;
+#   이름 있는 함수를 담는 함수 타입 변수는 그대로 허용한다.
+#
+# [D7] 옛 문법의 lambda_body는 파서 플래그 no_arrow=True 로 읽는다.
 #   본문의 최상위(괄호 밖)에서 만난 '->'는 항상 반환 타입 화살표다.
 #   포인터 멤버 접근은 괄호로 감싸야 한다:  x => (p->v) -> int
-#   no_arrow는 '(' ... ')' 안(괄호식, 호출 인자, 캐스트, sizeof)에서 해제된다.
-#   본문 최상위에는 lambda_expr를 쓸 수 없다 (괄호 안에서는 가능).
-#   !'->' 때문에 x => p->v -> int 는 SyntaxError가 된다
-#   (본문 p, 반환 타입 v, 그 뒤에 또 '->'). 파서는 이 경우
-#   "람다 본문의 포인터 접근은 괄호로 감싸야 합니다" 메시지를 낸다.
+#   새 문법의 본문은 pipe_expr 그대로라 p->v 를 쓸 수 있다.
 # '=>' 는 람다에만 쓰이므로, '=>'를 읽은 뒤의 실패는 되돌아가지 않고 바로 오류다
 # (본문 없음, '-> 타입' 없음 등. 각각 전용 메시지를 낸다).
 lambda_expr:
+    | NAME '->' return_type '=>' pipe_expr
+    | '(' [lambda_params] ')' '->' return_type '=>' pipe_expr
     | NAME '=>' lambda_body '->' return_type !'->'
-    | '(' [parameters] ')' '=>' lambda_body '->' return_type !'->'
+    | '(' parameters ')' '=>' lambda_body '->' return_type !'->'
+lambda_params: lambda_param (',' lambda_param)*
+lambda_param: [type] NAME
 lambda_body: pipe_expr
 
 pipe_expr: coalesce_expr ('|>' coalesce_expr)*
@@ -323,10 +337,12 @@ not_expr:
 
 # 비교는 연쇄하지 않는다 (a < b < c 불가).
 comparison:
-    | arith 'is' ['not'] type
-    | arith ['not'] 'in' arith
-    | arith comp_op arith
-    | arith
+    | range_value 'is' ['not'] type
+    | range_value ['not'] 'in' range_value
+    | range_value comp_op range_value
+    | range_value
+# 양 끝을 포함하는 범위: 1..5, 1..9..2 (간격)
+range_value: arith ['..' arith ['..' arith]]
 comp_op: '==' | '!=' | '<=' | '>=' | '<' | '>'
 
 arith: term (('+' | '-') term)*

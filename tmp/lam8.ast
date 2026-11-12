@@ -1,0 +1,2 @@
+double = (int x) => x + 1 -> int;
+println(double(9));

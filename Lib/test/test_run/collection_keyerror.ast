@@ -1,2 +1,3 @@
+import System.stdout.*;
 d = {"a": 1};
 println(d["b"]);

@@ -1,0 +1,21 @@
+0	Programs\pkg.c:264	  init [name]        현재 디렉터리에 aster.pkg를 만든다
+1	Programs\pkg.c:265	  add NAME PATH      의존성을 추가한다 (PATH는 패키지의 부모 디렉터리)
+2	Programs\pkg.c:266	  remove NAME        의존성을 제거한다
+3	Programs\pkg.c:267	  list               의존성 목록을 출력한다
+4	Programs\pkg.c:268	  check              의존성이 실제로 있는지 검사한다
+5	Programs\pkg.c:276	aster.pkg가 이미 있습니다
+6	Programs\pkg.c:283	aster.pkg를 쓸 수 없습니다\n
+7	Programs\pkg.c:286	생성: aster.pkg (name = %s)\n
+8	Programs\pkg.c:305	디렉터리가 없습니다: %s\n
+9	Programs\pkg.c:315	%s의 부모 디렉터리를 찾을 수 없습니다\n
+10	Programs\pkg.c:320	%s에서 '%s' 패키지를 찾을 수 없습니다 
+11	Programs\pkg.c:321	(%s/%s.ast 또는 %s/%s/__init__.ast 필요)\n
+12	Programs\pkg.c:337	추가: %s -> %s\n
+13	Programs\pkg.c:349	aster.pkg가 없습니다\n
+14	Programs\pkg.c:353	그런 의존성이 없습니다: %s\n
+15	Programs\pkg.c:360	제거: %s\n
+16	Programs\pkg.c:371	aster.pkg가 없습니다 (aster pkg init)\n
+17	Programs\pkg.c:379	의존성 없음
+18	Programs\pkg.c:402	fail %s = %s (모듈을 찾을 수 없음)\n
+19	Python\typecheck.c:1065	모듈 '%s' 파일을 읽을 수 없습니다: %s
+20	Python\typecheck.c:1278	함수에는 인자가 %zu개 필요하지만 %zu개가 넘어왔습니다

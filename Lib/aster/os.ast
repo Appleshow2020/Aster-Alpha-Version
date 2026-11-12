@@ -1,0 +1,39 @@
+/* aster.os: 환경 변수, 현재 디렉터리, 프로세스 정보 */
+
+import System;
+
+extern fn getenv(str name) -> str;
+extern fn system(str command) -> int;
+extern fn _aster_cwd() -> str;
+extern fn _aster_pid() -> int;
+extern fn _aster_platform() -> str;
+extern fn _aster_setenv(str name, str value) -> int;
+
+export fn env(str name) -> str? {
+    return getenv(name);
+}
+
+export fn setEnv(str name, str value) -> bool {
+    return _aster_setenv(name, value) == 0;
+}
+
+export fn cwd() -> str {
+    return _aster_cwd();
+}
+
+export fn pid() -> int {
+    return _aster_pid();
+}
+
+export fn platform() -> str {
+    return _aster_platform();
+}
+
+/* 셸 명령을 실행하고 종료 코드를 돌려준다. */
+export fn run(str command) -> int {
+    return system(command);
+}
+
+export fn exit(int code) -> void {
+    System.exit(code);
+}

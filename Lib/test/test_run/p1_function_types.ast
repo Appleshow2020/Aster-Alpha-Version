@@ -1,0 +1,68 @@
+import System.stdout.*;
+fn times_two(int x) -> int { return x * 2; }
+fn(int) -> int named = times_two;
+var double_it = (int x) -> int => x * 2;
+var adder = (int a, int b) -> int => a + b;
+println(double_it(21));
+println(adder(2, 3));
+println(named(4));
+
+class Vec {
+    public float x;
+    public float y;
+
+    constructor(float x, float y) {
+        self->x = x;
+        self->y = y;
+    }
+
+    public fn __add__(Vec other) -> Vec {
+        return new Vec(self->x + other.x, self->y + other.y);
+    }
+
+    public fn __sub__(Vec other) -> Vec {
+        return new Vec(self->x - other.x, self->y - other.y);
+    }
+
+    public fn __eq__(Vec other) -> bool {
+        return self->x == other.x and self->y == other.y;
+    }
+
+    public fn __str__() -> str {
+        return "Vec(" + str(self->x) + ", " + str(self->y) + ")";
+    }
+
+    public fn __len__() -> int {
+        return 2;
+    }
+
+    public fn __getitem__(int i) -> float {
+        if (i == 0) {
+            return self->x;
+        }
+        return self->y;
+    }
+
+    public fn __contains__(float value) -> bool {
+        return self->x == value or self->y == value;
+    }
+
+    public fn __neg__() -> Vec {
+        return new Vec(0.0 - self->x, 0.0 - self->y);
+    }
+}
+
+Vec a = new Vec(1.0, 2.0);
+Vec b = new Vec(3.0, 4.0);
+Vec sum = a + b;
+Vec diff = b - a;
+println(sum);
+println("sum=" + sum);
+println(sum == new Vec(4.0, 6.0));
+println(diff == a);
+println(sum[0]);
+println(sum[1]);
+println(len(sum));
+println(4.0 in sum);
+println(9.0 in sum);
+println(-a);

@@ -29,6 +29,8 @@ typedef struct AstOverload AstOverload;
 typedef struct AstEnumType AstEnumType;
 typedef struct AsterSuper AsterSuper;
 
+#define ASTER_DEFAULT_RECURSION_LIMIT 512
+
 typedef enum {
     RV_NULL = 0,
     RV_INT,
@@ -71,25 +73,54 @@ typedef struct AsterTuple {
 typedef struct AsterDictEntry {
     RValue *key;
     RValue *value;
+    uint64_t hash;
 } AsterDictEntry;
 
+/* entries는 삽입 순서를 유지하고, index가 해시 탐색용이다(값은 entries+1, 0은 빈 칸). */
 typedef struct AsterDict {
     AsterDictEntry *entries;
     size_t len;
     size_t cap;
+    long *index;
+    size_t icap;             /* 2의 거듭제곱 */
 } AsterDict;
 
 typedef struct AsterSet {
     RValue **items;
+    uint64_t *hashes;
     size_t len;
     size_t cap;
+    long *index;
+    size_t icap;
 } AsterSet;
 
-/* yield로 모은 값들과 다음 위치. (열성 평가 제너레이터) */
+struct AstGenerator;
+
+/* yield로 값을 주고받는 제너레이터. 본문은 전용 실행 컨텍스트(파이버/코루틴)에서 돈다. */
 typedef struct AstGenerator {
-    AsterList *items;
-    size_t index;
+    AstFn *fn;
+    Env *body_env;           /* 호출 시점에 매개변수를 바인딩한 환경 */
+    RValue *self;
+    Interp *interp;          /* 제너레이터 전용 실행 상태 */
+    RValue *yielded;
+    int started;
+    int done;
+    int failed;
+    void *ctx;               /* 플랫폼별 실행 컨텍스트 */
+    void *caller_ctx;        /* 서스펜드 시 돌아갈 컨텍스트 */
+    void *stack;             /* POSIX 스택 */
+    struct AstGenerator *caller_gen; /* 이 제너레이터를 재개한 제너레이터 (없으면 NULL) */
 } AstGenerator;
+
+/* 순회 커서: 내장 컬렉션/문자열, 제너레이터, 사용자 객체(__iter__/__next__). */
+typedef struct IterCursor {
+    RValue *src;
+    size_t index;
+    size_t len;
+    int mode;                /* 0=내장, 1=제너레이터, 2=사용자 객체 */
+    AstGenerator *gen;
+    RValue *obj;
+} IterCursor;
 
 struct RValue {
     RKind kind;
@@ -273,6 +304,12 @@ typedef enum {
     SIG_THROW
 } Signal;
 
+/* 호출 스택 한 칸. 처리되지 않은 예외의 트레이스백에 쓴다. */
+typedef struct AstFrame {
+    const char *name;
+    int line;
+} AstFrame;
+
 struct Interp {
     Arena *arena;
     Env *globals;
@@ -293,10 +330,22 @@ struct Interp {
         const char *base;
     } *exc_bases;
     size_t nexc_bases, cap_exc_bases;
-    AsterList *yield_buf;    /* yield를 모으는 중이면 NULL이 아니다 */
+    AsterList *yield_buf;    /* (미사용) 이전 열성 제너레이터 흔적 */
+    AstGenerator *gen;       /* 이 Interp이 제너레이터 본문을 실행 중이면 그 제너레이터 */
     int predeclaring;        /* 선언 수집 단계 (오버로드 병합 허용) */
     int depth;               /* 호출 깊이 (재귀 제한) */
+    int recursion_limit;     /* 허용할 최대 호출 깊이 (System으로 설정) */
+    AstModule *builtin_modules[8]; /* C가 직접 제공하는 모듈 (System 등) */
+    size_t nbuiltin_modules;
+    AstFrame *frames;        /* 호출 스택 (Arena 할당, 두 배씩 확장) */
+    size_t nframes, cap_frames;
 };
+
+void Interp_FrameAppend(Interp *in, const char *name, int line);
+void Interp_FramePush(Interp *in, const char *name);   /* 현재 줄로 추가 */
+void Interp_FramePop(Interp *in);
+void Interp_FrameTruncate(Interp *in, size_t n);
+void Interp_PrintTraceback(FILE *out, Interp *in);
 
 /* ---- 값 ---- */
 
@@ -314,7 +363,7 @@ RValue *RValue_Ptr(Interp *in, RValue **slot, typeref_ty ty);
 RValue *RValue_Exception(Interp *in, const char *name, RValue *message);
 RValue *RValue_ExcClass(Interp *in, const char *name);
 RValue *RValue_Class(Interp *in, AstClass *cls);
-RValue *RValue_Generator(Interp *in, AsterList *items);
+RValue *RValue_Generator(Interp *in, AstFn *fn, Env *body_env, RValue *self);
 RValue *RValue_StructType(Interp *in, AstStructType *type);
 RValue *RValue_List(Interp *in, AsterList *list);
 RValue *RValue_Tuple(Interp *in, AsterTuple *tuple);
@@ -336,13 +385,16 @@ void List_RemoveAt(AsterList *list, size_t index);
 AsterTuple *Tuple_New(Interp *in, size_t len);
 AsterDict *Dict_New(Interp *in);
 RValue *Dict_Lookup(const AsterDict *dict, const RValue *key);
+long Dict_FindIndex(const AsterDict *dict, const RValue *key);   /* 없으면 -1 */
 int Dict_Set(Interp *in, AsterDict *dict, RValue *key, RValue *value, int *ok);
 void Dict_RemoveAt(AsterDict *dict, size_t index);
 AsterSet *Set_New(Interp *in);
 int Set_Has(const AsterSet *set, const RValue *value);
+long Set_FindIndex(const AsterSet *set, const RValue *value);
 int Set_Add(Interp *in, AsterSet *set, RValue *value, int *ok);
 void Set_RemoveAt(AsterSet *set, size_t index);
 int RValue_Hashable(const RValue *v);
+uint64_t RValue_Hash(const RValue *v);
 const char *RValue_TypeName(const RValue *v);
 int64_t RValue_Length(Interp *in, const RValue *v, int *ok);
 int RValue_Contains(Interp *in, const RValue *container, const RValue *item, int *ok);
@@ -354,6 +406,22 @@ AsterString *RString_Repeat(Interp *in, AsterString *s, int64_t times);
 int RValue_Iterable(const RValue *v);
 size_t RValue_IterLen(Interp *in, const RValue *v, int *ok);
 RValue *RValue_IterAt(Interp *in, const RValue *v, size_t index, int *ok);
+
+/* 제너레이터: 값이 있으면 반환, 끝이면 *ended=1. 오류면 in->sig==SIG_THROW. */
+RValue *Generator_Next(Interp *in, AstGenerator *gen, int *ended);
+
+/* 임의 값을 순회 커서로 연다. 순회할 수 없으면 0 (오류는 in에 기록). */
+int Iter_Begin(Interp *in, RValue *src, IterCursor *cur);
+RValue *Iter_Next(Interp *in, IterCursor *cur, int *ended, int *ok);
+
+/* 사용자 객체의 __iter__/__next__/__contains__/__len__ 훅 (interp.c 구현). */
+RValue *Interp_CallMethod(Interp *in, RValue *self, const char *name,
+                          RValue **args, size_t nargs);
+/* 함수/람다/내장/오버로드 값을 직접 호출한다 (interp.c 구현). */
+RValue *Interp_CallValue(Interp *in, RValue *callee, RValue **args, size_t nargs);
+/* 네이티브 심볼을 찾는다. 없으면 NULL. (interp.c 구현) */
+void *Interp_NativeSymbol(const char *name);
+int RValue_HasMethod(Interp *in, const RValue *v, const char *name);
 
 /* 구조체는 값 의미이므로 복사하고, 나머지는 같은 객체를 공유한다. */
 RValue *RValue_Copy(Interp *in, RValue *v);
@@ -415,7 +483,13 @@ AstBuiltin *Builtin_New(Interp *in, const char *name, BuiltinFn fn);
 AstBuiltin *Collection_Method(Interp *in, RValue *self, const char *name);
 AstBuiltin *String_Method(Interp *in, RValue *self, const char *name);
 AstModule *Module_New(Interp *in, const char *name, const char *path);
+AstModule *Module_Builtin(Interp *in, const char *name);   /* 없으면 NULL */
 void Module_AddExport(AstModule *module, Interp *in, const char *name);
 RValue *Module_GetExported(Interp *in, AstModule *module, const char *name);
+
+/* 'a.b' 모듈 파일을 찾는다. base_dir → stdlib_dir → module_dirs 순서. */
+int Aster_ResolveModuleFile(const char *base_dir, const char *stdlib_dir,
+                            const char **module_dirs, size_t nmodule_dirs,
+                            const char *name, char *out, size_t cap);
 
 #endif

@@ -1,0 +1,5 @@
+Traceback (most recent call last):
+  at outer (line 11)
+  at middle (line 7)
+  at inner (line 3)
+ZeroDivisionError

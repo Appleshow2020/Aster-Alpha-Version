@@ -1,2 +1,3 @@
+import System.stdout.*;
 a = [1, 2];
 println(a[5]);

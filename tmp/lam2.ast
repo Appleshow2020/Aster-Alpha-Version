@@ -1,0 +1,2 @@
+var f = x -> int => x + 1;
+println(f(9));

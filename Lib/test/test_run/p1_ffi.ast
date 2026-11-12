@@ -1,0 +1,5 @@
+import System.stdout.*;
+extern fn strlen(str text) -> int;
+
+println(strlen("aster"));
+println(strlen(""));

@@ -1,0 +1,48 @@
+import System.stdout.*;
+import aster.math as math;
+import aster.time as time;
+import aster.os as os;
+import aster.io as io;
+import aster.json as json;
+
+println(math.PI);
+println(math.sqrt(2.0));
+println(math.pow(2.0, 10.0));
+println(math.floor(3.7));
+println(math.ceil(3.2));
+println(math.round(2.5));
+println(math.factorial(5));
+println(math.gcd(48, 18));
+println(math.lcm(4, 6));
+println(math.isPrime(97));
+println(math.isPrime(91));
+println(math.degrees(math.PI));
+println(math.radians(180.0));
+println(math.sign(-3.0));
+println(math.clamp(15.0, 0.0, 10.0));
+println(math.isclose(0.5, 0.5000000001));
+println(math.isFinite(1.0));
+
+println(json.stringify({"name": "aster", "n": 3, "ok": true, "items": [1, 2.5, null]}));
+var parsed = json.parse("{\"a\": [1, 2, 3], \"b\": {\"c\": \"hi\\n\"}}");
+println(parsed["a"][2]);
+println(json.stringify(parsed["b"]["c"]));
+println(json.stringify(json.parse("[true, false, null, 1.5, \"x\"]")));
+println(json.stringify(json.parse("  {\"emoji\": \"\\ud83d\\ude00\"}  ")));
+println(json.prettify({"x": 1, "y": [1, 2]}, 2));
+
+println(io.exists("Lib/aster/math.ast"));
+println(io.exists("Lib/aster/nope.ast"));
+println(len(io.readLines("Lib/test/test_run/modules/helper.ast")));
+io.writeFile("build_stdlib_tmp.txt", "안녕 aster");
+println(io.readFile("build_stdlib_tmp.txt"));
+io.deleteFile("build_stdlib_tmp.txt");
+println(io.exists("build_stdlib_tmp.txt"));
+
+println(os.env("ASTER_STDLIB_TEST_MISSING") ?? "(none)");
+println(os.platform() != "");
+println(os.pid() > 0);
+var t1 = time.millis();
+time.sleepMillis(5);
+println(time.millis() >= t1);
+println(time.seconds() > 1000000000);

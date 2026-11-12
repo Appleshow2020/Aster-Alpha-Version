@@ -11,7 +11,7 @@
 #include "internal/runtime.h"
 #include "internal/typecheck.h"
 
-#define ASTER_VERSION "Alpha 1.0.1"
+#define ASTER_VERSION "Alpha 1.1.0"
 
 static char *read_stream(FILE *f, size_t *size)
 {
@@ -111,6 +111,7 @@ static void print_uncaught(const char *filename, Interp *in)
 {
     RValue *exc = in->exc;
 
+    Interp_PrintTraceback(stderr, in);
     if (exc && exc->kind == RV_EXC) {
         fprintf(stderr, "%s:%d: error: %s: ", filename, in->line, exc->u.exc->name);
         RValue_Print(stderr, exc->u.exc->message, 0);
@@ -207,14 +208,14 @@ int main(int argc, char **argv)
 
     if (mode == MODE_HELP) {
         puts("usage: aster [--ast|--tokens|--check|--no-check] FILE [ARGS...]");
-        puts("       aster [--ast|--tokens|--check] -    (표준 입력에서 읽는다)");
-        puts("       aster pkg <init|add|remove|list|check>   (패키지 관리자)");
-        puts("  (기본)      파일을 실행한다 (실행 전에 타입 검사를 한다)");
-        puts("  --ast       파싱한 AST를 출력한다");
-        puts("  --tokens    토큰 목록을 출력한다");
-        puts("  --check     정적 타입 검사만 수행한다");
-        puts("  --no-check  타입 검사 없이 실행한다");
-        puts("  --version   버전을 출력한다");
+        puts("       aster [--ast|--tokens|--check] -    (read from stdin)");
+        puts("       aster pkg <init|add|remove|list|check>   (package manager)");
+        puts("  (default)   run a file (type-checks before running)");
+        puts("  --ast       print the parsed AST");
+        puts("  --tokens    print the token list");
+        puts("  --check     type-check only");
+        puts("  --no-check  run without type checking");
+        puts("  --version   print the version");
         return 0;
     }
     if (mode == MODE_VERSION) {
@@ -249,8 +250,10 @@ int main(int argc, char **argv)
     else {
         Arena *arena = Arena_New();
         Interp interp;
+        TypeCheckEnv tenv;
         mod_ty mod;
         int failed;
+        int check_failed;
 
         mod = Aster_ParseFile(source, size, arena, &err);
         if (!mod) {
@@ -265,17 +268,6 @@ int main(int argc, char **argv)
             free(source);
             return 0;
         }
-        if (mode == MODE_CHECK) {
-            int errors = TypeCheck_Module(arena, mod, path);
-            Arena_Free(arena);
-            free(source);
-            return errors ? 1 : 0;
-        }
-        if (!no_check && TypeCheck_Module(arena, mod, path)) {
-            Arena_Free(arena);
-            free(source);
-            return 1;
-        }
 
         memset(&interp, 0, sizeof(interp));
         interp.arena = arena;
@@ -285,6 +277,24 @@ int main(int argc, char **argv)
         interp.argc = prog_argc;
         Interp_Init(&interp);
         Pkg_LoadDeps(arena, interp.base_dir, &interp);
+
+        tenv.base_dir = interp.base_dir;
+        tenv.stdlib_dir = interp.stdlib_dir;
+        tenv.module_dirs = interp.module_dirs;
+        tenv.nmodule_dirs = interp.nmodule_dirs;
+
+        if (mode == MODE_CHECK) {
+            check_failed = TypeCheck_ModuleEx(arena, mod, path, &tenv) != 0;
+            Arena_Free(arena);
+            free(source);
+            return check_failed ? 1 : 0;
+        }
+        if (!no_check && TypeCheck_ModuleEx(arena, mod, path, &tenv)) {
+            Arena_Free(arena);
+            free(source);
+            return 1;
+        }
+
         failed = Interp_RunModule(&interp, mod);
         if (failed)
             print_uncaught(path, &interp);

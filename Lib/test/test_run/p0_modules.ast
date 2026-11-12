@@ -1,3 +1,4 @@
+import System.stdout.*;
 import modules.helper as h;
 println(h.greet("aster"));
 println(h.answer);

@@ -1,3 +1,4 @@
+import System.stdout.*;
 fn safeDivide(int a, int b) -> int {
     if (b == 0) { throw "division by zero" as ValueError; }
     return a / b;

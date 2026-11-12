@@ -1,3 +1,4 @@
+import System.stdout.*;
 enum Color { RED, GREEN, BLUE }
 
 const int LIMIT = 3;

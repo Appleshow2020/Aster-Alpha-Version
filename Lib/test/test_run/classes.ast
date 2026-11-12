@@ -1,3 +1,4 @@
+import System.stdout.*;
 class Animal {
     protected str name;
     constructor(str n) { self->name = n; }

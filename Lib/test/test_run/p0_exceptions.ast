@@ -1,3 +1,4 @@
+import System.stdout.*;
 exception AppError extends Exception;
 
 class Animal {

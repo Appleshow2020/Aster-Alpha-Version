@@ -1,0 +1,29 @@
+/* aster.time: 시계와 지연 */
+
+extern fn _aster_now_ms() -> int;
+extern fn _aster_sleep_ms(int milliseconds) -> void;
+extern fn time(int pointer) -> int;
+extern fn clock() -> int;
+
+/* 에포크 기준 밀리초 */
+export fn millis() -> int {
+    return _aster_now_ms();
+}
+
+/* 에포크 기준 초 */
+export fn seconds() -> int {
+    return time(0);
+}
+
+/* 프로세스가 사용한 CPU 시간(ms) */
+export fn cpuMillis() -> int {
+    return clock() * 1000 / 1000000;
+}
+
+export fn sleepMillis(int milliseconds) -> void {
+    _aster_sleep_ms(milliseconds);
+}
+
+export fn sleep(int seconds_) -> void {
+    _aster_sleep_ms(seconds_ * 1000);
+}

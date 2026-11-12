@@ -1,0 +1,3 @@
+import System.stdout.*;
+fn(int) -> int double_it = (int x) -> int => x * 2;
+println(double_it(2));

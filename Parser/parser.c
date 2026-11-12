@@ -64,7 +64,7 @@ static void *xrealloc(void *p, size_t n)
 {
     void *q = realloc(p, n ? n : 1);
     if (!q) {
-        fputs("메모리가 부족합니다\n", stderr);
+        fputs("out of memory\n", stderr);
         abort();
     }
     return q;
@@ -225,7 +225,7 @@ static identifier p_name(Parser *p)
         p->pos++;
         return intern_token(p, t);
     }
-    expect_text(p, "이름");
+    expect_text(p, "a name");
     return NULL;
 }
 
@@ -236,7 +236,7 @@ static identifier p_attr_name(Parser *p)
         p->pos++;
         return intern_token(p, t);
     }
-    expect_text(p, "이름");
+    expect_text(p, "a name");
     return NULL;
 }
 
@@ -407,7 +407,7 @@ static typeref_ty p_primitive_type(Parser *p)
     AsterToken *t = cur(p);
     prim_ty kind;
     if (t->type != TOK_NAME) {
-        expect_text(p, "기본 타입");
+        expect_text(p, "a primitive type");
         return NULL;
     }
     if (tok_eq(t, "int"))
@@ -421,16 +421,71 @@ static typeref_ty p_primitive_type(Parser *p)
     else if (tok_eq(t, "null"))
         kind = NullT;
     else {
-        expect_text(p, "기본 타입");
+        expect_text(p, "a primitive type");
         return NULL;
     }
     p->pos++;
     return _Aster_Primitive(kind, p->arena);
 }
 
+static typeref_ty p_function_type(Parser *p)
+{
+    size_t start = p->pos;
+    Seq params = {0};
+    ret_ty ret;
+
+    if (!tok_eq(cur(p), "fn") || !tok_eq(tok_at(p, start + 1), "("))
+        return NULL;
+    p->pos++;
+    if (!accept(p, "(")) {
+        p->pos = start;
+        return NULL;
+    }
+    if (!accept(p, ")")) {
+        for (;;) {
+            typeref_ty param = p_type(p);
+            if (!param) {
+                seq_clear(&params);
+                p->pos = start;
+                return NULL;
+            }
+            seq_push(&params, param);
+            if (!accept(p, ","))
+                break;
+        }
+        if (!accept(p, ")")) {
+            seq_clear(&params);
+            p->pos = start;
+            return NULL;
+        }
+    }
+    if (!accept(p, "->")) {
+        seq_clear(&params);
+        p->pos = start;
+        return NULL;
+    }
+    if (tok_eq(cur(p), "void")) {
+        p->pos++;
+        ret = _Aster_VoidRet(p->arena);
+    }
+    else {
+        typeref_ty result = p_type(p);
+        if (!result) {
+            seq_clear(&params);
+            p->pos = start;
+            return NULL;
+        }
+        ret = _Aster_ValueRet(result, p->arena);
+    }
+    return _Aster_FunctionTy(seq_make(&params, p->arena), ret, p->arena);
+}
+
 static typeref_ty p_type_base(Parser *p)
 {
-    typeref_ty base = p_primitive_type(p);
+    typeref_ty base = p_function_type(p);
+    if (base)
+        return base;
+    base = p_primitive_type(p);
     if (base)
         return base;
     if (accept(p, "struct")) {
@@ -519,7 +574,7 @@ static typeref_ty p_declared_named_type(Parser *p)
     identifier name;
     asdl_seq *args;
     if (!is_declared_type_name(p, t)) {
-        expect_text(p, "선언된 타입 이름");
+        expect_text(p, "a declared type name");
         return NULL;
     }
     name = intern_token(p, t);
@@ -592,7 +647,7 @@ static int64_t token_int(Parser *p, size_t index)
     errno = 0;
     v = strtoll(buf, NULL, 10);
     if (errno == ERANGE)
-        syntax_error_at(p, index, "정수 리터럴이 너무 큽니다");
+        syntax_error_at(p, index, "integer literal is too large");
     if (buf != small)
         free(buf);
     return (int64_t)v;
@@ -984,7 +1039,7 @@ static expr_ty p_fstring(Parser *p)
         size_t i = 0;
 
         if (!decoded)
-            syntax_error_at(p, p->pos, "잘못된 문자열 리터럴: %s", err.message);
+            syntax_error_at(p, p->pos, "invalid string literal: %s", err.message);
 
         while (i < (size_t)len) {
             char c = decoded[i];
@@ -1000,7 +1055,7 @@ static expr_ty p_fstring(Parser *p)
             }
             if (c == '}') {
                 free(decoded);
-                syntax_error_at(p, p->pos, "f-string에 짝이 맞지 않는 '}'가 있습니다");
+                syntax_error_at(p, p->pos, "unmatched '}' in f-string");
             }
             if (c != '{') {
                 fstr_push_char(&lit, &lit_len, &lit_cap, c);
@@ -1016,7 +1071,7 @@ static expr_ty p_fstring(Parser *p)
                 AsterError e;
 
                 if (j >= (size_t)len || decoded[j] == '}')
-                    syntax_error_at(p, p->pos, "f-string의 중괄호가 비었습니다");
+                    syntax_error_at(p, p->pos, "empty braces in f-string");
 
                 while (j < (size_t)len) {
                     char d = decoded[j];
@@ -1038,14 +1093,14 @@ static expr_ty p_fstring(Parser *p)
                     j++;
                 }
                 if (j >= (size_t)len)
-                    syntax_error_at(p, p->pos, "f-string에서 '}'가 필요합니다");
+                    syntax_error_at(p, p->pos, "'}' expected in f-string");
                 expr_end = j;
 
                 if (decoded[j] == '!') {
                     char conv = j + 1 < (size_t)len ? decoded[j + 1] : 0;
                     if (conv != 'r' && conv != 's')
                         syntax_error_at(p, p->pos,
-                                        "f-string 변환은 !r 또는 !s만 쓸 수 있습니다");
+                                        "f-string conversion must be !r or !s");
                     conversion = conv;
                     j += 2;
                 }
@@ -1056,7 +1111,7 @@ static expr_ty p_fstring(Parser *p)
                         j++;
                 }
                 if (j >= (size_t)len || decoded[j] != '}')
-                    syntax_error_at(p, p->pos, "f-string에서 '}'가 필요합니다");
+                    syntax_error_at(p, p->pos, "'}' expected in f-string");
 
                 if (lit_len > 0) {
                     Value v = Value_Obj((Object *)AsterString_FromUTF8(lit, lit_len));
@@ -1067,7 +1122,7 @@ static expr_ty p_fstring(Parser *p)
                                               p->arena, &e);
                 if (!value) {
                     free(decoded);
-                    syntax_error_at(p, p->pos, "f-string 식이 잘못되었습니다: %s",
+                    syntax_error_at(p, p->pos, "invalid f-string expression: %s",
                                     e.message);
                 }
                 {
@@ -1142,7 +1197,7 @@ static expr_ty p_conversion_expr(Parser *p)
                            ATTRS(p, start), p->arena);
     }
     if (asdl_seq_LEN(args) != 1)
-        syntax_error_at(p, start, "변환에는 인자를 하나만 넘길 수 있습니다");
+        syntax_error_at(p, start, "conversion takes exactly one argument");
     return _Aster_Cast(ty, (expr_ty)asdl_seq_GET(args, 0), ATTRS(p, start), p->arena);
 }
 
@@ -1208,7 +1263,7 @@ static expr_ty p_primary(Parser *p)
         Value v;
         decoded = Aster_DecodeString(t->start, t->length, &len, &e);
         if (!decoded)
-            syntax_error_at(p, start, "잘못된 문자열 리터럴: %s", e.message);
+            syntax_error_at(p, start, "invalid string literal: %s", e.message);
         v = Value_Obj((Object *)AsterString_FromUTF8(decoded, (size_t)len));
         free(decoded);
         p->pos++;
@@ -1264,7 +1319,7 @@ static expr_ty p_primary(Parser *p)
         return NULL;
     }
 
-    expect_text(p, "식");
+    expect_text(p, "an expression");
     p->pos = start;
     return NULL;
 }
@@ -1428,7 +1483,7 @@ static expr_ty p_unary(Parser *p)
         if (operand->kind != Name_kind && operand->kind != Attribute_kind &&
             operand->kind != PtrAttribute_kind && operand->kind != Subscript_kind &&
             operand->kind != Deref_kind) {
-            expect_text(p, "증감할 수 있는 대상");
+            expect_text(p, "an incrementable target");
             p->pos = start;
             return NULL;
         }
@@ -1557,10 +1612,36 @@ static int p_comp_op(Parser *p)
     return 0;
 }
 
+/* 일반 식 수준의 포함 범위: 1..5, 1..n+1, 1..5..2 */
+static expr_ty p_range_value(Parser *p)
+{
+    size_t start = p->pos;
+    expr_ty lo = p_arith(p);
+    expr_ty hi, step = NULL;
+    if (!lo) {
+        p->pos = start;
+        return NULL;
+    }
+    if (!accept(p, ".."))
+        return lo;
+    hi = p_arith(p);
+    if (!hi)
+        syntax_error_at(p, p->pos, "range end expression is required after '..'");
+    {
+        size_t mark = p->pos;
+        if (accept(p, "..")) {
+            step = p_arith(p);
+            if (!step)
+                p->pos = mark;
+        }
+    }
+    return _Aster_Range(lo, hi, step, ATTRS(p, start), p->arena);
+}
+
 static expr_ty p_comparison(Parser *p)
 {
     size_t start = p->pos;
-    expr_ty left = p_arith(p);
+    expr_ty left = p_range_value(p);
     size_t mark;
     if (!left) {
         p->pos = start;
@@ -1570,7 +1651,7 @@ static expr_ty p_comparison(Parser *p)
     if (tok_eq(cur(p), "not") && tok_eq(tok_at(p, p->pos + 1), "in")) {
         expr_ty right;
         p->pos += 2;
-        right = p_arith(p);
+        right = p_range_value(p);
         if (right)
             return _Aster_UnaryOp(Not, _Aster_In(left, right, ATTRS(p, start), p->arena),
                                   ATTRS(p, start), p->arena);
@@ -1589,14 +1670,14 @@ static expr_ty p_comparison(Parser *p)
         }
     }
     else if (accept(p, "in")) {
-        expr_ty right = p_arith(p);
+        expr_ty right = p_range_value(p);
         if (right)
             return _Aster_In(left, right, ATTRS(p, start), p->arena);
     }
     else {
         int op = p_comp_op(p);
         if (op) {
-            expr_ty right = p_arith(p);
+            expr_ty right = p_range_value(p);
             if (right)
                 return _Aster_Compare(left, (cmpop_ty)op, right, ATTRS(p, start), p->arena);
         }
@@ -1719,6 +1800,32 @@ static expr_ty p_lambda_body(Parser *p)
     return e;
 }
 
+/* 람다 매개변수: '타입 이름' 또는 '이름' 둘 다 허용한다. */
+static asdl_seq *p_lambda_params(Parser *p)
+{
+    size_t start = p->pos;
+    Seq out = {0};
+    for (;;) {
+        size_t mark = p->pos;
+        typeref_ty ty = p_type(p);
+        identifier name = ty ? p_name(p) : NULL;
+        if (!ty || !name) {
+            p->pos = mark;
+            ty = NULL;
+            name = p_name(p);
+        }
+        if (!name) {
+            seq_clear(&out);
+            p->pos = start;
+            return NULL;
+        }
+        seq_push(&out, _Aster_lparam(ty, name, p->arena));
+        if (!accept(p, ","))
+            break;
+    }
+    return seq_make(&out, p->arena);
+}
+
 static expr_ty p_lambda_expr(Parser *p)
 {
     size_t start = p->pos;
@@ -1726,42 +1833,90 @@ static expr_ty p_lambda_expr(Parser *p)
     Seq params = {0};
     expr_ty body;
     ret_ty returns;
+    int new_style = 0;
 
+    /* 새 문법: '매개변수 -> 반환타입 => 본문', 옛 문법: 'x => 본문 -> 타입' */
     if (t->type == TOK_NAME && !is_hard_token(t) && p->pos + 1 < p->n &&
-        tok_eq(tok_at(p, p->pos + 1), "=>")) {
+        (tok_eq(tok_at(p, p->pos + 1), "->") ||
+         tok_eq(tok_at(p, p->pos + 1), "=>"))) {
         identifier name = intern_token(p, t);
-        p->pos += 2;
+        new_style = tok_eq(tok_at(p, p->pos + 1), "->");
+        p->pos += 1;
         seq_push(&params, _Aster_lparam(NULL, name, p->arena));
     }
     else if (at(p, "(")) {
         asdl_seq *ps;
         size_t i;
         p->pos++;
-        ps = at(p, ")") ? empty_seq(p) : p_parameters(p);
-        if (!ps || !(accept(p, ")") && accept(p, "=>"))) {
+        ps = at(p, ")") ? empty_seq(p) : p_lambda_params(p);
+        if (!ps || !accept(p, ")")) {
             seq_clear(&params);
             p->pos = start;
             return NULL;
         }
         for (i = 0; i < asdl_seq_LEN(ps); i++) {
-            param_ty pr = (param_ty)asdl_seq_GET(ps, i);
+            lparam_ty pr = (lparam_ty)asdl_seq_GET(ps, i);
             seq_push(&params, _Aster_lparam(pr->ty, pr->name, p->arena));
+        }
+        if (at(p, "->"))
+            new_style = 1;
+        else if (!at(p, "=>")) {
+            seq_clear(&params);
+            p->pos = start;
+            return NULL;
+        }
+        else {
+            /* 옛 문법의 괄호 매개변수는 타입이 있어야 한다. */
+            for (i = 0; i < asdl_seq_LEN(ps); i++) {
+                lparam_ty pr = (lparam_ty)asdl_seq_GET(ps, i);
+                if (!pr->ty) {
+                    seq_clear(&params);
+                    p->pos = start;
+                    return NULL;
+                }
+            }
         }
     }
     else {
         return NULL;
     }
 
+    if (new_style) {
+        returns = accept(p, "->") ? p_return_type(p) : NULL;
+        if (!returns || !accept(p, "=>")) {
+            /* 'p->x' 같은 포인터 접근일 수 있으므로 조용히 되돌린다. */
+            seq_clear(&params);
+            p->pos = start;
+            return NULL;
+        }
+        body = p_pipe_expr(p);
+        if (!body) {
+            seq_clear(&params);
+            p->pos = start;
+            return NULL;
+        }
+        return _Aster_Lambda(seq_make(&params, p->arena), returns, body,
+                             ATTRS(p, start), p->arena);
+    }
+
+    /* 옛 문법: '매개변수 => 본문 -> 반환타입' */
+    if (!accept(p, "=>")) {
+        seq_clear(&params);
+        p->pos = start;
+        return NULL;
+    }
     body = p_lambda_body(p);
     if (!body)
-        syntax_error_at(p, p->pos, "람다 본문(식)이 필요합니다");
+        syntax_error_at(p, p->pos, "lambda body expression is required");
     if (!accept(p, "->"))
-        syntax_error_at(p, p->pos, "람다에는 반환 타입이 필요합니다: 'x => 식 -> 타입' 형태로 쓰세요");
+        syntax_error_at(p, p->pos,
+                        "lambda needs a return type: use 'x => expr -> type'");
     returns = p_return_type(p);
     if (!returns)
-        syntax_error_at(p, p->pos, "람다의 '->' 뒤에는 반환 타입이 필요합니다");
+        syntax_error_at(p, p->pos, "lambda return type is required after '->'");
     if (at(p, "->"))
-        syntax_error_at(p, p->pos, "람다 본문의 포인터 접근(->)은 괄호로 감싸야 합니다: (p->x)");
+        syntax_error_at(p, p->pos,
+                        "pointer access (->) in a lambda body must be parenthesized: (p->x)");
     return _Aster_Lambda(seq_make(&params, p->arena), returns, body,
                          ATTRS(p, start), p->arena);
 }
@@ -2361,7 +2516,7 @@ static expr_ty p_assign_target(Parser *p)
             target->kind == PtrAttribute_kind || target->kind == Subscript_kind ||
             target->kind == Tuple_kind)
             return target;
-        expect_text(p, "대입할 수 있는 좌변");
+        expect_text(p, "an assignable target");
         p->pos = start;
         return NULL;
     }
@@ -2724,7 +2879,7 @@ static member_ty p_setter_def(Parser *p)
     }
     if (strcmp(param_name, "value") != 0)
         syntax_error_at(p, param_index,
-                        "setter의 매개변수 이름은 value여야 합니다 ('%s')", param_name);
+                        "setter parameter must be named 'value' (got '%s')", param_name);
     body = p_block(p);
     if (!body) {
         p->pos = start;
@@ -2926,7 +3081,7 @@ static struct_member_ty p_struct_constructor(Parser *p)
     }
     if (!allowed)
         syntax_error_at(p, name_index,
-                        "구조체 생성자의 이름은 구조체 이름과 같아야 합니다: '%s'", name);
+                        "struct constructor name must match the struct name: '%s'", name);
     params = at(p, ")") ? empty_seq(p) : p_parameters(p);
     if (!params || !accept(p, ")")) {
         p->pos = start;
@@ -3214,7 +3369,7 @@ static stmt_ty p_range_for_stmt(Parser *p)
     }
     if (strcmp(name, target) != 0)
         syntax_error_at(p, target_index,
-                        "범위 for의 변수 이름이 같아야 합니다: '%s'를 선언하고 '%s'에 대입했습니다",
+                        "range for variable names must match: declared '%s' but assigned '%s'",
                         name, target);
     body = p_block(p);
     if (!body) {
@@ -3446,7 +3601,9 @@ static stmt_ty p_export_decl(Parser *p)
         p->pos = start;
         return NULL;
     }
-    inner = p_function_def(p);
+    inner = p_extern_def(p);
+    if (!inner)
+        inner = p_function_def(p);
     if (!inner)
         inner = p_class_def(p);
     if (!inner)
@@ -3526,7 +3683,7 @@ static mod_ty p_file(Parser *p)
     while ((s = p_statement(p)) != NULL)
         seq_push(&body, s);
     if (cur(p)->type != TOK_ENDMARKER) {
-        expect_text(p, "'파일 끝'");
+        expect_text(p, "'end of file'");
         seq_clear(&body);
         p->pos = start;
         return NULL;
@@ -3556,7 +3713,7 @@ static void generic_error(Parser *p)
         p->err->col = prev->end_col;
         p->err->length = 1;
         snprintf(p->err->message, sizeof p->err->message,
-                 "문법 오류: 줄 끝에 ';'가 빠졌습니다");
+                 "syntax error: missing ';' at end of line");
         return;
     }
 
@@ -3593,16 +3750,16 @@ static void generic_error(Parser *p)
         p->err->length = width > 0 ? width : 1;
         if (t->type == TOK_ENDMARKER) {
             snprintf(p->err->message, sizeof p->err->message,
-                     "문법 오류: 예상하지 못한 파일 끝");
+                     "syntax error: unexpected end of file");
         }
         else {
             snprintf(p->err->message, sizeof p->err->message,
-                     "문법 오류: 예상하지 못한 '%.*s'", t->length, t->start);
+                     "syntax error: unexpected '%.*s'", t->length, t->start);
         }
         if (count > 0) {
             size_t used = strlen(p->err->message);
             snprintf(p->err->message + used, sizeof p->err->message - used,
-                     " (%s 중 하나가 필요합니다)", shown);
+                     " (%s expected)", shown);
         }
     }
 }
@@ -3687,7 +3844,7 @@ expr_ty Aster_ParseExpression(const char *source, size_t length, Arena *arena,
             err->line = t->line;
             err->col = t->col;
             err->length = t->end_line == t->line ? t->end_col - t->col : 1;
-            snprintf(err->message, sizeof err->message, "문법 오류: 예상하지 못한 '%.*s'",
+            snprintf(err->message, sizeof err->message, "syntax error: unexpected '%.*s'",
                      t->length, t->start);
         }
         parser_free(p);

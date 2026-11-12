@@ -1,0 +1,15 @@
+import System.stdout.*;
+fn inner(int d) -> int {
+    return 10 / d;
+}
+
+fn middle(int d) -> int {
+    return inner(d);
+}
+
+fn outer() -> int {
+    return middle(0);
+}
+
+println("start");
+outer();

@@ -12,22 +12,41 @@ aster program.ast [인자...]
 aster -                    # 표준 입력에서 읽는다
 ```
 
-| 옵션 | 의미 |
-| --- | --- |
-| (없음) | 타입 검사 후 실행 |
-| `--check` | 타입 검사만 수행 (실행하지 않음) |
-| `--no-check` | 타입 검사를 건너뛰고 실행 |
-| `--ast` | 파싱한 AST를 출력 |
-| `--tokens` | 토큰 목록을 출력 |
-| `--version`, `-V` | 버전 출력 |
-| `--help`, `-h` | 도움말 |
+| 옵션              | 의미                             |
+| ----------------- | -------------------------------- |
+| (없음)            | 타입 검사 후 실행                |
+| `--check`         | 타입 검사만 수행 (실행하지 않음) |
+| `--no-check`      | 타입 검사를 건너뛰고 실행        |
+| `--ast`           | 파싱한 AST를 출력                |
+| `--tokens`        | 토큰 목록을 출력                 |
+| `--version`, `-V` | 버전 출력                        |
+| `--help`, `-h`    | 도움말                           |
 
 스크립트는 위에서부터 순서대로 실행됩니다. `main()`은 자동으로 호출되지 않으므로
 필요하면 직접 호출합니다. 파일 이름 뒤의 인자는 `System.args`로 들어갑니다.
 
 ```aster
+import System;
+import System.stdout.*;
+
 println("인자 수: " + str(len(System.args)));
 ```
+
+`print`/`println`과 `System.*`는 전역이 아니라 내장 모듈입니다. 쓰려면 먼저
+import해야 하며, import하지 않으면 `NameError`입니다.
+
+```aster
+import System;             // System.out / System.err / System.in / System.args ...
+import System.stdout.*;    // print, println
+import System.stderr.*;    // print, println (표준 에러로 출력)
+
+println("hello");
+System.out.println("hello");
+System.err.println("error");
+```
+
+이 문서의 예제에서 `println`/`print`를 쓰려면 `import System.stdout.*;`가
+필요합니다.
 
 ## 2. 어휘 규칙
 
@@ -39,9 +58,9 @@ println("인자 수: " + str(len(System.args)));
 - **숫자**: 10진 정수와 소수(`3`, `1.5`). 지수 표기는 지원하지 않습니다.
 - **식별자**: 문자, 숫자, `_`로 구성되며 숫자로 시작할 수 없습니다.
 - **하드 키워드**: `package import from as fn class extends implements interface new
-  self public protected private internal if else while for break continue return
-  throw try catch finally typedef struct and or not is in true false sizeof
-  int float bool str null void super exception export yield`
+self public protected private internal if else while for break continue return
+throw try catch finally typedef struct and or not is in true false sizeof
+int float bool str null void super exception export yield`
 - **소프트 키워드**: `const static enum assert extern constructor getter setter property`.
   지정된 위치에서만 키워드로 취급되므로 변수 이름으로도 쓸 수 있습니다.
   (`yield`는 하드 키워드입니다.)
@@ -52,14 +71,14 @@ println("인자 수: " + str(len(System.args)));
 
 ### 기본 타입
 
-| 타입 | 설명 |
-| --- | --- |
-| `int` | 64비트 정수 |
+| 타입    | 설명                |
+| ------- | ------------------- |
+| `int`   | 64비트 정수         |
 | `float` | 배정밀도 부동소수점 |
-| `bool` | `true`, `false` |
-| `str` | UTF-8 문자열 |
-| `null` | null 값의 타입 |
-| `void` | 반환 타입 전용 |
+| `bool`  | `true`, `false`     |
+| `str`   | UTF-8 문자열        |
+| `null`  | null 값의 타입      |
+| `void`  | 반환 타입 전용      |
 
 그 밖에 사용자가 선언한 클래스, 인터페이스, 구조체, 예외, 열거형, 제네릭 타입이 있습니다.
 
@@ -77,7 +96,24 @@ dict<str, int> m;
 
 - nullable 표시 `?`는 타입의 맨 끝에만 붙일 수 있습니다. `int?*`는 오류입니다.
 - `void`는 변수, 필드, 매개변수 타입으로 쓸 수 없고 반환 타입에만 쓸 수 있습니다.
-- 함수 타입 표기는 없습니다. 람다는 값을 담을 때 `var`나 `any`를 씁니다.
+- 함수 타입은 `fn(매개변수 타입, ...) -> 반환 타입`으로 씁니다. 반환하지 않으면
+  `void`입니다.
+
+```aster
+fn(int) -> int twice = double_number;   // 이름 있는 함수를 담는 함수 타입 변수
+list<fn(int) -> bool> predicates = [];
+```
+
+함수 타입은 변수, 매개변수, 반환 타입, 제네릭 인자에 모두 쓸 수 있습니다. 다만
+**람다를 선언할 때는 함수 타입을 붙이지 않습니다.** 람다는 `var`(또는 타입 생략)나
+람다의 반환 타입을 씁니다.
+
+```aster
+var a = (int x) -> int => x * 2;
+float b = (int x) -> float => (float)x;
+
+fn(int) -> int c = (int x) -> int => x * 2;   // 오류
+```
 
 ### 타입 추론과 `const`
 
@@ -97,7 +133,7 @@ var xs = [1, 2, 3];     // list<int>
 int x;                  // 0
 float f;                // 0.0
 bool b;                 // false
-str s;                  // null
+str s;                  // ""
 Point* p;               // null
 Point p2 = {1, 2};      // 구조체 위치 초기화
 Point p3 = { .y = 2, .x = 1 };
@@ -107,21 +143,21 @@ Point p3 = { .y = 2, .x = 1 };
 
 우선순위는 낮은 것부터:
 
-| 연산자 | 설명 |
-| --- | --- |
-| `x => ... -> T` | 람다 |
-| `a \|> f` | 파이프 ( `f(a)` ) |
-| `a ?? b` | null 병합 (왼쪽이 null이면 오른쪽) |
-| `or` | 논리 합 (단락 평가) |
-| `and` | 논리 곱 (단락 평가) |
-| `not` | 논리 부정 |
-| `is`, `is not`, `in`, `not in` | 타입 검사, 포함 검사 |
-| `== != < <= > >=` | 비교 (연쇄 불가) |
-| `+ -` | 덧셈, 뺄셈, 문자열/리스트 연결 |
-| `* / // %` | 곱셈, 나눗셈, 몫, 나머지 |
-| `**` | 거듭제곱 (오른쪽 결합) |
-| `+ - ++ -- & * **` | 단항 |
-| `. -> ?. () [] ++ --` | 후위 |
+| 연산자                         | 설명                               |
+| ------------------------------ | ---------------------------------- |
+| `params -> T => 식`            | 람다                               |
+| `a \|> f`                      | 파이프 ( `f(a)` )                  |
+| `a ?? b`                       | null 병합 (왼쪽이 null이면 오른쪽) |
+| `or`                           | 논리 합 (단락 평가)                |
+| `and`                          | 논리 곱 (단락 평가)                |
+| `not`                          | 논리 부정                          |
+| `is`, `is not`, `in`, `not in` | 타입 검사, 포함 검사               |
+| `== != < <= > >=`              | 비교 (연쇄 불가)                   |
+| `+ -`                          | 덧셈, 뺄셈, 문자열/리스트 연결     |
+| `* / // %`                     | 곱셈, 나눗셈, 몫, 나머지           |
+| `**`                           | 거듭제곱 (오른쪽 결합)             |
+| `+ - ++ -- & * **`             | 단항                               |
+| `. -> ?. () [] ++ --`          | 후위                               |
 
 ### 산술
 
@@ -291,24 +327,64 @@ int x = id(3);              // T는 호출 시 추론
 ### 람다
 
 ```aster
-var double = x => x * 2 -> int;
-var add = (int a, int b) => a + b -> int;
-var make = () => 42 -> int;
+var double = x -> int => x * 2;
+var add = (int a, int b) -> int => a + b;
+var make = () -> int => 42;
+
+double_it = (int x) -> int => x * 2;   // var 없이 선언해도 된다
+float half = (int x) -> float => (float)x;   // 선언 타입 = 람다의 반환 타입
 ```
 
-- 반환 타입은 필수입니다.
-- 매개변수가 하나면 타입을 생략할 수 있습니다. 둘 이상이면 타입이 필요합니다.
-- 본문 최상위의 `->`는 반환 타입 화살표로 읽힙니다. 포인터 멤버 접근은 괄호로
-  감쌉니다: `x => (p->v) -> int`.
+- 형식은 `매개변수 -> 반환타입 => 본문`입니다. 반환 타입은 필수입니다.
+- 매개변수는 `(타입 이름, ...)` 괄호 목록입니다. 이름만 쓸 수도 있습니다.
+- 본문은 식 하나입니다. 포인터 멤버 접근(`p->x`)도 그대로 쓸 수 있습니다.
+- 람다를 변수에 넣을 때 선언 타입은 `var`이거나 **람다의 반환 타입**입니다.
+  함수 타입 `fn(...) -> T`을 붙이면 오류입니다.
+- 옛 문법 `x => 식 -> 타입`, `(int a, int b) => 식 -> 타입`도 계속 동작합니다.
+  옛 문법에서 본문 최상위의 `->`는 반환 타입 화살표로 읽히므로 포인터 멤버
+  접근은 괄호로 감쌉니다: `x => (p->v) -> int`.
+
+### 함수 타입
+
+`fn(...) -> T`는 값의 타입으로 쓸 수 있습니다. 변수, 매개변수, 반환 타입, 제네릭
+인자 어디에나 올 수 있습니다.
+
+```aster
+fn apply(fn(int) -> int f, int v) -> int { return f(v); }
+
+fn(int) -> int double_it = double_number;   // 이름 있는 함수
+println(apply(double_it, 4));               // 8
+
+var triple = (int x) -> int => x * 3;       // 람다는 var로
+println(apply(triple, 4));                  // 12
+
+list<fn(int) -> bool> predicates = [];
+```
+
+함수 타입 값에는 일반 함수, 람다, 메서드 참조를 넣을 수 있습니다. 다만 람다를
+변수로 선언할 때 함수 타입을 붙이지 말고 `var`나 람다의 반환 타입을 씁니다.
+타입 검사기는 매개변수 개수와 타입, 반환 타입이 같은지를 검사합니다
+(`int`→`float` 허용 규칙은 함수 타입에도 적용됩니다).
 
 ### extern
 
 ```aster
 extern fn puts(str text) -> int;
+extern fn sqrt(float x) -> float;
 ```
 
-본문 없이 선언만 합니다. 실행 파일에는 외부 함수 연결이 없으므로 호출하면
-`RuntimeError`가 납니다. 타입 검사용 선언으로 취급합니다.
+`extern`은 본문 없이 C 함수를 선언합니다. 선언을 읽는 시점에 구현을 확인하며,
+프로세스에서 그 이름의 C 심볼(또는 같은 이름의 내장 함수)을 찾지 못하면
+`NotImplementedError: extern function '...' has no native implementation`이 납니다.
+호출하면 찾은 심볼을 그대로 호출합니다.
+
+- Windows: 현재 실행 파일, `msvcrt`/`ucrtbase`/`kernel32`에서 찾습니다.
+- 그 밖의 플랫폼: `dlsym(RTLD_DEFAULT, 이름)`으로 찾습니다.
+
+지원 인자/반환 타입은 `int`(포인터 크기 정수), `bool`, `float`(double), `str`
+(`char*`로 전달)입니다. 인자는 최대 4개까지 넘길 수 있고, `float` 인자와 다른
+인자를 섞을 수 없습니다. 심볼을 찾지 못하면 `NotImplementedError`가 납니다.
+`Lib/aster/math.ast`가 이 방식으로 libm을 그대로 노출합니다.
 
 ### 오버로드
 
@@ -323,6 +399,48 @@ fn area(float r) -> float { return 3.14 * r * r; }
 정의가 우선입니다. 반환 타입만 다른 오버로드는 구분하지 않습니다. 클래스 메서드와
 `static` 메서드에도 같은 규칙이 적용됩니다.
 
+### 연산자 오버로딩
+
+클래스에 특별한 이름의 메서드를 정의하면 연산자와 내장 함수가 그 메서드를
+호출합니다.
+
+| 메서드                                                                                         | 쓰이는 곳                            |
+| ---------------------------------------------------------------------------------------------- | ------------------------------------ |
+| `__add__ __sub__ __mul__ __div__ __floordiv__ __mod__ __pow__`                                  | 산술 `+ - * / // % **`               |
+| `__radd__ __rsub__ __rmul__ __rdiv__ __rfloordiv__ __rmod__ __rpow__`                          | 오른쪽 피연산자일 때의 산술          |
+| `__eq__ __lt__ __le__ __gt__ __ge__`                                                           | 비교                                 |
+| `__neg__`                                                                                      | 단항 `-`                             |
+| `__str__ __repr__`                                                                             | 문자열 변환, `print`/repr            |
+| `__len__`                                                                                      | `len()`                              |
+| `__getitem__ __setitem__`                                                                      | 인덱스 읽기/쓰기                     |
+| `__contains__`                                                                                 | `in`                                 |
+| `__iter__ __next__`                                                                            | `for-in`, 순회                       |
+
+```aster
+class Vec {
+    public float x;
+    public float y;
+    constructor(float x, float y) { self->x = x; self->y = y; }
+
+    public fn __add__(Vec other) -> Vec {
+        return new Vec(self->x + other.x, self->y + other.y);
+    }
+    public fn __eq__(Vec other) -> bool { return self->x == other.x and self->y == other.y; }
+    public fn __str__() -> str { return "Vec(" + str(self->x) + ", " + str(self->y) + ")"; }
+    public fn __len__() -> int { return 2; }
+}
+
+Vec a = new Vec(1.0, 2.0);
+Vec b = new Vec(3.0, 4.0);
+println(a + b);            // Vec(4.0, 6.0)
+println(a == new Vec(1.0, 2.0));   // true
+```
+
+- 왼쪽 피연산자 객체의 메서드를 먼저 찾고, 없으면 오른쪽의 `__r...__`를 씁니다.
+- 비교 훅의 결과는 `bool`로 해석합니다.
+- `__str__`/`__repr__`은 `str`을, `__len__`은 `int`를 돌려주어야 합니다.
+- 왼쪽 객체가 `__add__`를 가지고 있으면 문자열 자동 변환보다 훅이 우선합니다.
+
 ### 제너레이터
 
 ```aster
@@ -336,17 +454,42 @@ fn odds(int n) -> list<int> {
 for (int v in odds(5)) { println(v); }
 
 var g = odds(3);
-println(next(g));       // 1
-println(len(g));        // 남은 개수
-println(list(g));       // 남은 값을 리스트로
+println(next(g));       // 1  (여기서 본문이 2번째 yield까지 실행된다)
+println(list(g));       // [9]  (남은 값)
+println(list(g));       // []
 ```
 
-본문에 `yield`가 하나라도 있으면 그 함수는 제너레이터 함수가 됩니다. Aster의
-제너레이터는 **열성 평가**입니다. 함수를 호출하는 순간 본문이 끝까지 실행되며
-`yield`된 값이 모두 모입니다. 그 뒤 `next()`/`for-in`은 모인 값을 순서대로 돌려줍니다.
-남은 값이 없으면 `next()`가 `StopIteration`을 던집니다. `return`은 수집을 끝내고,
+본문에 `yield`가 하나라도 있으면 그 함수는 제너레이터 함수가 됩니다. 호출하면
+본문을 실행하지 않고 제너레이터 값을 돌려줍니다. `next()`나 `for-in`이 값을
+요청할 때마다 다음 `yield`까지 본문이 **지연 실행**되고, 그 지점에서 멈춥니다.
+남은 값이 없으면 `next()`가 `StopIteration`을 던집니다. `return`은 순회를 끝내고,
 `break`/`continue`가 반복문 밖에서 함수를 빠져나가면 `RuntimeError`입니다.
-최상위 문장의 `yield`는 타입 검사에서 거부됩니다.
+최상위 문장의 `yield`는 타입 검사에서 거부됩니다. 제너레이터에는 `len()`을 쓸 수
+없고, 남은 값은 `list(g)`로 꺼냅니다.
+
+`for-in`은 다음 순서로 대상을 엽니다.
+
+1. `list`/`tuple`/`dict`(키)/`set`/`frozenset`/`str`(코드포인트) 같은 내장 컬렉션
+2. 제너레이터
+3. `__next__`를 가진 객체, 또는 `__iter__`가 순회자를 돌려주는 객체
+
+사용자 클래스로 순회자를 만들려면 `__iter__`(자기 자신 반환)와 `__next__`를
+정의하고, 끝에서 `StopIteration`을 던집니다.
+
+```aster
+class Countdown {
+    private int left;
+    constructor(int n) { self->left = n; }
+    public fn __iter__() -> Countdown { return self; }
+    public fn __next__() -> int {
+        if (self->left <= 0) { throw StopIteration(); }
+        self->left -= 1;
+        return self->left;
+    }
+}
+
+for (int v in new Countdown(3)) { println(v); }   // 2, 1, 0
+```
 
 ## 7. 클래스, 인터페이스, 구조체
 
@@ -370,7 +513,9 @@ println(p->sum());
 ```
 
 - 필드와 메서드에는 `public`, `protected`, `private`, `internal`을 붙일 수 있습니다.
-  생략하면 `private`입니다.
+  접근 제어는 **명시한 경우에만** 타입 검사기가 강제합니다. 생략하면 제한이 없습니다.
+  `private`는 선언한 클래스 안에서만, `protected`는 그 클래스와 하위 클래스에서만
+  쓸 수 있습니다. `internal`은 모듈 밖에서도 쓸 수 있습니다(현재 검사 없음).
 - 생성자는 `constructor(...)`로 쓰고 반환 타입을 쓰지 않습니다.
 - 인스턴스에는 `self`, 멤버 접근에는 `->`를 씁니다. 타입 이름이 붙은 정적 멤버에는
   `.`을 씁니다.
@@ -497,16 +642,28 @@ try {
 
 `throw`의 형태:
 
-| 형태 | 결과 |
-| --- | --- |
-| `throw "메시지";` | `Exception("메시지")` |
-| `throw "메시지" as ValueError;` | `ValueError("메시지")` |
-| `throw ValueError;` | 메시지 없는 `ValueError` |
-| `throw 예외값;` | 그 예외 값 |
+| 형태                            | 결과                     |
+| ------------------------------- | ------------------------ |
+| `throw "메시지";`               | `Exception("메시지")`    |
+| `throw "메시지" as ValueError;` | `ValueError("메시지")`   |
+| `throw ValueError;`             | 메시지 없는 `ValueError` |
+| `throw 예외값;`                 | 그 예외 값               |
 
 `catch`는 예외 클래스 계층을 따라 매칭합니다. 잡힌 값에는 `.message`와 `.name`이
-있습니다. `finally`는 정상 종료와 예외 모두에서 실행됩니다. 잡히지 않은 예외는
-파일:줄:열과 함께 표준 에러로 출력되고 종료 코드는 1이 됩니다.
+있습니다. `finally`는 정상 종료와 예외 모두에서 실행됩니다.
+
+잡히지 않은 예외는 호출 스택과 함께 표준 에러로 출력되고 종료 코드는 1이 됩니다.
+
+```
+Traceback (most recent call last):
+  at outer (line 10)
+  at middle (line 6)
+  at inner (line 2)
+main.ast:14: error: ZeroDivisionError: 0으로 나눌 수 없습니다
+```
+
+마지막 줄이 예외가 최종적으로 드러난 위치이고, 그 위는 예외가 빠져나온 호출
+경로입니다(오래된 호출이 위). `try`로 잡으면 그 지점까지의 프레임만 남습니다.
 
 사용자 예외는 `exception 이름;` 또는 `exception 이름 extends 부모;`로 선언합니다.
 부모를 생략하면 `Exception`을 상속합니다.
@@ -563,6 +720,21 @@ var merged = {**d, "c": 3};
 
 `*`는 리스트/세트, `**`는 딕셔너리 펼치기입니다.
 
+### 범위와 map/filter
+
+`a..b`는 양 끝을 포함하는 리스트를 만듭니다. `a..b..s`는 간격을 지정합니다.
+
+```aster
+list<int> xs = 1..5;          // [1, 2, 3, 4, 5]
+list<int> odds = 1..9..2;     // [1, 3, 5, 7, 9]
+list<int> down = 5..1..-2;    // [5, 3, 1]
+list<int> squares = xs.map(x -> int => x * x);
+list<int> big = squares.filter(x -> bool => x > 4);
+```
+
+`map`은 각 원소에 함수를 적용한 새 리스트를, `filter`는 조건이 true인 원소만 담은
+새 리스트를 돌려줍니다. 원본 리스트는 바뀌지 않습니다.
+
 ### 인덱스와 슬라이스
 
 ```aster
@@ -584,7 +756,7 @@ frozenset은 인덱스로 읽을 수 없습니다. 슬라이스 경계는 생략
 for (int x in xs) { ... }
 for (str k in d) { ... }         // 키
 for (int v in s) { ... }
-for (str ch in "abc") { ... }    // 바이트 단위 문자
+for (str ch in "abc") { ... }    // 유니코드 코드포인트 단위
 ```
 
 ### 내장 함수와 메서드
@@ -610,6 +782,10 @@ str msg = f"{name}은 {count}살, 평균 {avg:.2f}";
 f-string은 `f"..."`로 쓰고 `{식}`을 보간합니다. `{{`/`}}`는 중괄호 문자입니다.
 `!r`은 repr, `!s`는 문자열 변환입니다. 포맷 지정자는 소수(`:.2f`), 지수(`:e`),
 정수(`:d`), 16진수(`:x`)를 지원합니다.
+
+문자열은 내부적으로 UTF-8이지만, `length()`, 인덱스, 슬라이스, `for-in`,
+`substring`, `charAt`은 모두 **유니코드 코드포인트** 단위로 동작합니다. `s[0]`은
+첫 번째 바이트가 아니라 첫 번째 문자(코드포인트)입니다.
 
 ## 12. 모듈
 
@@ -653,7 +829,9 @@ str line = sc.nextLine();
 int n = sc.nextInt();
 ```
 
-`System.out`/`System.err`에는 `print`와 `println`이 있습니다. `Scanner`는
+`System.out`/`System.err`에는 `print`와 `println`이 있습니다. `System`은 내장
+모듈이라 `import System;`으로 가져와야 합니다. `import System.stdout.*;`는
+`print`/`println`을 현재 범위에 바로 정의합니다. `Scanner`는
 `nextLine`, `next`, `nextInt`, `nextFloat`, `hasNextLine`, `hasNext`, `close`를
 제공합니다. `Files`는 `readString`, `writeString`, `readLines`, `exists`, `delete`를
 제공합니다. 자세한 내용은 [stdlib.md](stdlib.md)를 봅니다.
@@ -667,20 +845,34 @@ Aster는 실행 전에 정적 타입 검사를 합니다.
 - `--no-check`: 검사를 건너뜁니다.
 
 검사기는 **보수적**입니다. 확실한 오류만 보고하고, 추론할 수 없는 값은 `any`로
-처리합니다. 현재 **주 모듈만** 검사하며, import한 모듈은 검사하지 않습니다.
-또한 다음은 검사하지 않습니다.
+처리합니다. 주 모듈과 함께, import한 모듈(표준 라이브러리 포함)도 읽어서
+검사하고 공개 이름의 타입을 가져옵니다. 순환 import는 한 번만 검사합니다.
 
-- 인터페이스 구현 여부
-- `extern` 함수의 실제 연결
+검사하는 것:
+
+- 지역 변수, 함수, 클래스, 구조체 선언과 사용
+- 함수 호출 인자 수/타입(오버로드 선택 포함), 반환 타입
+- import한 모듈에 없는 이름 접근
+- 인터페이스가 요구하는 메서드의 존재와 서명
+- 명시한 `private`/`protected` 멤버의 접근 범위
+
+검사하지 않는 것:
+
 - 객체의 동적 속성 존재 여부
 - 배열/딕셔너리 인덱스의 범위
+- 함수 타입 값의 실제 대상 검사(대입 시 서명만 비교)
+
+`extern` 선언의 구현 확인은 타입 검사가 아니라 로드(선언 처리) 단계에서 합니다.
+오류 메시지는 모두 영어로 출력됩니다.
 
 ## 15. 실행 모델과 제한
 
 - 트리 워킹 인터프리터이며, 값은 태그가 붙은 `RValue`로 표현됩니다.
 - 메모리는 아레나에 할당되고 프로그램 종료 시 한꺼번에 해제됩니다.
 - 클래스 인스턴스는 참조 의미, 구조체는 값 의미입니다.
-- 제너레이터는 열성 평가입니다(6.5절).
-- `switch`, 3항 연산자, 함수 타입, 연산자 오버로딩, 예외 없는 `try` 블록은 없습니다.
-- 인터페이스는 컴파일 타임 계약이 아니라 선언입니다.
-- `extern`은 선언만 지원하고 실제 C 함수와 연결하지 않습니다.
+- 제너레이터는 지연 실행이며 별도 스택(Windows 파이버 / POSIX ucontext)에서 돕니다.
+- 호출 깊이 제한 기본값은 512입니다. 넘으면 `RecursionError`가 납니다.
+  `System.setRecursionLimit(n)`으로 바꾸고 `System.getRecursionLimit()`으로 읽습니다
+  (1 이상 100000 이하).
+- `switch`, 3항 연산자, 예외 없는 `try` 블록은 없습니다.
+- `extern`은 프로세스에 이미 있는 C 심볼만 호출할 수 있습니다(임의 라이브러리 로드 없음).

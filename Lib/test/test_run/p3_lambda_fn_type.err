@@ -1,0 +1,1 @@
+a lambda cannot be declared with a function type; use 'var' or the lambda's return type

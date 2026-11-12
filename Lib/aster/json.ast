@@ -1,0 +1,376 @@
+/* aster.json: JSON 직렬화/역직렬화 (순수 Aster 구현) */
+
+exception JsonError extends Exception;
+
+const str HEX_DIGITS = "0123456789abcdef";
+const str DIGITS = "0123456789";
+
+fn _isDigit(str c) -> bool {
+    if (c == "") { return false; }
+    return DIGITS.find(c) >= 0;
+}
+
+fn _hexValue(str digits) -> int {
+    var value = 0;
+    var i = 0;
+    while (i < digits.length()) {
+        str c = digits.charAt(i);
+        var d = HEX_DIGITS.find(c);
+        if (d < 0) { d = HEX_DIGITS.find(c.lower()); }
+        if (d < 0) { return -1; }
+        value = value * 16 + d;
+        i = i + 1;
+    }
+    return value;
+}
+
+fn _hex4(int n) -> str {
+    var out = "";
+    var value = n;
+    var i = 0;
+    while (i < 4) {
+        out = HEX_DIGITS.charAt(value % 16) + out;
+        value = value / 16;
+        i = i + 1;
+    }
+    return out;
+}
+
+fn _quoteString(str s) -> str {
+    var out = "\"";
+    var i = 0;
+    while (i < s.length()) {
+        str c = s.charAt(i);
+        if (c == "\"") { out = out + "\\\""; }
+        else if (c == "\\") { out = out + "\\\\"; }
+        else if (c == "\n") { out = out + "\\n"; }
+        else if (c == "\r") { out = out + "\\r"; }
+        else if (c == "\t") { out = out + "\\t"; }
+        else if (c == "\b") { out = out + "\\b"; }
+        else if (c == "\f") { out = out + "\\f"; }
+        else if (ord(c) < 32 or ord(c) == 127) {
+            out = out + "\\u" + _hex4(ord(c));
+        }
+        else { out = out + c; }
+        i = i + 1;
+    }
+    return out + "\"";
+}
+
+fn _isFinite(float f) -> bool {
+    var huge = 1.0;
+    var i = 0;
+    while (i < 309) {
+        huge = huge * 10.0;
+        i = i + 1;
+    }
+    return f == f and f < huge and f > -huge;
+}
+
+fn _encodeValue(var v) -> str {
+    str t = typeName(v);
+    if (t == "null") { return "null"; }
+    if (t == "bool") {
+        if (bool(v)) { return "true"; }
+        return "false";
+    }
+    if (t == "int") { return str(v); }
+    if (t == "float") {
+        float f = float(v);
+        if (not _isFinite(f)) {
+            throw JsonError("cannot encode NaN/infinity as JSON");
+        }
+        return str(f);
+    }
+    if (t == "str") { return _quoteString(str(v)); }
+    if (t == "list" or t == "tuple") {
+        var out = "[";
+        var i = 0;
+        while (i < len(v)) {
+            if (i > 0) { out = out + ","; }
+            out = out + _encodeValue(v[i]);
+            i = i + 1;
+        }
+        return out + "]";
+    }
+    if (t == "dict") {
+        var out = "{";
+        var keys = v.keys();
+        var i = 0;
+        while (i < len(keys)) {
+            if (i > 0) { out = out + ","; }
+            var key = keys[i];
+            if (typeName(key) != "str") {
+                throw JsonError("JSON object keys must be strings: " + typeName(key));
+            }
+            out = out + _quoteString(str(key)) + ":" + _encodeValue(v[key]);
+            i = i + 1;
+        }
+        return out + "}";
+    }
+    throw JsonError("type cannot be encoded as JSON: " + t);
+}
+
+export fn stringify(var value) -> str {
+    return _encodeValue(value);
+}
+
+export fn prettify(var value, int spaces) -> str {
+    return _encodePretty(value, 0, spaces);
+}
+
+fn _indent(int level, int spaces) -> str {
+    var out = "";
+    var count = level * spaces;
+    var i = 0;
+    while (i < count) {
+        out = out + " ";
+        i = i + 1;
+    }
+    return out;
+}
+
+fn _encodePretty(var v, int level, int spaces) -> str {
+    str t = typeName(v);
+    if (t != "list" and t != "tuple" and t != "dict") {
+        return _encodeValue(v);
+    }
+    var inner = _indent(level + 1, spaces);
+    var outer = _indent(level, spaces);
+    var out = "";
+    if (t == "dict") {
+        var keys = v.keys();
+        if (len(keys) == 0) { return "{}"; }
+        out = "{\n";
+        var i = 0;
+        while (i < len(keys)) {
+            var key = keys[i];
+            if (typeName(key) != "str") {
+                throw JsonError("JSON object keys must be strings: " + typeName(key));
+            }
+            out = out + inner + _quoteString(str(key)) + ": " +
+                  _encodePretty(v[key], level + 1, spaces);
+            if (i + 1 < len(keys)) { out = out + ","; }
+            out = out + "\n";
+            i = i + 1;
+        }
+        return out + outer + "}";
+    }
+    if (len(v) == 0) { return "[]"; }
+    out = "[\n";
+    var j = 0;
+    while (j < len(v)) {
+        out = out + inner + _encodePretty(v[j], level + 1, spaces);
+        if (j + 1 < len(v)) { out = out + ","; }
+        out = out + "\n";
+        j = j + 1;
+    }
+    return out + outer + "]";
+}
+
+class _JsonParser {
+    private str src;
+    private int pos;
+    private int size;
+
+    constructor(str text) {
+        self->src = text;
+        self->pos = 0;
+        self->size = text.length();
+    }
+
+    private fn fail(str message) -> void {
+        throw JsonError(message + " (at position " + str(self->pos) + ")");
+    }
+
+    private fn peek() -> str {
+        if (self->pos >= self->size) { return ""; }
+        return self->src.charAt(self->pos);
+    }
+
+    private fn skipWhitespace() -> void {
+        while (self->pos < self->size) {
+            str c = self->src.charAt(self->pos);
+            if (c == " " or c == "\t" or c == "\n" or c == "\r") {
+                self->pos = self->pos + 1;
+            }
+            else {
+                break;
+            }
+        }
+    }
+
+    internal fn parseAll() -> var {
+        self->skipWhitespace();
+        var value = self->parseValue();
+        self->skipWhitespace();
+        if (self->pos != self->size) {
+            self->fail("unexpected characters after value");
+        }
+        return value;
+    }
+
+    private fn parseValue() -> var {
+        self->skipWhitespace();
+        str c = self->peek();
+        if (c == "") { self->fail("a value is required"); }
+        if (c == "{") { return self->parseObject(); }
+        if (c == "[") { return self->parseArray(); }
+        if (c == "\"") { return self->parseString(); }
+        if (c == "t") { return self->parseLiteral("true", true); }
+        if (c == "f") { return self->parseLiteral("false", false); }
+        if (c == "n") { return self->parseLiteral("null", null); }
+        return self->parseNumber();
+    }
+
+    private fn parseLiteral(str word, var value) -> var {
+        if (self->pos + word.length() > self->size or
+            self->src.substring(self->pos, self->pos + word.length()) != word) {
+            self->fail("'" + word + "' expected");
+        }
+        self->pos = self->pos + word.length();
+        return value;
+    }
+
+    private fn parseObject() -> var {
+        var obj = {};
+        self->pos = self->pos + 1;
+        self->skipWhitespace();
+        if (self->peek() == "}") {
+            self->pos = self->pos + 1;
+            return obj;
+        }
+        while (true) {
+            self->skipWhitespace();
+            if (self->peek() != "\"") {
+                self->fail("object keys must be strings");
+            }
+            var key = self->parseString();
+            self->skipWhitespace();
+            if (self->peek() != ":") { self->fail("':' expected"); }
+            self->pos = self->pos + 1;
+            obj[key] = self->parseValue();
+            self->skipWhitespace();
+            str c = self->peek();
+            if (c == ",") {
+                self->pos = self->pos + 1;
+            }
+            else if (c == "}") {
+                self->pos = self->pos + 1;
+                return obj;
+            }
+            else {
+                self->fail("',' or '}' expected");
+            }
+        }
+        return obj;
+    }
+
+    private fn parseArray() -> var {
+        var arr = [];
+        self->pos = self->pos + 1;
+        self->skipWhitespace();
+        if (self->peek() == "]") {
+            self->pos = self->pos + 1;
+            return arr;
+        }
+        while (true) {
+            arr.append(self->parseValue());
+            self->skipWhitespace();
+            str c = self->peek();
+            if (c == ",") {
+                self->pos = self->pos + 1;
+            }
+            else if (c == "]") {
+                self->pos = self->pos + 1;
+                return arr;
+            }
+            else {
+                self->fail("',' or ']' expected");
+            }
+        }
+        return arr;
+    }
+
+    private fn parseString() -> str {
+        self->pos = self->pos + 1;
+        var out = "";
+        while (self->pos < self->size) {
+            str c = self->src.charAt(self->pos);
+            if (c == "\"") {
+                self->pos = self->pos + 1;
+                return out;
+            }
+            if (c == "\\") {
+                self->pos = self->pos + 1;
+                if (self->pos >= self->size) { self->fail("unterminated string"); }
+                str e = self->src.charAt(self->pos);
+                if (e == "\"") { out = out + "\""; }
+                else if (e == "\\") { out = out + "\\"; }
+                else if (e == "/") { out = out + "/"; }
+                else if (e == "b") { out = out + chr(8); }
+                else if (e == "f") { out = out + chr(12); }
+                else if (e == "n") { out = out + "\n"; }
+                else if (e == "r") { out = out + "\r"; }
+                else if (e == "t") { out = out + "\t"; }
+                else if (e == "u") { out = out + self->parseUnicodeEscape(); }
+                else { self->fail("unknown escape"); }
+                self->pos = self->pos + 1;
+            }
+            else {
+                out = out + c;
+                self->pos = self->pos + 1;
+            }
+        }
+        self->fail("unterminated string");
+        return out;
+    }
+
+    private fn parseUnicodeEscape() -> str {
+        if (self->pos + 4 >= self->size) { self->fail("truncated \\u escape"); }
+        var hex = self->src.substring(self->pos + 1, self->pos + 5);
+        var cp = _hexValue(hex);
+        if (cp < 0) { self->fail("invalid \\u escape"); }
+        self->pos = self->pos + 4;
+        if (cp >= 55296 and cp <= 56319 and
+            self->pos + 6 < self->size and
+            self->src.charAt(self->pos + 1) == "\\" and
+            self->src.charAt(self->pos + 2) == "u") {
+            var low = _hexValue(self->src.substring(self->pos + 3, self->pos + 7));
+            if (low >= 56320 and low <= 57343) {
+                cp = 65536 + (cp - 55296) * 1024 + (low - 56320);
+                self->pos = self->pos + 6;
+            }
+        }
+        return chr(cp);
+    }
+
+    private fn parseNumber() -> var {
+        int start = self->pos;
+        if (self->peek() == "-") { self->pos = self->pos + 1; }
+        if (not _isDigit(self->peek())) { self->fail("a number is required"); }
+        while (_isDigit(self->peek())) { self->pos = self->pos + 1; }
+        var isFloat = false;
+        if (self->peek() == ".") {
+            isFloat = true;
+            self->pos = self->pos + 1;
+            if (not _isDigit(self->peek())) { self->fail("a fractional part is required"); }
+            while (_isDigit(self->peek())) { self->pos = self->pos + 1; }
+        }
+        if (self->peek() == "e" or self->peek() == "E") {
+            isFloat = true;
+            self->pos = self->pos + 1;
+            if (self->peek() == "+" or self->peek() == "-") { self->pos = self->pos + 1; }
+            if (not _isDigit(self->peek())) { self->fail("an exponent is required"); }
+            while (_isDigit(self->peek())) { self->pos = self->pos + 1; }
+        }
+        str text = self->src.substring(start, self->pos);
+        if (isFloat) { return text.to_float(); }
+        return text.to_int();
+    }
+}
+
+export fn parse(str text) -> var {
+    var parser = new _JsonParser(text);
+    return parser.parseAll();
+}

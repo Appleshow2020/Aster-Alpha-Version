@@ -83,6 +83,8 @@ module Aster
           -- int, float, str, bool, None(null)
           | Constant(constant value)
           | Array(expr* elements)
+          -- 포함 범위: 1..5 는 [1, 2, 3, 4, 5] 를 만든다. step은 1..5..2 처럼 쓴다.
+          | Range(expr start, expr stop, expr? step)
           | Subscript(expr value, expr index)
           | Slice(expr? lower, expr? upper, expr? step)
           | FString(expr* values)
@@ -111,6 +113,8 @@ module Aster
              | StructRef(identifier tag)
              | Pointer(typeref base)
              | Nullable(typeref base)
+             -- 함수 타입: fn(int, str) -> bool
+             | FunctionTy(typeref* params, ret returns)
  
      prim = IntT | FloatT | BoolT | StrT | NullT
  

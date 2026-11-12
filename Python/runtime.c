@@ -1,3 +1,8 @@
+#if !defined(_WIN32) && !defined(_POSIX_C_SOURCE)
+/* clock_gettime/nanosleep/getcwd 선언을 위해 시스템 헤더보다 먼저 정의한다. */
+#define _POSIX_C_SOURCE 200809L
+#endif
+
 #include <errno.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -5,13 +10,19 @@
 #include <string.h>
 #include "internal/runtime.h"
 
+#if !defined(_WIN32)
+#include <unistd.h>
+#include <time.h>
+#include <sys/types.h>
+#endif
+
 #define MAX_DEPTH 64
 
 static void *xrealloc(void *p, size_t n)
 {
     void *q = realloc(p, n ? n : 1);
     if (!q) {
-        fputs("메모리가 부족합니다\n", stderr);
+        fputs("out of memory\n", stderr);
         abort();
     }
     return q;
@@ -201,12 +212,84 @@ RValue *RValue_Overload(Interp *in, AstOverload *overload)
     return v;
 }
 
-RValue *RValue_Generator(Interp *in, AsterList *items)
+/* ---- 호출 스택 (트레이스백) ---- */
+
+void Interp_FrameAppend(Interp *in, const char *name, int line)
+{
+    if (in->nframes == in->cap_frames) {
+        size_t cap = in->cap_frames ? in->cap_frames * 2 : 16;
+        AstFrame *grown = Arena_Alloc(in->arena, cap * sizeof(AstFrame));
+        if (in->nframes)
+            memcpy(grown, in->frames, in->nframes * sizeof(AstFrame));
+        in->frames = grown;
+        in->cap_frames = cap;
+    }
+    in->frames[in->nframes].name = name;
+    in->frames[in->nframes].line = line;
+    in->nframes++;
+}
+
+void Interp_FramePush(Interp *in, const char *name)
+{
+    Interp_FrameAppend(in, name, in->line);
+}
+
+void Interp_FramePop(Interp *in)
+{
+    if (in->nframes > 0)
+        in->nframes--;
+}
+
+void Interp_FrameTruncate(Interp *in, size_t n)
+{
+    if (n < in->nframes)
+        in->nframes = n;
+}
+
+void Interp_PrintTraceback(FILE *out, Interp *in)
+{
+    size_t i;
+
+    if (!in || in->nframes == 0)
+        return;
+    fprintf(out, "Traceback (most recent call last):\n");
+    for (i = 0; i < in->nframes; i++) {
+        fprintf(out, "  at %s (line %d)\n",
+                in->frames[i].name ? in->frames[i].name : "?", in->frames[i].line);
+    }
+}
+
+RValue *RValue_Generator(Interp *in, AstFn *fn, Env *body_env, RValue *self)
 {
     AstGenerator *gen = Arena_Alloc(in->arena, sizeof(AstGenerator));
+    Interp *gin = Arena_Alloc(in->arena, sizeof(Interp));
     RValue *v = RValue_New(in, RV_GENERATOR);
-    gen->items = items;
-    gen->index = 0;
+
+    *gin = *in;
+    gin->sig = SIG_OK;
+    gin->ret = NULL;
+    gin->exc = NULL;
+    gin->yield_buf = NULL;
+    gin->gen = gen;
+    gin->depth = 0;
+    gin->predeclaring = 0;
+    gin->frames = NULL;
+    gin->nframes = 0;
+    gin->cap_frames = 0;
+    Interp_FramePush(gin, fn->name ? fn->name : "lambda");
+
+    gen->fn = fn;
+    gen->body_env = body_env;
+    gen->self = self;
+    gen->interp = gin;
+    gen->yielded = NULL;
+    gen->started = 0;
+    gen->done = 0;
+    gen->failed = 0;
+    gen->ctx = NULL;
+    gen->caller_ctx = NULL;
+    gen->stack = NULL;
+    gen->caller_gen = NULL;
     v->u.gen = gen;
     return v;
 }
@@ -270,19 +353,60 @@ AsterDict *Dict_New(Interp *in)
     return Arena_Alloc(in->arena, sizeof(AsterDict));
 }
 
-RValue *Dict_Lookup(const AsterDict *dict, const RValue *key)
+static void dict_alloc_index(AsterDict *dict, size_t cap)
 {
     size_t i;
+    dict->index = xrealloc(dict->index, cap * sizeof(long));
+    memset(dict->index, 0, cap * sizeof(long));
+    dict->icap = cap;
     for (i = 0; i < dict->len; i++) {
-        if (RValue_Equal(dict->entries[i].key, key))
-            return dict->entries[i].value;
+        size_t pos = (size_t)(dict->entries[i].hash & (cap - 1));
+        while (dict->index[pos])
+            pos = (pos + 1) & (cap - 1);
+        dict->index[pos] = (long)(i + 1);
     }
-    return NULL;
+}
+
+long Dict_FindIndex(const AsterDict *dict, const RValue *key)
+{
+    uint64_t h;
+    size_t pos, start;
+
+    if (dict->len == 0)
+        return -1;
+    if (!dict->index || dict->icap == 0) {
+        size_t i;
+        for (i = 0; i < dict->len; i++)
+            if (RValue_Equal(dict->entries[i].key, key))
+                return (long)i;
+        return -1;
+    }
+    h = RValue_Hash(key);
+    start = pos = (size_t)(h & (dict->icap - 1));
+    for (;;) {
+        long slot = dict->index[pos];
+        if (!slot)
+            return -1;
+        if (dict->entries[slot - 1].hash == h &&
+            RValue_Equal(dict->entries[slot - 1].key, key))
+            return slot - 1;
+        pos = (pos + 1) & (dict->icap - 1);
+        if (pos == start)
+            return -1;
+    }
+}
+
+RValue *Dict_Lookup(const AsterDict *dict, const RValue *key)
+{
+    long i = Dict_FindIndex(dict, key);
+    return i < 0 ? NULL : dict->entries[i].value;
 }
 
 int Dict_Set(Interp *in, AsterDict *dict, RValue *key, RValue *value, int *ok)
 {
-    size_t i;
+    uint64_t h;
+    size_t pos, start;
+    long found;
 
     *ok = 1;
     if (!RValue_Hashable(key)) {
@@ -290,11 +414,29 @@ int Dict_Set(Interp *in, AsterDict *dict, RValue *key, RValue *value, int *ok)
         RT_Throw(in, "TypeError", "unhashable type: '%s'", RValue_TypeName(key));
         return 0;
     }
-    for (i = 0; i < dict->len; i++) {
-        if (RValue_Equal(dict->entries[i].key, key)) {
-            dict->entries[i].value = value;
-            return 1;
+    if (!dict->index)
+        dict_alloc_index(dict, 8);
+    else if (dict->len * 4 >= dict->icap * 3)
+        dict_alloc_index(dict, dict->icap * 2);
+    h = RValue_Hash(key);
+    found = -1;
+    start = pos = (size_t)(h & (dict->icap - 1));
+    for (;;) {
+        long slot = dict->index[pos];
+        if (!slot)
+            break;
+        if (dict->entries[slot - 1].hash == h &&
+            RValue_Equal(dict->entries[slot - 1].key, key)) {
+            found = slot - 1;
+            break;
         }
+        pos = (pos + 1) & (dict->icap - 1);
+        if (pos == start)
+            break;
+    }
+    if (found >= 0) {
+        dict->entries[found].value = value;
+        return 1;
     }
     if (dict->len == dict->cap) {
         size_t ncap = dict->cap ? dict->cap * 2 : 8;
@@ -303,6 +445,8 @@ int Dict_Set(Interp *in, AsterDict *dict, RValue *key, RValue *value, int *ok)
     }
     dict->entries[dict->len].key = key;
     dict->entries[dict->len].value = value;
+    dict->entries[dict->len].hash = h;
+    dict->index[pos] = (long)(dict->len + 1);
     dict->len++;
     return 1;
 }
@@ -314,6 +458,8 @@ void Dict_RemoveAt(AsterDict *dict, size_t index)
     memmove(dict->entries + index, dict->entries + index + 1,
             (dict->len - index - 1) * sizeof(AsterDictEntry));
     dict->len--;
+    if (dict->index)
+        dict_alloc_index(dict, dict->icap);
 }
 
 AsterSet *Set_New(Interp *in)
@@ -321,18 +467,57 @@ AsterSet *Set_New(Interp *in)
     return Arena_Alloc(in->arena, sizeof(AsterSet));
 }
 
-int Set_Has(const AsterSet *set, const RValue *value)
+static void set_alloc_index(AsterSet *set, size_t cap)
 {
     size_t i;
+    set->index = xrealloc(set->index, cap * sizeof(long));
+    memset(set->index, 0, cap * sizeof(long));
+    set->icap = cap;
     for (i = 0; i < set->len; i++) {
-        if (RValue_Equal(set->items[i], value))
-            return 1;
+        size_t pos = (size_t)(set->hashes[i] & (cap - 1));
+        while (set->index[pos])
+            pos = (pos + 1) & (cap - 1);
+        set->index[pos] = (long)(i + 1);
     }
-    return 0;
+}
+
+long Set_FindIndex(const AsterSet *set, const RValue *value)
+{
+    uint64_t h;
+    size_t pos, start;
+
+    if (set->len == 0)
+        return -1;
+    if (!set->index || set->icap == 0) {
+        size_t i;
+        for (i = 0; i < set->len; i++)
+            if (RValue_Equal(set->items[i], value))
+                return (long)i;
+        return -1;
+    }
+    h = RValue_Hash(value);
+    start = pos = (size_t)(h & (set->icap - 1));
+    for (;;) {
+        long slot = set->index[pos];
+        if (!slot)
+            return -1;
+        if (set->hashes[slot - 1] == h && RValue_Equal(set->items[slot - 1], value))
+            return slot - 1;
+        pos = (pos + 1) & (set->icap - 1);
+        if (pos == start)
+            return -1;
+    }
+}
+
+int Set_Has(const AsterSet *set, const RValue *value)
+{
+    return Set_FindIndex(set, value) >= 0;
 }
 
 int Set_Add(Interp *in, AsterSet *set, RValue *value, int *ok)
 {
+    uint64_t h;
+
     if (ok)
         *ok = 1;
     if (!RValue_Hashable(value)) {
@@ -341,11 +526,28 @@ int Set_Add(Interp *in, AsterSet *set, RValue *value, int *ok)
         RT_Throw(in, "TypeError", "unhashable type: '%s'", RValue_TypeName(value));
         return 0;
     }
-    if (Set_Has(set, value))
+    if (!set->index)
+        set_alloc_index(set, 8);
+    else if (set->len * 4 >= set->icap * 3)
+        set_alloc_index(set, set->icap * 2);
+    if (Set_FindIndex(set, value) >= 0)
         return 1;
-    if (set->len == set->cap)
-        grow_items(in, &set->items, &set->cap, set->len + 1);
-    set->items[set->len++] = value;
+    if (set->len == set->cap) {
+        size_t ncap = set->cap ? set->cap * 2 : 8;
+        set->items = xrealloc(set->items, ncap * sizeof(RValue *));
+        set->hashes = xrealloc(set->hashes, ncap * sizeof(uint64_t));
+        set->cap = ncap;
+    }
+    h = RValue_Hash(value);
+    set->items[set->len] = value;
+    set->hashes[set->len] = h;
+    {
+        size_t pos = (size_t)(h & (set->icap - 1));
+        while (set->index[pos])
+            pos = (pos + 1) & (set->icap - 1);
+        set->index[pos] = (long)(set->len + 1);
+    }
+    set->len++;
     return 1;
 }
 
@@ -355,7 +557,25 @@ void Set_RemoveAt(AsterSet *set, size_t index)
         return;
     memmove(set->items + index, set->items + index + 1,
             (set->len - index - 1) * sizeof(RValue *));
+    memmove(set->hashes + index, set->hashes + index + 1,
+            (set->len - index - 1) * sizeof(uint64_t));
     set->len--;
+    if (set->index)
+        set_alloc_index(set, set->icap);
+}
+
+void Dict_Clear(AsterDict *dict)
+{
+    dict->len = 0;
+    if (dict->index && dict->icap)
+        memset(dict->index, 0, dict->icap * sizeof(long));
+}
+
+void Set_Clear(AsterSet *set)
+{
+    set->len = 0;
+    if (set->index && set->icap)
+        memset(set->index, 0, set->icap * sizeof(long));
 }
 
 int RValue_Hashable(const RValue *v)
@@ -390,6 +610,118 @@ int RValue_Hashable(const RValue *v)
     default:
         return 1;
     }
+}
+
+/* ---- 해시 ---- */
+
+static uint64_t hash_mix(uint64_t h, uint64_t x)
+{
+    h ^= x + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2);
+    return h;
+}
+
+static uint64_t hash_bytes(const char *s, size_t n)
+{
+    uint64_t h = 1469598103934665603ULL;
+    size_t i;
+    for (i = 0; i < n; i++) {
+        h ^= (unsigned char)s[i];
+        h *= 1099511628211ULL;
+    }
+    return h;
+}
+
+static uint64_t hash_int(int64_t v)
+{
+    uint64_t x = (uint64_t)v;
+    x ^= x >> 33;
+    x *= 0xff51afd7ed558ccdULL;
+    x ^= x >> 33;
+    return x;
+}
+
+uint64_t RValue_Hash(const RValue *v)
+{
+    size_t i;
+
+    if (!v)
+        return 0x9e3779b9ULL;
+    switch (v->kind) {
+    case RV_NULL:
+        return 0x9e3779b9ULL;
+    case RV_BOOL:
+        return (uint64_t)(v->u.b ? 1 : 0);
+    case RV_INT:
+        return hash_int(v->u.i);
+    case RV_FLOAT: {
+        double f = v->u.f;
+        /* int 1과 float 1.0은 같으므로 같은 해시를 준다. */
+        if (f >= -9223372036854775808.0 && f < 9223372036854775808.0 &&
+            f == (double)(int64_t)f)
+            return hash_int((int64_t)f);
+        {
+            uint64_t bits;
+            memcpy(&bits, &f, sizeof bits);
+            return hash_int((int64_t)bits);
+        }
+    }
+    case RV_STR:
+        return hash_bytes(v->u.s->data, v->u.s->length);
+    case RV_TUPLE: {
+        uint64_t h = 0x51ed270bULL;
+        for (i = 0; i < v->u.tuple->len; i++)
+            h = hash_mix(h, RValue_Hash(v->u.tuple->items[i]));
+        return h;
+    }
+    case RV_FROZENSET: {
+        uint64_t h = 0x2545f491ULL;
+        for (i = 0; i < v->u.set->len; i++)
+            h += RValue_Hash(v->u.set->items[i]);
+        return h;
+    }
+    case RV_STRUCT: {
+        uint64_t h = hash_int((int64_t)(uintptr_t)v->u.stv->type);
+        for (i = 0; i < v->u.stv->type->nfields; i++)
+            h = hash_mix(h, RValue_Hash(v->u.stv->cells[i]));
+        return h;
+    }
+    case RV_OBJECT:
+        return hash_int((int64_t)(uintptr_t)v->u.obj);
+    case RV_PTR:
+        return hash_int((int64_t)(uintptr_t)v->u.ptr.slot);
+    case RV_FUNC:
+        return hash_int((int64_t)(uintptr_t)v->u.fn);
+    case RV_BUILTIN:
+        return hash_int((int64_t)(uintptr_t)v->u.builtin);
+    case RV_CLASS:
+        return hash_int((int64_t)(uintptr_t)v->u.cls);
+    case RV_STRUCTTYPE:
+        return hash_int((int64_t)(uintptr_t)v->u.stype);
+    case RV_ENUM:
+        return hash_mix(hash_int((int64_t)(uintptr_t)v->u.en.type),
+                        (uint64_t)v->u.en.index);
+    case RV_ENUMTYPE:
+        return hash_int((int64_t)(uintptr_t)v->u.etype);
+    case RV_EXC:
+        return hash_int((int64_t)(uintptr_t)v->u.exc);
+    case RV_EXC_CLASS:
+        return hash_bytes(v->u.exc_name, strlen(v->u.exc_name));
+    case RV_MODULE:
+        return hash_int((int64_t)(uintptr_t)v->u.module);
+    case RV_LIST:
+        return hash_int((int64_t)(uintptr_t)v->u.list);
+    case RV_DICT:
+        return hash_int((int64_t)(uintptr_t)v->u.dict);
+    case RV_SET:
+        return hash_int((int64_t)(uintptr_t)v->u.set);
+    case RV_SUPER:
+        return hash_int((int64_t)(uintptr_t)v->u.super);
+    case RV_OVERLOAD:
+        return hash_int((int64_t)(uintptr_t)v->u.overload);
+    case RV_GENERATOR:
+        return hash_int((int64_t)(uintptr_t)v->u.gen);
+    }
+    return 0;
 }
 
 const char *RValue_TypeName(const RValue *v)
@@ -455,12 +787,12 @@ int64_t RValue_Length(Interp *in, const RValue *v, int *ok)
     *ok = 1;
     if (!v) {
         *ok = 0;
-        RT_Throw(in, "TypeError", "null 값에는 len()을 쓸 수 없습니다");
+        RT_Throw(in, "TypeError", "cannot call len() on null");
         return 0;
     }
     switch (v->kind) {
     case RV_STR:
-        return (int64_t)v->u.s->length;
+        return (int64_t)v->u.s->cp_length;
     case RV_LIST:
         return (int64_t)v->u.list->len;
     case RV_TUPLE:
@@ -470,11 +802,26 @@ int64_t RValue_Length(Interp *in, const RValue *v, int *ok)
     case RV_SET:
     case RV_FROZENSET:
         return (int64_t)v->u.set->len;
-    case RV_GENERATOR:
-        return (int64_t)(v->u.gen->items->len - v->u.gen->index);
+    case RV_OBJECT:
+        if (RValue_HasMethod(in, v, "__len__")) {
+            RValue *r = Interp_CallMethod(in, (RValue *)v, "__len__", NULL, 0);
+            if (!r) {
+                *ok = 0;
+                return 0;
+            }
+            if (r->kind != RV_INT && r->kind != RV_BOOL) {
+                *ok = 0;
+                RT_Throw(in, "TypeError", "__len__ must return an integer");
+                return 0;
+            }
+            return r->kind == RV_INT ? r->u.i : r->u.b;
+        }
+        *ok = 0;
+        RT_Throw(in, "TypeError", "cannot call len() on '%s'", RValue_TypeName(v));
+        return 0;
     default:
         *ok = 0;
-        RT_Throw(in, "TypeError", "'%s'에는 len()을 쓸 수 없습니다", RValue_TypeName(v));
+        RT_Throw(in, "TypeError", "cannot call len() on '%s'", RValue_TypeName(v));
         return 0;
     }
 }
@@ -492,6 +839,7 @@ int RValue_Iterable(const RValue *v)
     case RV_FROZENSET:
         return 1;
     case RV_GENERATOR:
+    case RV_OBJECT:
         return 1;
     default:
         return 0;
@@ -505,7 +853,7 @@ size_t RValue_IterLen(Interp *in, const RValue *v, int *ok)
         goto bad;
     switch (v->kind) {
     case RV_STR:
-        return v->u.s->length;
+        return v->u.s->cp_length;
     case RV_LIST:
         return v->u.list->len;
     case RV_TUPLE:
@@ -515,14 +863,12 @@ size_t RValue_IterLen(Interp *in, const RValue *v, int *ok)
     case RV_SET:
     case RV_FROZENSET:
         return v->u.set->len;
-    case RV_GENERATOR:
-        return v->u.gen->items->len - v->u.gen->index;
     default:
         break;
     }
 bad:
     *ok = 0;
-    RT_Throw(in, "TypeError", "'%s'은(는) 순회할 수 없습니다", RValue_TypeName(v));
+    RT_Throw(in, "TypeError", "'%s' is not iterable", RValue_TypeName(v));
     return 0;
 }
 
@@ -530,8 +876,12 @@ RValue *RValue_IterAt(Interp *in, const RValue *v, size_t index, int *ok)
 {
     *ok = 1;
     switch (v->kind) {
-    case RV_STR:
-        return RValue_Str(in, AsterString_FromUTF8(v->u.s->data + index, 1));
+    case RV_STR: {
+        size_t off = AsterString_ByteOffset(v->u.s, index);
+        size_t adv = 1;
+        Aster_UTF8_Decode(v->u.s->data + off, v->u.s->length - off, &adv);
+        return RValue_Str(in, AsterString_FromUTF8(v->u.s->data + off, adv));
+    }
     case RV_LIST:
         return v->u.list->items[index];
     case RV_TUPLE:
@@ -541,13 +891,112 @@ RValue *RValue_IterAt(Interp *in, const RValue *v, size_t index, int *ok)
     case RV_SET:
     case RV_FROZENSET:
         return v->u.set->items[index];
-    case RV_GENERATOR:
-        return v->u.gen->items->items[v->u.gen->index + index];
     default:
         *ok = 0;
-        RT_Throw(in, "TypeError", "'%s'은(는) 순회할 수 없습니다", RValue_TypeName(v));
+        RT_Throw(in, "TypeError", "'%s' is not iterable", RValue_TypeName(v));
         return NULL;
     }
+}
+
+/* ---- 순회 커서 ---- */
+
+int Iter_Begin(Interp *in, RValue *src, IterCursor *cur)
+{
+    memset(cur, 0, sizeof(*cur));
+    cur->src = src;
+    if (!src) {
+        RT_Throw(in, "TypeError", "cannot iterate over null");
+        return 0;
+    }
+    switch (src->kind) {
+    case RV_STR:
+    case RV_LIST:
+    case RV_TUPLE:
+    case RV_DICT:
+    case RV_SET:
+    case RV_FROZENSET: {
+        int ok = 1;
+        cur->mode = 0;
+        cur->len = RValue_IterLen(in, src, &ok);
+        return ok;
+    }
+    case RV_GENERATOR:
+        cur->mode = 1;
+        cur->gen = src->u.gen;
+        return 1;
+    case RV_OBJECT: {
+        cur->mode = 2;
+        if (RValue_HasMethod(in, src, "__next__")) {
+            cur->obj = src;
+            return 1;
+        }
+        if (RValue_HasMethod(in, src, "__iter__")) {
+            RValue *iter = Interp_CallMethod(in, src, "__iter__", NULL, 0);
+            if (in->sig != SIG_OK)
+                return 0;
+            if (!iter || !RValue_HasMethod(in, iter, "__next__")) {
+                RT_Throw(in, "TypeError",
+                         "__iter__ of '%s' did not return a value with __next__",
+                         src->u.obj->cls->name);
+                return 0;
+            }
+            cur->obj = iter;
+            return 1;
+        }
+        RT_Throw(in, "TypeError", "'%s' object is not iterable (missing __iter__/__next__)",
+                 src->u.obj->cls->name);
+        return 0;
+    }
+    default:
+        RT_Throw(in, "TypeError", "'%s' is not iterable", RValue_TypeName(src));
+        return 0;
+    }
+}
+
+RValue *Iter_Next(Interp *in, IterCursor *cur, int *ended, int *ok)
+{
+    *ended = 0;
+    *ok = 1;
+    switch (cur->mode) {
+    case 0:
+        if (cur->index >= cur->len) {
+            *ended = 1;
+            return NULL;
+        }
+        return RValue_IterAt(in, cur->src, cur->index++, ok);
+    case 1: {
+        RValue *v = Generator_Next(in, cur->gen, ended);
+        if (in->sig != SIG_OK) {
+            *ok = 0;
+            return NULL;
+        }
+        return v;
+    }
+    case 2: {
+        RValue *v = Interp_CallMethod(in, cur->obj, "__next__", NULL, 0);
+        if (in->sig == SIG_THROW) {
+            if (in->exc && in->exc->kind == RV_EXC &&
+                !strcmp(in->exc->u.exc->name, "StopIteration")) {
+                in->sig = SIG_OK;
+                in->exc = NULL;
+                *ended = 1;
+                return NULL;
+            }
+            *ok = 0;
+            return NULL;
+        }
+        if (!v) {
+            *ended = 1;
+            return NULL;
+        }
+        return v;
+    }
+    default:
+        break;
+    }
+    *ok = 0;
+    RT_Throw(in, "TypeError", "invalid iteration cursor");
+    return NULL;
 }
 
 RValue *RValue_Copy(Interp *in, RValue *v)
@@ -760,7 +1209,7 @@ static RValue *struct_default(Interp *in, Env *env, AstStructType *type, int dep
     size_t i;
 
     if (depth > MAX_DEPTH) {
-        RT_Throw(in, "RuntimeError", "구조체 기본값이 너무 깊습니다");
+        RT_Throw(in, "RuntimeError", "struct default values are nested too deeply");
         return RValue_Null(in);
     }
     stv = StructValue_New(in, type);
@@ -774,7 +1223,7 @@ static RValue *default_for_type_depth(Interp *in, Env *env, typeref_ty ty, int d
     if (!ty)
         return RValue_Null(in);
     if (depth > MAX_DEPTH) {
-        RT_Throw(in, "RuntimeError", "타입 기본값이 너무 깊습니다");
+        RT_Throw(in, "RuntimeError", "type default values are nested too deeply");
         return RValue_Null(in);
     }
 
@@ -795,11 +1244,12 @@ static RValue *default_for_type_depth(Interp *in, Env *env, typeref_ty ty, int d
         return RValue_Null(in);
     case Pointer_kind:
     case Nullable_kind:
+    case FunctionTy_kind:
         return RValue_Null(in);
     case StructRef_kind: {
         AstStructType *type = Struct_FindType(env, ty->v.StructRef.tag);
         if (!type) {
-            RT_Throw(in, "TypeError", "구조체 타입 '%s'을(를) 찾을 수 없습니다", ty->v.StructRef.tag);
+            RT_Throw(in, "TypeError", "cannot find struct type '%s'", ty->v.StructRef.tag);
             return RValue_Null(in);
         }
         return struct_default(in, env, type, depth + 1);
@@ -847,7 +1297,7 @@ static size_t struct_size_depth(Interp *in, Env *env, AstStructType *type, int d
     size_t i;
 
     if (depth > MAX_DEPTH) {
-        RT_Throw(in, "RuntimeError", "구조체 크기 계산이 너무 깊습니다");
+        RT_Throw(in, "RuntimeError", "struct size computation is nested too deeply");
         return 0;
     }
     for (i = 0; i < type->nfields; i++) {
@@ -869,7 +1319,7 @@ static size_t type_size_depth(Interp *in, Env *env, typeref_ty ty, int depth)
     if (!ty)
         return 8;
     if (depth > MAX_DEPTH) {
-        RT_Throw(in, "RuntimeError", "타입 크기 계산이 너무 깊습니다");
+        RT_Throw(in, "RuntimeError", "type size computation is nested too deeply");
         return 0;
     }
 
@@ -886,6 +1336,7 @@ static size_t type_size_depth(Interp *in, Env *env, typeref_ty ty, int depth)
         }
         return 8;
     case Pointer_kind:
+    case FunctionTy_kind:
         return 8;
     case Nullable_kind:
         if (ty->v.Nullable.base && ty->v.Nullable.base->kind == Primitive_kind &&
@@ -920,6 +1371,7 @@ int Type_IsNullable(typeref_ty ty)
     case Pointer_kind:
         return 1;
     case Named_kind:
+    case FunctionTy_kind:
         return 1;
     case StructRef_kind:
         return 0;
@@ -1135,7 +1587,7 @@ int RValue_Compare(Interp *in, const RValue *a, const RValue *b, int *out)
         *out = an < bn ? -1 : an > bn ? 1 : 0;
         return 1;
     }
-    RT_Throw(in, "TypeError", "크기를 비교할 수 없는 값입니다");
+    RT_Throw(in, "TypeError", "value has no comparable size");
     return 0;
 }
 
@@ -1147,7 +1599,7 @@ static int seq_index(Interp *in, const RValue *index, int64_t *out, int *ok)
         return 1;
     }
     *ok = 0;
-    RT_Throw(in, "TypeError", "인덱스는 정수여야 합니다 (받은 값: '%s')",
+    RT_Throw(in, "TypeError", "index must be an integer (got '%s')",
              RValue_TypeName(index));
     return 0;
 }
@@ -1174,7 +1626,7 @@ RValue *RValue_GetItem(Interp *in, RValue *container, RValue *index, int *ok)
     *ok = 1;
     if (!container) {
         *ok = 0;
-        return RT_ThrowValue(in, "TypeError", "null 값은 인덱싱할 수 없습니다");
+        return RT_ThrowValue(in, "TypeError", "cannot index null");
     }
     switch (container->kind) {
     case RV_LIST:
@@ -1200,16 +1652,21 @@ RValue *RValue_GetItem(Interp *in, RValue *container, RValue *index, int *ok)
         }
         return RValue_Copy(in, items[i]);
     }
-    case RV_STR:
+    case RV_STR: {
+        size_t off, adv = 1;
         if (!seq_index(in, index, &i, ok))
             return NULL;
         if (i < 0)
-            i += (int64_t)container->u.s->length;
-        if (i < 0 || (size_t)i >= container->u.s->length) {
+            i += (int64_t)container->u.s->cp_length;
+        if (i < 0 || (size_t)i >= container->u.s->cp_length) {
             *ok = 0;
             return RT_ThrowValue(in, "IndexError", "string index out of range");
         }
-        return RValue_Str(in, AsterString_FromUTF8(container->u.s->data + i, 1));
+        off = AsterString_ByteOffset(container->u.s, (size_t)i);
+        Aster_UTF8_Decode(container->u.s->data + off,
+                          container->u.s->length - off, &adv);
+        return RValue_Str(in, AsterString_FromUTF8(container->u.s->data + off, adv));
+    }
     case RV_DICT:
         if (!RValue_Hashable(index)) {
             *ok = 0;
@@ -1224,9 +1681,18 @@ RValue *RValue_GetItem(Interp *in, RValue *container, RValue *index, int *ok)
             return RT_ThrowValue(in, "KeyError", "%s", buf);
         }
         return RValue_Copy(in, value);
+    case RV_OBJECT:
+        if (RValue_HasMethod(in, container, "__getitem__")) {
+            RValue *args[1];
+            args[0] = index;
+            return Interp_CallMethod(in, container, "__getitem__", args, 1);
+        }
+        *ok = 0;
+        return RT_ThrowValue(in, "TypeError", "'%s' object cannot be indexed",
+                             RValue_TypeName(container));
     default:
         *ok = 0;
-        return RT_ThrowValue(in, "TypeError", "'%s' 객체는 인덱싱할 수 없습니다",
+        return RT_ThrowValue(in, "TypeError", "'%s' object cannot be indexed",
                              RValue_TypeName(container));
     }
 }
@@ -1238,7 +1704,7 @@ int RValue_SetItem(Interp *in, RValue *container, RValue *index, RValue *value, 
     *ok = 1;
     if (!container) {
         *ok = 0;
-        RT_Throw(in, "TypeError", "null 값은 인덱싱할 수 없습니다");
+        RT_Throw(in, "TypeError", "cannot index null");
         return 0;
     }
     switch (container->kind) {
@@ -1261,20 +1727,35 @@ int RValue_SetItem(Interp *in, RValue *container, RValue *index, RValue *value, 
     case RV_TUPLE:
     case RV_FROZENSET:
         *ok = 0;
-        RT_Throw(in, "TypeError", "'%s' 객체는 값을 바꿀 수 없습니다",
+        RT_Throw(in, "TypeError", "'%s' object is immutable",
                  container->kind == RV_TUPLE ? "tuple" : "frozenset");
         return 0;
     case RV_SET:
         *ok = 0;
-        RT_Throw(in, "TypeError", "'set' 객체는 인덱스 대입을 지원하지 않습니다");
+        RT_Throw(in, "TypeError", "'set' does not support index assignment");
         return 0;
     case RV_STR:
         *ok = 0;
-        RT_Throw(in, "TypeError", "'str' 객체는 값을 바꿀 수 없습니다");
+        RT_Throw(in, "TypeError", "'str' object is immutable");
+        return 0;
+    case RV_OBJECT:
+        if (RValue_HasMethod(in, container, "__setitem__")) {
+            RValue *args[2];
+            args[0] = index;
+            args[1] = value;
+            if (!Interp_CallMethod(in, container, "__setitem__", args, 2)) {
+                *ok = 0;
+                return 0;
+            }
+            return 1;
+        }
+        *ok = 0;
+        RT_Throw(in, "TypeError", "'%s' object does not support index assignment",
+                 RValue_TypeName(container));
         return 0;
     default:
         *ok = 0;
-        RT_Throw(in, "TypeError", "'%s' 객체는 인덱스 대입을 지원하지 않습니다",
+        RT_Throw(in, "TypeError", "'%s' object does not support index assignment",
                  RValue_TypeName(container));
         return 0;
     }
@@ -1301,14 +1782,14 @@ int RValue_Contains(Interp *in, const RValue *container, const RValue *item, int
     *ok = 1;
     if (!container) {
         *ok = 0;
-        RT_Throw(in, "TypeError", "null 값에는 'in'을 쓸 수 없습니다");
+        RT_Throw(in, "TypeError", "cannot use 'in' with null");
         return 0;
     }
     switch (container->kind) {
     case RV_STR:
         if (!item || item->kind != RV_STR) {
             *ok = 0;
-            RT_Throw(in, "TypeError", "'in <string>'의 왼쪽은 문자열이어야 합니다");
+            RT_Throw(in, "TypeError", "the left operand of 'in <string>' must be a string");
             return 0;
         }
         return string_contains(container->u.s, item->u.s);
@@ -1339,9 +1820,25 @@ int RValue_Contains(Interp *in, const RValue *container, const RValue *item, int
             return 0;
         }
         return Dict_Lookup(container->u.dict, item) != NULL;
+    case RV_OBJECT:
+        if (RValue_HasMethod(in, container, "__contains__")) {
+            RValue *args[1];
+            RValue *r;
+            args[0] = (RValue *)item;
+            r = Interp_CallMethod(in, (RValue *)container, "__contains__", args, 1);
+            if (!r) {
+                *ok = 0;
+                return 0;
+            }
+            return RValue_Truthy(r);
+        }
+        *ok = 0;
+        RT_Throw(in, "TypeError", "'%s' object is not iterable",
+                 RValue_TypeName(container));
+        return 0;
     default:
         *ok = 0;
-        RT_Throw(in, "TypeError", "'%s' 객체는 iterable이 아닙니다",
+        RT_Throw(in, "TypeError", "'%s' object is not iterable",
                  RValue_TypeName(container));
         return 0;
     }
@@ -1357,7 +1854,7 @@ AsterString *RString_Repeat(Interp *in, AsterString *s, int64_t times)
     if (times <= 0 || s->length == 0)
         return AsterString_FromCStr("");
     if ((uint64_t)s->length > (uint64_t)SIZE_MAX / (uint64_t)times) {
-        RT_Throw(in, "OverflowError", "문자열이 너무 커집니다");
+        RT_Throw(in, "OverflowError", "string is too large");
         return NULL;
     }
     total = s->length * (size_t)times;
@@ -1387,14 +1884,14 @@ double RValue_AsDouble(Interp *in, const RValue *v, int *ok)
         d = strtod(v->u.s->data, &end);
         if (end == v->u.s->data || *end != '\0') {
             *ok = 0;
-            RT_Throw(in, "ValueError", "문자열을 float로 바꿀 수 없습니다: '%s'", v->u.s->data);
+            RT_Throw(in, "ValueError", "cannot convert string to float: '%s'", v->u.s->data);
             return 0;
         }
         return d;
     }
     default:
         *ok = 0;
-        RT_Throw(in, "TypeError", "숫자가 아닌 값을 float로 바꿀 수 없습니다");
+        RT_Throw(in, "TypeError", "cannot convert a non-number to float");
         return 0;
     }
 }
@@ -1410,7 +1907,7 @@ int64_t RValue_AsInt(Interp *in, const RValue *v, int *ok)
     case RV_FLOAT:
         if (v->u.f >= 9223372036854775808.0 || v->u.f < -9223372036854775808.0) {
             *ok = 0;
-            RT_Throw(in, "OverflowError", "float 값을 int 범위로 바꿀 수 없습니다");
+            RT_Throw(in, "OverflowError", "float value is out of int range");
             return 0;
         }
         return (int64_t)v->u.f;
@@ -1421,19 +1918,19 @@ int64_t RValue_AsInt(Interp *in, const RValue *v, int *ok)
         n = strtoll(v->u.s->data, &end, 10);
         if (end == v->u.s->data || *end != '\0') {
             *ok = 0;
-            RT_Throw(in, "ValueError", "문자열을 int로 바꿀 수 없습니다: '%s'", v->u.s->data);
+            RT_Throw(in, "ValueError", "cannot convert string to int: '%s'", v->u.s->data);
             return 0;
         }
         if (errno == ERANGE) {
             *ok = 0;
-            RT_Throw(in, "OverflowError", "정수 범위를 넘었습니다");
+            RT_Throw(in, "OverflowError", "integer overflow");
             return 0;
         }
         return n;
     }
     default:
         *ok = 0;
-        RT_Throw(in, "TypeError", "숫자가 아닌 값을 int로 바꿀 수 없습니다");
+        RT_Throw(in, "TypeError", "cannot convert a non-number to int");
         return 0;
     }
 }
@@ -1752,6 +2249,23 @@ static void render_value(Buf *b, const RValue *v, int repr, int depth)
     }
 }
 
+/* ---- 연산자 훅 (__str__/__repr__) ---- */
+
+static AsterString *object_str_hook(Interp *in, const RValue *v, const char *name)
+{
+    RValue *r;
+
+    if (!v || v->kind != RV_OBJECT || !RValue_HasMethod(in, v, name))
+        return NULL;
+    r = Interp_CallMethod(in, (RValue *)v, name, NULL, 0);
+    if (!r)
+        return NULL;
+    if (r->kind == RV_STR)
+        return r->u.s;
+    RT_Throw(in, "TypeError", "%s must return a string", name);
+    return NULL;
+}
+
 void RValue_Print(FILE *out, const RValue *v, int repr)
 {
     Buf b = {0};
@@ -1768,10 +2282,14 @@ AsterString *RValue_ToString(Interp *in, const RValue *v)
 
     if (v && v->kind == RV_STR)
         return v->u.s;
+    if (v && v->kind == RV_OBJECT) {
+        AsterString *hooked = object_str_hook(in, v, "__str__");
+        if (hooked)
+            return hooked;
+    }
     render_value(&b, v, 0, 0);
     s = AsterString_FromUTF8(b.data ? b.data : "", b.len);
     free(b.data);
-    (void)in;
     return s;
 }
 
@@ -1780,10 +2298,14 @@ AsterString *RValue_Repr(Interp *in, const RValue *v)
     Buf b = {0};
     AsterString *s;
 
+    if (v && v->kind == RV_OBJECT) {
+        AsterString *hooked = object_str_hook(in, v, "__repr__");
+        if (hooked)
+            return hooked;
+    }
     render_value(&b, v, 1, 0);
     s = AsterString_FromUTF8(b.data ? b.data : "", b.len);
     free(b.data);
-    (void)in;
     return s;
 }
 
@@ -1910,7 +2432,16 @@ static RValue *bi_print(Interp *in, RValue *self, RValue **args, size_t nargs)
     for (i = 0; i < nargs; i++) {
         if (i)
             fputc(' ', stdout);
-        RValue_Print(stdout, args[i], 0);
+        if (args[i] && args[i]->kind == RV_OBJECT &&
+            RValue_HasMethod(in, args[i], "__str__")) {
+            AsterString *s = RValue_ToString(in, args[i]);
+            if (in->sig != SIG_OK)
+                return RValue_Null(in);
+            fwrite(s->data, 1, s->length, stdout);
+        }
+        else {
+            RValue_Print(stdout, args[i], 0);
+        }
     }
     return RValue_Null(in);
 }
@@ -1972,7 +2503,7 @@ static RValue *zero_value(Interp *in, RValue *v)
     case RV_STRUCT:
         return zero_struct(in, v->u.stv);
     default:
-        return RT_ThrowValue(in, "ValueError", "이 값은 memset으로 초기화할 수 없습니다");
+        return RT_ThrowValue(in, "ValueError", "this value cannot be initialized with memset");
     }
 }
 
@@ -1983,14 +2514,14 @@ static RValue *bi_memset(Interp *in, RValue *self, RValue **args, size_t nargs)
 
     (void)self;
     if (nargs != 3)
-        return RT_ThrowValue(in, "TypeError", "memset은 인자 3개가 필요합니다");
+        return RT_ThrowValue(in, "TypeError", "memset requires 3 arguments");
     if (args[0]->kind != RV_PTR || !args[0]->u.ptr.slot)
-        return RT_ThrowValue(in, "TypeError", "memset의 첫 인자는 포인터여야 합니다");
+        return RT_ThrowValue(in, "TypeError", "the first argument of memset must be a pointer");
     value = RValue_AsInt(in, args[1], &ok);
     if (!ok)
         return NULL;
     if (value != 0)
-        return RT_ThrowValue(in, "ValueError", "memset은 지금 0으로만 초기화할 수 있습니다");
+        return RT_ThrowValue(in, "ValueError", "memset currently only supports zero initialization");
     *args[0]->u.ptr.slot = zero_value(in, *args[0]->u.ptr.slot);
     return args[0];
 }
@@ -2015,7 +2546,7 @@ static int iter_values(Interp *in, RValue *src, RValue ***out, size_t *nout)
     *out = NULL;
     *nout = 0;
     if (!src) {
-        RT_Throw(in, "TypeError", "null 값은 iterable이 아닙니다");
+        RT_Throw(in, "TypeError", "null is not iterable");
         return 0;
     }
     switch (src->kind) {
@@ -2044,20 +2575,43 @@ static int iter_values(Interp *in, RValue *src, RValue ***out, size_t *nout)
         for (i = 0; i < n; i++)
             items[i] = src->u.dict->entries[i].key;
         break;
-    case RV_STR:
-        n = src->u.s->length;
+    case RV_STR: {
+        size_t off = 0;
+        n = src->u.s->cp_length;
         items = xrealloc(NULL, (n ? n : 1) * sizeof(RValue *));
-        for (i = 0; i < n; i++)
-            items[i] = RValue_Str(in, AsterString_FromUTF8(src->u.s->data + i, 1));
+        for (i = 0; i < n; i++) {
+            size_t adv = 1;
+            Aster_UTF8_Decode(src->u.s->data + off, src->u.s->length - off, &adv);
+            items[i] = RValue_Str(in, AsterString_FromUTF8(src->u.s->data + off, adv));
+            off += adv;
+        }
         break;
+    }
     case RV_GENERATOR:
-        n = src->u.gen->items->len - src->u.gen->index;
-        items = xrealloc(NULL, (n ? n : 1) * sizeof(RValue *));
-        for (i = 0; i < n; i++)
-            items[i] = src->u.gen->items->items[src->u.gen->index + i];
+    case RV_OBJECT: {
+        IterCursor cur;
+        size_t cap = 0;
+        if (!Iter_Begin(in, src, &cur))
+            return 0;
+        for (;;) {
+            int ended = 0, ok = 1;
+            RValue *v = Iter_Next(in, &cur, &ended, &ok);
+            if (!ok) {
+                free(items);
+                return 0;
+            }
+            if (ended)
+                break;
+            if (n == cap) {
+                cap = cap ? cap * 2 : 8;
+                items = xrealloc(items, cap * sizeof(RValue *));
+            }
+            items[n++] = v;
+        }
         break;
+    }
     default:
-        RT_Throw(in, "TypeError", "'%s' 객체는 iterable이 아닙니다", RValue_TypeName(src));
+        RT_Throw(in, "TypeError", "'%s' object is not iterable", RValue_TypeName(src));
         return 0;
     }
     *out = items;
@@ -2071,7 +2625,7 @@ static RValue *sequence_from_args(Interp *in, RValue **args, size_t nargs, int a
     size_t n;
 
     if (nargs > 1)
-        return RT_ThrowValue(in, "TypeError", "인자가 너무 많습니다");
+        return RT_ThrowValue(in, "TypeError", "too many arguments");
     if (nargs == 0) {
         items = NULL;
         n = 0;
@@ -2103,23 +2657,205 @@ static RValue *bi_len(Interp *in, RValue *self, RValue **args, size_t nargs)
     int64_t n;
     (void)self;
     if (nargs != 1)
-        return RT_ThrowValue(in, "TypeError", "len은 인자 1개가 필요합니다");
+        return RT_ThrowValue(in, "TypeError", "len takes exactly 1 argument");
     n = RValue_Length(in, args[0], &ok);
     if (!ok)
         return NULL;
     return RValue_Int(in, n);
 }
 
-static RValue *bi_next(Interp *in, RValue *self, RValue **args, size_t nargs)
+static RValue *bi_typename(Interp *in, RValue *self, RValue **args, size_t nargs)
 {
     (void)self;
-    if (nargs != 1 || !args[0] || args[0]->kind != RV_GENERATOR)
-        return RT_ThrowValue(in, "TypeError", "next는 제너레이터 인자 1개가 필요합니다");
-    if (args[0]->u.gen->index >= args[0]->u.gen->items->len) {
-        RT_Throw(in, "StopIteration", "제너레이터가 끝났습니다");
+    if (nargs != 1)
+        return RT_ThrowValue(in, "TypeError", "typeName takes exactly 1 argument");
+    return RValue_Str(in, AsterString_FromCStr(RValue_TypeName(args[0])));
+}
+
+static RValue *bi_repr(Interp *in, RValue *self, RValue **args, size_t nargs)
+{
+    (void)self;
+    if (nargs != 1)
+        return RT_ThrowValue(in, "TypeError", "repr takes exactly 1 argument");
+    return RValue_Str(in, RValue_Repr(in, args[0]));
+}
+
+static RValue *bi_chr(Interp *in, RValue *self, RValue **args, size_t nargs)
+{
+    int ok;
+    int64_t cp;
+    char buf[4];
+    size_t n;
+    (void)self;
+    if (nargs != 1)
+        return RT_ThrowValue(in, "TypeError", "chr takes exactly 1 argument");
+    cp = RValue_AsInt(in, args[0], &ok);
+    if (!ok)
+        return NULL;
+    if (cp < 0 || cp > 0x10FFFF) {
+        RT_Throw(in, "ValueError", "chr argument must be between 0 and 0x10FFFF");
         return NULL;
     }
-    return args[0]->u.gen->items->items[args[0]->u.gen->index++];
+    n = Aster_UTF8_Encode((uint32_t)cp, buf);
+    return RValue_Str(in, AsterString_FromUTF8(buf, n));
+}
+
+static RValue *bi_ord(Interp *in, RValue *self, RValue **args, size_t nargs)
+{
+    AsterString *s;
+    uint32_t cp;
+    size_t adv;
+    (void)self;
+    if (nargs != 1 || !args[0] || args[0]->kind != RV_STR)
+        return RT_ThrowValue(in, "TypeError", "ord takes exactly 1 string argument");
+    s = args[0]->u.s;
+    if (s->cp_length != 1) {
+        RT_Throw(in, "ValueError", "ord requires a single-character string");
+        return NULL;
+    }
+    cp = Aster_UTF8_Decode(s->data, s->length, &adv);
+    return RValue_Int(in, (int64_t)cp);
+}
+
+/* ---- 표준 라이브러리(aster.*)가 쓰는 플랫폼 헬퍼 ---- */
+
+#if defined(_WIN32)
+typedef struct AsterFileTime {
+    unsigned long low;
+    unsigned long high;
+} AsterFileTime;
+__declspec(dllimport) void __stdcall GetSystemTimeAsFileTime(AsterFileTime *ft);
+__declspec(dllimport) void __stdcall Sleep(unsigned long milliseconds);
+__declspec(dllimport) unsigned long __stdcall GetCurrentProcessId(void);
+__declspec(dllimport) unsigned long __stdcall GetCurrentDirectoryA(unsigned long size, char *buf);
+__declspec(dllimport) int __cdecl _putenv_s(const char *name, const char *value);
+#endif
+
+static RValue *bi_now_ms(Interp *in, RValue *self, RValue **args, size_t nargs)
+{
+    int64_t ms;
+    (void)self;
+    (void)args;
+    if (nargs != 0)
+        return RT_ThrowValue(in, "TypeError", "nowMillis takes no arguments");
+#if defined(_WIN32)
+    {
+        AsterFileTime ft;
+        unsigned long long ticks;
+        GetSystemTimeAsFileTime(&ft);
+        ticks = ((unsigned long long)ft.high << 32) | ft.low;
+        ms = (int64_t)(ticks / 10000ULL) - 11644473600000LL;
+    }
+#else
+    {
+        struct timespec ts;
+        clock_gettime(CLOCK_REALTIME, &ts);
+        ms = (int64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+    }
+#endif
+    return RValue_Int(in, ms);
+}
+
+static RValue *bi_sleep_ms(Interp *in, RValue *self, RValue **args, size_t nargs)
+{
+    int ok;
+    int64_t ms;
+    (void)self;
+    if (nargs != 1)
+        return RT_ThrowValue(in, "TypeError", "sleepMillis takes exactly 1 argument");
+    ms = RValue_AsInt(in, args[0], &ok);
+    if (!ok)
+        return NULL;
+    if (ms < 0)
+        ms = 0;
+#if defined(_WIN32)
+    Sleep((unsigned long)ms);
+#else
+    {
+        struct timespec req;
+        req.tv_sec = (time_t)(ms / 1000);
+        req.tv_nsec = (long)((ms % 1000) * 1000000);
+        nanosleep(&req, NULL);
+    }
+#endif
+    return RValue_Null(in);
+}
+
+static RValue *bi_cwd(Interp *in, RValue *self, RValue **args, size_t nargs)
+{
+    char buf[4096];
+    const char *p = NULL;
+    (void)self;
+    (void)args;
+    if (nargs != 0)
+        return RT_ThrowValue(in, "TypeError", "cwd takes no arguments");
+#if defined(_WIN32)
+    if (GetCurrentDirectoryA(sizeof buf, buf))
+        p = buf;
+#else
+    p = getcwd(buf, sizeof buf);
+#endif
+    if (!p)
+        return RT_ThrowValue(in, "OSError", "cannot read the current directory");
+    return RValue_Str(in, AsterString_FromCStr(p));
+}
+
+static RValue *bi_pid(Interp *in, RValue *self, RValue **args, size_t nargs)
+{
+    (void)self;
+    (void)args;
+    if (nargs != 0)
+        return RT_ThrowValue(in, "TypeError", "pid takes no arguments");
+#if defined(_WIN32)
+    return RValue_Int(in, (int64_t)GetCurrentProcessId());
+#else
+    return RValue_Int(in, (int64_t)getpid());
+#endif
+}
+
+static RValue *bi_platform(Interp *in, RValue *self, RValue **args, size_t nargs)
+{
+    (void)self;
+    (void)args;
+    if (nargs != 0)
+        return RT_ThrowValue(in, "TypeError", "platform takes no arguments");
+#if defined(_WIN32)
+    return RValue_Str(in, AsterString_FromCStr("windows"));
+#elif defined(__APPLE__)
+    return RValue_Str(in, AsterString_FromCStr("macos"));
+#else
+    return RValue_Str(in, AsterString_FromCStr("linux"));
+#endif
+}
+
+static RValue *bi_setenv(Interp *in, RValue *self, RValue **args, size_t nargs)
+{
+    (void)self;
+    if (nargs != 2 || !args[0] || args[0]->kind != RV_STR ||
+        !args[1] || args[1]->kind != RV_STR)
+        return RT_ThrowValue(in, "TypeError", "setenv takes exactly 2 string arguments");
+#if defined(_WIN32)
+    return RValue_Int(in, _putenv_s(args[0]->u.s->data, args[1]->u.s->data));
+#else
+    return RValue_Int(in, setenv(args[0]->u.s->data, args[1]->u.s->data, 1));
+#endif
+}
+
+static RValue *bi_next(Interp *in, RValue *self, RValue **args, size_t nargs)
+{
+    int ended = 0;
+    RValue *v;
+    (void)self;
+    if (nargs != 1 || !args[0] || args[0]->kind != RV_GENERATOR)
+        return RT_ThrowValue(in, "TypeError", "next takes exactly 1 generator argument");
+    v = Generator_Next(in, args[0]->u.gen, &ended);
+    if (in->sig != SIG_OK)
+        return NULL;
+    if (ended) {
+        RT_Throw(in, "StopIteration", "generator is exhausted");
+        return NULL;
+    }
+    return v;
 }
 
 static RValue *bi_list(Interp *in, RValue *self, RValue **args, size_t nargs)
@@ -2144,7 +2880,7 @@ static RValue *bi_set(Interp *in, RValue *self, RValue **args, size_t nargs)
 
     (void)self;
     if (nargs > 1)
-        return RT_ThrowValue(in, "TypeError", "인자가 너무 많습니다");
+        return RT_ThrowValue(in, "TypeError", "too many arguments");
     if (nargs == 0) {
         items = NULL;
         n = 0;
@@ -2178,7 +2914,7 @@ static RValue *bi_dict(Interp *in, RValue *self, RValue **args, size_t nargs)
 
     (void)self;
     if (nargs > 1)
-        return RT_ThrowValue(in, "TypeError", "인자가 너무 많습니다");
+        return RT_ThrowValue(in, "TypeError", "too many arguments");
     if (nargs == 1) {
         if (args[0]->kind == RV_DICT) {
             size_t i;
@@ -2199,12 +2935,12 @@ static RValue *bi_dict(Interp *in, RValue *self, RValue **args, size_t nargs)
                 if (!pair || (pair->kind != RV_LIST && pair->kind != RV_TUPLE)) {
                     free(items);
                     return RT_ThrowValue(in, "TypeError",
-                                         "dict는 (키, 값) 쌍의 iterable이 필요합니다");
+                                         "dict requires an iterable of (key, value) pairs");
                 }
                 if ((pair->kind == RV_LIST ? pair->u.list->len : pair->u.tuple->len) != 2) {
                     free(items);
                     return RT_ThrowValue(in, "ValueError",
-                                         "dict 원소의 길이가 2가 아닙니다");
+                                         "dict element does not have length 2");
                 }
                 if (!Dict_Set(in, dict,
                               RValue_Copy(in, pair->kind == RV_LIST
@@ -2234,21 +2970,15 @@ static int method_index(Interp *in, RValue *v, int64_t *out)
         *out = v->u.b;
         return 1;
     }
-    RT_Throw(in, "TypeError", "인덱스는 정수여야 합니다");
+    RT_Throw(in, "TypeError", "index must be an integer");
     return 0;
 }
 
 static size_t dict_index(const AsterDict *dict, const RValue *key, int *found)
 {
-    size_t i;
-    for (i = 0; i < dict->len; i++) {
-        if (RValue_Equal(dict->entries[i].key, key)) {
-            *found = 1;
-            return i;
-        }
-    }
-    *found = 0;
-    return 0;
+    long i = Dict_FindIndex(dict, key);
+    *found = i >= 0;
+    return i >= 0 ? (size_t)i : 0;
 }
 
 /* ---- list 메서드 ---- */
@@ -2256,7 +2986,7 @@ static size_t dict_index(const AsterDict *dict, const RValue *key, int *found)
 static RValue *list_m_append(Interp *in, RValue *self, RValue **args, size_t nargs)
 {
     if (nargs != 1)
-        return RT_ThrowValue(in, "TypeError", "append()는 인자 1개가 필요합니다");
+        return RT_ThrowValue(in, "TypeError", "append() takes exactly 1 argument");
     List_Append(in, self->u.list, RValue_Copy(in, args[0]));
     return RValue_Null(in);
 }
@@ -2268,7 +2998,7 @@ static RValue *list_m_extend(Interp *in, RValue *self, RValue **args, size_t nar
     size_t i;
 
     if (nargs != 1)
-        return RT_ThrowValue(in, "TypeError", "extend()는 인자 1개가 필요합니다");
+        return RT_ThrowValue(in, "TypeError", "extend() takes exactly 1 argument");
     if (!iter_values(in, args[0], &items, &n))
         return NULL;
     for (i = 0; i < n; i++)
@@ -2283,7 +3013,7 @@ static RValue *list_m_insert(Interp *in, RValue *self, RValue **args, size_t nar
     size_t len;
 
     if (nargs != 2)
-        return RT_ThrowValue(in, "TypeError", "insert()는 인자 2개가 필요합니다");
+        return RT_ThrowValue(in, "TypeError", "insert() takes exactly 2 arguments");
     if (!method_index(in, args[0], &index))
         return NULL;
     len = self->u.list->len;
@@ -2304,11 +3034,11 @@ static RValue *list_m_pop(Interp *in, RValue *self, RValue **args, size_t nargs)
     RValue *item;
 
     if (nargs > 1)
-        return RT_ThrowValue(in, "TypeError", "pop()은 인자를 최대 1개 받습니다");
+        return RT_ThrowValue(in, "TypeError", "pop() takes at most 1 argument");
     if (nargs == 1 && !method_index(in, args[0], &index))
         return NULL;
     if (self->u.list->len == 0)
-        return RT_ThrowValue(in, "IndexError", "빈 리스트에서 pop할 수 없습니다");
+        return RT_ThrowValue(in, "IndexError", "cannot pop from an empty list");
     if (index < 0)
         index += (int64_t)self->u.list->len;
     if (index < 0 || (size_t)index >= self->u.list->len)
@@ -2323,7 +3053,7 @@ static RValue *list_m_remove(Interp *in, RValue *self, RValue **args, size_t nar
     size_t i;
 
     if (nargs != 1)
-        return RT_ThrowValue(in, "TypeError", "remove()는 인자 1개가 필요합니다");
+        return RT_ThrowValue(in, "TypeError", "remove() takes exactly 1 argument");
     for (i = 0; i < self->u.list->len; i++) {
         if (RValue_Equal(self->u.list->items[i], args[0])) {
             List_RemoveAt(self->u.list, i);
@@ -2346,7 +3076,7 @@ static RValue *list_m_index(Interp *in, RValue *self, RValue **args, size_t narg
     size_t i;
 
     if (nargs != 1)
-        return RT_ThrowValue(in, "TypeError", "index()는 인자 1개가 필요합니다");
+        return RT_ThrowValue(in, "TypeError", "index() takes exactly 1 argument");
     for (i = 0; i < self->u.list->len; i++) {
         if (RValue_Equal(self->u.list->items[i], args[0]))
             return RValue_Int(in, (int64_t)i);
@@ -2360,7 +3090,7 @@ static RValue *list_m_count(Interp *in, RValue *self, RValue **args, size_t narg
     int64_t count = 0;
 
     if (nargs != 1)
-        return RT_ThrowValue(in, "TypeError", "count()는 인자 1개가 필요합니다");
+        return RT_ThrowValue(in, "TypeError", "count() takes exactly 1 argument");
     for (i = 0; i < self->u.list->len; i++) {
         if (RValue_Equal(self->u.list->items[i], args[0]))
             count++;
@@ -2377,6 +3107,51 @@ static RValue *list_m_copy(Interp *in, RValue *self, RValue **args, size_t nargs
     for (i = 0; i < self->u.list->len; i++)
         List_Append(in, list, RValue_Copy(in, self->u.list->items[i]));
     return RValue_List(in, list);
+}
+
+static RValue *list_m_map(Interp *in, RValue *self, RValue **args, size_t nargs)
+{
+    AsterList *out;
+    size_t i;
+    if (nargs != 1)
+        return RT_ThrowValue(in, "TypeError", "map() takes exactly 1 argument");
+    if (!args[0] || (args[0]->kind != RV_FUNC && args[0]->kind != RV_BUILTIN &&
+                     args[0]->kind != RV_OVERLOAD))
+        return RT_ThrowValue(in, "TypeError", "map() expects a function");
+    out = List_New(in);
+    for (i = 0; i < self->u.list->len; i++) {
+        RValue *call_args[1];
+        RValue *mapped;
+        call_args[0] = self->u.list->items[i];
+        mapped = Interp_CallValue(in, args[0], call_args, 1);
+        if (!mapped)
+            return NULL;
+        List_Append(in, out, RValue_Copy(in, mapped));
+    }
+    return RValue_List(in, out);
+}
+
+static RValue *list_m_filter(Interp *in, RValue *self, RValue **args, size_t nargs)
+{
+    AsterList *out;
+    size_t i;
+    if (nargs != 1)
+        return RT_ThrowValue(in, "TypeError", "filter() takes exactly 1 argument");
+    if (!args[0] || (args[0]->kind != RV_FUNC && args[0]->kind != RV_BUILTIN &&
+                     args[0]->kind != RV_OVERLOAD))
+        return RT_ThrowValue(in, "TypeError", "filter() expects a function");
+    out = List_New(in);
+    for (i = 0; i < self->u.list->len; i++) {
+        RValue *call_args[1];
+        RValue *verdict;
+        call_args[0] = self->u.list->items[i];
+        verdict = Interp_CallValue(in, args[0], call_args, 1);
+        if (!verdict)
+            return NULL;
+        if (RValue_Truthy(verdict))
+            List_Append(in, out, RValue_Copy(in, self->u.list->items[i]));
+    }
+    return RValue_List(in, out);
 }
 
 static RValue *list_m_reverse(Interp *in, RValue *self, RValue **args, size_t nargs)
@@ -2422,7 +3197,7 @@ static RValue *tuple_m_index(Interp *in, RValue *self, RValue **args, size_t nar
     size_t i;
 
     if (nargs != 1)
-        return RT_ThrowValue(in, "TypeError", "index()는 인자 1개가 필요합니다");
+        return RT_ThrowValue(in, "TypeError", "index() takes exactly 1 argument");
     for (i = 0; i < self->u.tuple->len; i++) {
         if (RValue_Equal(self->u.tuple->items[i], args[0]))
             return RValue_Int(in, (int64_t)i);
@@ -2436,7 +3211,7 @@ static RValue *tuple_m_count(Interp *in, RValue *self, RValue **args, size_t nar
     int64_t count = 0;
 
     if (nargs != 1)
-        return RT_ThrowValue(in, "TypeError", "count()는 인자 1개가 필요합니다");
+        return RT_ThrowValue(in, "TypeError", "count() takes exactly 1 argument");
     for (i = 0; i < self->u.tuple->len; i++) {
         if (RValue_Equal(self->u.tuple->items[i], args[0]))
             count++;
@@ -2451,7 +3226,7 @@ static RValue *dict_m_get(Interp *in, RValue *self, RValue **args, size_t nargs)
     RValue *value;
 
     if (nargs < 1 || nargs > 2)
-        return RT_ThrowValue(in, "TypeError", "get()은 인자를 1개 또는 2개 받습니다");
+        return RT_ThrowValue(in, "TypeError", "get() takes 1 or 2 arguments");
     if (!RValue_Hashable(args[0]))
         return RT_ThrowValue(in, "TypeError", "unhashable type: '%s'", RValue_TypeName(args[0]));
     value = Dict_Lookup(self->u.dict, args[0]);
@@ -2506,7 +3281,7 @@ static RValue *dict_m_pop(Interp *in, RValue *self, RValue **args, size_t nargs)
     RValue *value;
 
     if (nargs < 1 || nargs > 2)
-        return RT_ThrowValue(in, "TypeError", "pop()은 인자를 1개 또는 2개 받습니다");
+        return RT_ThrowValue(in, "TypeError", "pop() takes 1 or 2 arguments");
     if (!RValue_Hashable(args[0]))
         return RT_ThrowValue(in, "TypeError", "unhashable type: '%s'", RValue_TypeName(args[0]));
     index = dict_index(self->u.dict, args[0], &found);
@@ -2531,7 +3306,7 @@ static RValue *dict_m_setdefault(Interp *in, RValue *self, RValue **args, size_t
     int ok;
 
     if (nargs < 1 || nargs > 2)
-        return RT_ThrowValue(in, "TypeError", "setdefault()는 인자를 1개 또는 2개 받습니다");
+        return RT_ThrowValue(in, "TypeError", "setdefault() takes 1 or 2 arguments");
     if (!RValue_Hashable(args[0]))
         return RT_ThrowValue(in, "TypeError", "unhashable type: '%s'", RValue_TypeName(args[0]));
     value = Dict_Lookup(self->u.dict, args[0]);
@@ -2551,7 +3326,7 @@ static RValue *dict_m_update(Interp *in, RValue *self, RValue **args, size_t nar
     int ok;
 
     if (nargs != 1)
-        return RT_ThrowValue(in, "TypeError", "update()는 인자 1개가 필요합니다");
+        return RT_ThrowValue(in, "TypeError", "update() takes exactly 1 argument");
     if (args[0]->kind == RV_DICT) {
         size_t i;
         for (i = 0; i < args[0]->u.dict->len; i++) {
@@ -2574,7 +3349,7 @@ static RValue *dict_m_update(Interp *in, RValue *self, RValue **args, size_t nar
             if (plen != 2) {
                 free(items);
                 return RT_ThrowValue(in, "ValueError",
-                                     "update()에는 (키, 값) 쌍이 필요합니다");
+                                     "update() requires (key, value) pairs");
             }
             if (!Dict_Set(in, self->u.dict,
                           RValue_Copy(in, pair->kind == RV_LIST
@@ -2596,7 +3371,7 @@ static RValue *dict_m_clear(Interp *in, RValue *self, RValue **args, size_t narg
 {
     (void)args;
     (void)nargs;
-    self->u.dict->len = 0;
+    Dict_Clear(self->u.dict);
     return RValue_Null(in);
 }
 
@@ -2626,7 +3401,7 @@ static RValue *set_m_add(Interp *in, RValue *self, RValue **args, size_t nargs)
 {
     int ok;
     if (nargs != 1)
-        return RT_ThrowValue(in, "TypeError", "add()는 인자 1개가 필요합니다");
+        return RT_ThrowValue(in, "TypeError", "add() takes exactly 1 argument");
     if (!Set_Add(in, self->u.set, RValue_Copy(in, args[0]), &ok))
         return NULL;
     return RValue_Null(in);
@@ -2637,7 +3412,7 @@ static RValue *set_m_remove(Interp *in, RValue *self, RValue **args, size_t narg
     size_t i;
 
     if (nargs != 1)
-        return RT_ThrowValue(in, "TypeError", "remove()는 인자 1개가 필요합니다");
+        return RT_ThrowValue(in, "TypeError", "remove() takes exactly 1 argument");
     for (i = 0; i < self->u.set->len; i++) {
         if (RValue_Equal(self->u.set->items[i], args[0])) {
             Set_RemoveAt(self->u.set, i);
@@ -2652,7 +3427,7 @@ static RValue *set_m_discard(Interp *in, RValue *self, RValue **args, size_t nar
     size_t i;
 
     if (nargs != 1)
-        return RT_ThrowValue(in, "TypeError", "discard()는 인자 1개가 필요합니다");
+        return RT_ThrowValue(in, "TypeError", "discard() takes exactly 1 argument");
     for (i = 0; i < self->u.set->len; i++) {
         if (RValue_Equal(self->u.set->items[i], args[0])) {
             Set_RemoveAt(self->u.set, i);
@@ -2678,7 +3453,7 @@ static RValue *set_m_clear(Interp *in, RValue *self, RValue **args, size_t nargs
 {
     (void)args;
     (void)nargs;
-    self->u.set->len = 0;
+    Set_Clear(self->u.set);
     return RValue_Null(in);
 }
 
@@ -2725,7 +3500,7 @@ static RValue *set_m_union(Interp *in, RValue *self, RValue **args, size_t nargs
     int add_ok;
 
     if (nargs != 1)
-        return RT_ThrowValue(in, "TypeError", "union()은 인자 1개가 필요합니다");
+        return RT_ThrowValue(in, "TypeError", "union() takes exactly 1 argument");
     other = set_like_from(in, args[0], &ok);
     if (!ok)
         return NULL;
@@ -2744,7 +3519,7 @@ static RValue *set_m_intersection(Interp *in, RValue *self, RValue **args, size_
     size_t i;
 
     if (nargs != 1)
-        return RT_ThrowValue(in, "TypeError", "intersection()은 인자 1개가 필요합니다");
+        return RT_ThrowValue(in, "TypeError", "intersection() takes exactly 1 argument");
     other = set_like_from(in, args[0], &ok);
     if (!ok)
         return NULL;
@@ -2763,7 +3538,7 @@ static RValue *set_m_difference(Interp *in, RValue *self, RValue **args, size_t 
     size_t i;
 
     if (nargs != 1)
-        return RT_ThrowValue(in, "TypeError", "difference()는 인자 1개가 필요합니다");
+        return RT_ThrowValue(in, "TypeError", "difference() takes exactly 1 argument");
     other = set_like_from(in, args[0], &ok);
     if (!ok)
         return NULL;
@@ -2781,7 +3556,7 @@ static RValue *set_m_issubset(Interp *in, RValue *self, RValue **args, size_t na
     size_t i;
 
     if (nargs != 1)
-        return RT_ThrowValue(in, "TypeError", "issubset()은 인자 1개가 필요합니다");
+        return RT_ThrowValue(in, "TypeError", "issubset() takes exactly 1 argument");
     other = set_like_from(in, args[0], &ok);
     if (!ok)
         return NULL;
@@ -2799,7 +3574,7 @@ static RValue *set_m_issuperset(Interp *in, RValue *self, RValue **args, size_t 
     size_t i;
 
     if (nargs != 1)
-        return RT_ThrowValue(in, "TypeError", "issuperset()은 인자 1개가 필요합니다");
+        return RT_ThrowValue(in, "TypeError", "issuperset() takes exactly 1 argument");
     other = set_like_from(in, args[0], &ok);
     if (!ok)
         return NULL;
@@ -2815,21 +3590,11 @@ static RValue *set_m_issuperset(Interp *in, RValue *self, RValue **args, size_t 
 static int str_arg(Interp *in, RValue *v, const char *what, AsterString **out)
 {
     if (!v || v->kind != RV_STR) {
-        RT_Throw(in, "TypeError", "%s은(는) 문자열이어야 합니다", what);
+        RT_Throw(in, "TypeError", "%s must be a string", what);
         return 0;
     }
     *out = v->u.s;
     return 1;
-}
-
-static int ascii_lower(int c)
-{
-    return c >= 'A' && c <= 'Z' ? c + ('a' - 'A') : c;
-}
-
-static int ascii_upper(int c)
-{
-    return c >= 'a' && c <= 'z' ? c - ('a' - 'A') : c;
 }
 
 static int is_space_byte(int c)
@@ -2851,14 +3616,24 @@ static int find_sub(const char *hay, size_t hn, const char *needle, size_t nn, s
     return -1;
 }
 
-static RValue *str_m_upper(Interp *in, RValue *self, RValue **args, size_t nargs)
+static RValue *str_case_convert(Interp *in, RValue *self, int upper)
 {
     Buf b = {0};
-    size_t i;
-    (void)args;
-    (void)nargs;
-    for (i = 0; i < self->u.s->length; i++)
-        buf_putc(&b, (char)ascii_upper((unsigned char)self->u.s->data[i]));
+    size_t i = 0, n = self->u.s->length;
+    while (i < n) {
+        size_t adv = 1, out_n;
+        uint32_t cp = Aster_UTF8_Decode(self->u.s->data + i, n - i, &adv);
+        char out[4];
+        if (upper && cp == 0xDF) {
+            buf_write(&b, "SS", 2);
+            i += adv;
+            continue;
+        }
+        cp = upper ? Aster_ToUpperCP(cp) : Aster_ToLowerCP(cp);
+        out_n = Aster_UTF8_Encode(cp, out);
+        buf_write(&b, out, out_n);
+        i += adv;
+    }
     {
         AsterString *s = AsterString_FromUTF8(b.data ? b.data : "", b.len);
         free(b.data);
@@ -2866,31 +3641,46 @@ static RValue *str_m_upper(Interp *in, RValue *self, RValue **args, size_t nargs
     }
 }
 
-static RValue *str_m_lower(Interp *in, RValue *self, RValue **args, size_t nargs)
+static RValue *str_m_upper(Interp *in, RValue *self, RValue **args, size_t nargs)
 {
-    Buf b = {0};
-    size_t i;
     (void)args;
     (void)nargs;
-    for (i = 0; i < self->u.s->length; i++)
-        buf_putc(&b, (char)ascii_lower((unsigned char)self->u.s->data[i]));
-    {
-        AsterString *s = AsterString_FromUTF8(b.data ? b.data : "", b.len);
-        free(b.data);
-        return RValue_Str(in, s);
-    }
+    return str_case_convert(in, self, 1);
+}
+
+static RValue *str_m_lower(Interp *in, RValue *self, RValue **args, size_t nargs)
+{
+    (void)args;
+    (void)nargs;
+    return str_case_convert(in, self, 0);
 }
 
 static RValue *str_m_strip(Interp *in, RValue *self, RValue **args, size_t nargs)
 {
     const char *d = self->u.s->data;
     size_t n = self->u.s->length, start = 0, end = n;
+    size_t adv;
+    uint32_t cp;
     (void)args;
     (void)nargs;
-    while (start < end && is_space_byte((unsigned char)d[start]))
-        start++;
-    while (end > start && is_space_byte((unsigned char)d[end - 1]))
-        end--;
+    while (start < end) {
+        cp = Aster_UTF8_Decode(d + start, end - start, &adv);
+        if (!Aster_IsSpaceCP(cp))
+            break;
+        start += adv;
+    }
+    while (end > start) {
+        size_t back = 1, cand;
+        uint32_t c;
+        /* 마지막 코드 포인트의 시작 바이트를 찾는다. */
+        while (end - back > start && ((unsigned char)d[end - back] & 0xC0) == 0x80)
+            back++;
+        cand = end - back;
+        c = Aster_UTF8_Decode(d + cand, end - cand, &adv);
+        if (!Aster_IsSpaceCP(c))
+            break;
+        end = cand;
+    }
     return RValue_Str(in, AsterString_FromUTF8(d + start, end - start));
 }
 
@@ -2901,14 +3691,14 @@ static RValue *str_m_split(Interp *in, RValue *self, RValue **args, size_t nargs
     size_t n = self->u.s->length;
 
     if (nargs > 1)
-        return RT_ThrowValue(in, "TypeError", "split()은 인자를 최대 1개 받습니다");
+        return RT_ThrowValue(in, "TypeError", "split() takes at most 1 argument");
     if (nargs == 1 && args[0]->kind != RV_NULL) {
         AsterString *sep;
         size_t i = 0;
-        if (!str_arg(in, args[0], "split 구분자", &sep))
+        if (!str_arg(in, args[0], "split separator", &sep))
             return NULL;
         if (sep->length == 0)
-            return RT_ThrowValue(in, "ValueError", "빈 구분자로는 나눌 수 없습니다");
+            return RT_ThrowValue(in, "ValueError", "cannot split with an empty separator");
         for (;;) {
             int found = find_sub(d, n, sep->data, sep->length, i);
             if (found < 0) {
@@ -2924,12 +3714,21 @@ static RValue *str_m_split(Interp *in, RValue *self, RValue **args, size_t nargs
     {
         size_t i = 0;
         while (i < n) {
-            size_t start;
-            while (i < n && is_space_byte((unsigned char)d[i]))
-                i++;
+            size_t start, adv;
+            uint32_t cp;
+            while (i < n) {
+                cp = Aster_UTF8_Decode(d + i, n - i, &adv);
+                if (!Aster_IsSpaceCP(cp))
+                    break;
+                i += adv;
+            }
             start = i;
-            while (i < n && !is_space_byte((unsigned char)d[i]))
-                i++;
+            while (i < n) {
+                cp = Aster_UTF8_Decode(d + i, n - i, &adv);
+                if (Aster_IsSpaceCP(cp))
+                    break;
+                i += adv;
+            }
             if (i > start)
                 List_Append(in, list, RValue_Str(in, AsterString_FromUTF8(d + start,
                                                                          i - start)));
@@ -2946,14 +3745,14 @@ static RValue *str_m_join(Interp *in, RValue *self, RValue **args, size_t nargs)
     AsterString *s;
 
     if (nargs != 1)
-        return RT_ThrowValue(in, "TypeError", "join()은 인자 1개가 필요합니다");
+        return RT_ThrowValue(in, "TypeError", "join() takes exactly 1 argument");
     if (!iter_values(in, args[0], &items, &n))
         return NULL;
     for (i = 0; i < n; i++) {
         if (!items[i] || items[i]->kind != RV_STR) {
             free(items);
             free(b.data);
-            return RT_ThrowValue(in, "TypeError", "join()의 원소는 문자열이어야 합니다");
+            return RT_ThrowValue(in, "TypeError", "join() elements must be strings");
         }
         if (i)
             buf_write(&b, self->u.s->data, self->u.s->length);
@@ -2974,9 +3773,9 @@ static RValue *str_m_replace(Interp *in, RValue *self, RValue **args, size_t nar
     AsterString *s;
 
     if (nargs < 2 || nargs > 3)
-        return RT_ThrowValue(in, "TypeError", "replace()는 인자 2개 또는 3개가 필요합니다");
-    if (!str_arg(in, args[0], "replace의 old", &old) ||
-        !str_arg(in, args[1], "replace의 new", &new_s))
+        return RT_ThrowValue(in, "TypeError", "replace() takes 2 or 3 arguments");
+    if (!str_arg(in, args[0], "replace() old value", &old) ||
+        !str_arg(in, args[1], "replace() new value", &new_s))
         return NULL;
     if (nargs == 3) {
         int ok;
@@ -3018,8 +3817,8 @@ static RValue *string_predicate(Interp *in, RValue *self, RValue **args, size_t 
     int found;
 
     if (nargs != 1)
-        return RT_ThrowValue(in, "TypeError", "startswith/endswith는 인자 1개가 필요합니다");
-    if (!str_arg(in, args[0], "인자", &sub))
+        return RT_ThrowValue(in, "TypeError", "startswith/endswith take exactly 1 argument");
+    if (!str_arg(in, args[0], "argument", &sub))
         return NULL;
     if (sub->length > self->u.s->length)
         return RValue_Bool(in, 0);
@@ -3047,10 +3846,12 @@ static RValue *str_m_find(Interp *in, RValue *self, RValue **args, size_t nargs)
     int found;
 
     if (nargs != 1)
-        return RT_ThrowValue(in, "TypeError", "find()는 인자 1개가 필요합니다");
-    if (!str_arg(in, args[0], "find의 인자", &sub))
+        return RT_ThrowValue(in, "TypeError", "find() takes exactly 1 argument");
+    if (!str_arg(in, args[0], "find() argument", &sub))
         return NULL;
     found = find_sub(self->u.s->data, self->u.s->length, sub->data, sub->length, 0);
+    if (found >= 0)
+        found = (int)AsterString_CodePointIndex(self->u.s, (size_t)found);
     return RValue_Int(in, found);
 }
 
@@ -3061,8 +3862,8 @@ static RValue *str_m_count(Interp *in, RValue *self, RValue **args, size_t nargs
     int64_t count = 0;
 
     if (nargs != 1)
-        return RT_ThrowValue(in, "TypeError", "count()는 인자 1개가 필요합니다");
-    if (!str_arg(in, args[0], "count의 인자", &sub))
+        return RT_ThrowValue(in, "TypeError", "count() takes exactly 1 argument");
+    if (!str_arg(in, args[0], "count() argument", &sub))
         return NULL;
     if (sub->length == 0)
         return RValue_Int(in, 0);
@@ -3100,39 +3901,45 @@ static RValue *str_m_length(Interp *in, RValue *self, RValue **args, size_t narg
 {
     (void)args;
     (void)nargs;
-    return RValue_Int(in, (int64_t)self->u.s->length);
+    return RValue_Int(in, (int64_t)self->u.s->cp_length);
 }
 
 static RValue *str_m_charat(Interp *in, RValue *self, RValue **args, size_t nargs)
 {
     int64_t index;
+    size_t off, adv = 1;
     if (nargs != 1)
-        return RT_ThrowValue(in, "TypeError", "charAt()는 인자 1개가 필요합니다");
+        return RT_ThrowValue(in, "TypeError", "charAt() takes exactly 1 argument");
     if (!method_index(in, args[0], &index))
         return NULL;
     if (index < 0)
-        index += (int64_t)self->u.s->length;
-    if (index < 0 || (size_t)index >= self->u.s->length)
-        return RT_ThrowValue(in, "IndexError", "문자열 인덱스가 범위를 벗어났습니다");
-    return RValue_Str(in, AsterString_FromUTF8(self->u.s->data + index, 1));
+        index += (int64_t)self->u.s->cp_length;
+    if (index < 0 || (size_t)index >= self->u.s->cp_length)
+        return RT_ThrowValue(in, "IndexError", "string index out of range");
+    off = AsterString_ByteOffset(self->u.s, (size_t)index);
+    Aster_UTF8_Decode(self->u.s->data + off, self->u.s->length - off, &adv);
+    return RValue_Str(in, AsterString_FromUTF8(self->u.s->data + off, adv));
 }
 
 static RValue *str_m_substring(Interp *in, RValue *self, RValue **args, size_t nargs)
 {
-    int64_t start = 0, end = (int64_t)self->u.s->length;
+    int64_t start = 0, end = (int64_t)self->u.s->cp_length;
+    size_t boff, eoff;
     if (nargs < 1 || nargs > 2)
-        return RT_ThrowValue(in, "TypeError", "substring()은 인자 1개 또는 2개가 필요합니다");
+        return RT_ThrowValue(in, "TypeError", "substring() takes 1 or 2 arguments");
     if (!method_index(in, args[0], &start))
         return NULL;
     if (nargs == 2 && !method_index(in, args[1], &end))
         return NULL;
     if (start < 0)
         start = 0;
-    if (end > (int64_t)self->u.s->length)
-        end = (int64_t)self->u.s->length;
-    if (start > end || (size_t)start > self->u.s->length)
-        return RT_ThrowValue(in, "IndexError", "substring 범위가 잘못되었습니다");
-    return RValue_Str(in, AsterString_FromUTF8(self->u.s->data + start, (size_t)(end - start)));
+    if (end > (int64_t)self->u.s->cp_length)
+        end = (int64_t)self->u.s->cp_length;
+    if (start > end || (size_t)start > self->u.s->cp_length)
+        return RT_ThrowValue(in, "IndexError", "invalid substring range");
+    boff = AsterString_ByteOffset(self->u.s, (size_t)start);
+    eoff = AsterString_ByteOffset(self->u.s, (size_t)end);
+    return RValue_Str(in, AsterString_FromUTF8(self->u.s->data + boff, eoff - boff));
 }
 
 static RValue *str_m_isdigit(Interp *in, RValue *self, RValue **args, size_t nargs)
@@ -3165,25 +3972,33 @@ static RValue *str_m_isalpha(Interp *in, RValue *self, RValue **args, size_t nar
 
 static RValue *str_m_isspace(Interp *in, RValue *self, RValue **args, size_t nargs)
 {
-    size_t i;
+    size_t i = 0, n = self->u.s->length;
     (void)args;
     (void)nargs;
-    if (self->u.s->length == 0)
+    if (n == 0)
         return RValue_Bool(in, 0);
-    for (i = 0; i < self->u.s->length; i++)
-        if (!is_space_byte((unsigned char)self->u.s->data[i]))
+    while (i < n) {
+        size_t adv = 1;
+        uint32_t cp = Aster_UTF8_Decode(self->u.s->data + i, n - i, &adv);
+        if (!Aster_IsSpaceCP(cp))
             return RValue_Bool(in, 0);
+        i += adv;
+    }
     return RValue_Bool(in, 1);
 }
 
 static RValue *str_m_chars(Interp *in, RValue *self, RValue **args, size_t nargs)
 {
     AsterList *list = List_New(in);
-    size_t i;
+    size_t i = 0, n = self->u.s->length;
     (void)args;
     (void)nargs;
-    for (i = 0; i < self->u.s->length; i++)
-        List_Append(in, list, RValue_Str(in, AsterString_FromUTF8(self->u.s->data + i, 1)));
+    while (i < n) {
+        size_t adv = 1;
+        Aster_UTF8_Decode(self->u.s->data + i, n - i, &adv);
+        List_Append(in, list, RValue_Str(in, AsterString_FromUTF8(self->u.s->data + i, adv)));
+        i += adv;
+    }
     return RValue_List(in, list);
 }
 
@@ -3250,7 +4065,7 @@ static RValue *bi_range(Interp *in, RValue *self, RValue **args, size_t nargs)
     (void)self;
 
     if (nargs < 1 || nargs > 3)
-        return RT_ThrowValue(in, "TypeError", "range()는 인자 1개에서 3개가 필요합니다");
+        return RT_ThrowValue(in, "TypeError", "range() takes 1 to 3 arguments");
     if (nargs == 1) {
         stop = RValue_AsInt(in, args[0], &ok);
         if (!ok)
@@ -3270,7 +4085,7 @@ static RValue *bi_range(Interp *in, RValue *self, RValue **args, size_t nargs)
         }
     }
     if (step == 0)
-        return RT_ThrowValue(in, "ValueError", "range()의 간격은 0일 수 없습니다");
+        return RT_ThrowValue(in, "ValueError", "range() step cannot be zero");
     if (step > 0 && stop < start)
         return RValue_List(in, List_New(in));
     if (step < 0 && stop > start)
@@ -3279,7 +4094,7 @@ static RValue *bi_range(Interp *in, RValue *self, RValue **args, size_t nargs)
         uint64_t count = step > 0 ? (uint64_t)((stop - start + step - 1) / step)
                                   : (uint64_t)((start - stop - step - 1) / (-step));
         if (count > 10000000ULL)
-            return RT_ThrowValue(in, "OverflowError", "range() 결과가 너무 큽니다");
+            return RT_ThrowValue(in, "OverflowError", "range() result is too large");
         list = List_New(in);
         for (i = start; step > 0 ? i < stop : i > stop; i += step)
             List_Append(in, list, RValue_Int(in, i));
@@ -3336,7 +4151,7 @@ static char *path_bytes(Interp *in, RValue *v, int *ok)
 {
     *ok = 0;
     if (!v || v->kind != RV_STR) {
-        RT_Throw(in, "TypeError", "파일 경로는 문자열이어야 합니다");
+        RT_Throw(in, "TypeError", "file path must be a string");
         return NULL;
     }
     *ok = 1;
@@ -3370,7 +4185,7 @@ static RValue *scanner_fill_tokens(Interp *in, RValue *self)
     else {
         line = read_stdin_line(&eof);
         if (!line) {
-            RT_Throw(in, "EOFError", "입력이 끝났습니다");
+            RT_Throw(in, "EOFError", "end of input");
             return NULL;
         }
     }
@@ -3426,7 +4241,7 @@ static RValue *scanner_nextline(Interp *in, RValue *self, RValue **args, size_t 
     }
     line = read_stdin_line(&eof);
     if (!line)
-        return RT_ThrowValue(in, "EOFError", "입력이 끝났습니다");
+        return RT_ThrowValue(in, "EOFError", "end of input");
     {
         RValue *v = RValue_Str(in, AsterString_FromUTF8(line, strlen(line)));
         free(line);
@@ -3466,7 +4281,7 @@ static RValue *scanner_nextint(Interp *in, RValue *self, RValue **args, size_t n
         errno = 0;
         v = strtoll(s, &end, 10);
         if (errno || end == s || *end)
-            return RT_ThrowValue(in, "NumberFormatError", "정수로 읽을 수 없습니다: %s", s);
+            return RT_ThrowValue(in, "NumberFormatError", "cannot read an integer: %s", s);
         return RValue_Int(in, (int64_t)v);
     }
     n = RValue_AsInt(in, tok, &ok);
@@ -3487,7 +4302,7 @@ static RValue *scanner_nextfloat(Interp *in, RValue *self, RValue **args, size_t
         errno = 0;
         v = strtod(s, &end);
         if (errno || end == s || *end)
-            return RT_ThrowValue(in, "NumberFormatError", "수로 읽을 수 없습니다: %s", s);
+            return RT_ThrowValue(in, "NumberFormatError", "cannot read a number: %s", s);
         return RValue_Float(in, v);
     }
     f = RValue_AsDouble(in, tok, &ok);
@@ -3512,13 +4327,13 @@ static RValue *files_readstring(Interp *in, RValue *self, RValue **args, size_t 
     size_t n;
     (void)self;
     if (nargs != 1)
-        return RT_ThrowValue(in, "TypeError", "Files.readString()은 인자 1개가 필요합니다");
+        return RT_ThrowValue(in, "TypeError", "Files.readString() takes exactly 1 argument");
     path = path_bytes(in, args[0], &ok);
     if (!ok)
         return NULL;
     f = fopen(path, "rb");
     if (!f)
-        return RT_ThrowValue(in, "OSError", "파일을 열 수 없습니다: %s", path);
+        return RT_ThrowValue(in, "OSError", "cannot open file: %s", path);
     while ((n = fread(chunk, 1, sizeof chunk, f)) > 0)
         buf_write(&b, chunk, n);
     fclose(f);
@@ -3538,15 +4353,15 @@ static RValue *files_writestring(Interp *in, RValue *self, RValue **args, size_t
     (void)self;
     if (nargs != 2)
         return RT_ThrowValue(in, "TypeError",
-                             "Files.writeString()은 인자 2개가 필요합니다");
+                             "Files.writeString() takes exactly 2 arguments");
     path = path_bytes(in, args[0], &ok);
     if (!ok)
         return NULL;
-    if (!str_arg(in, args[1], "파일 내용", &content))
+    if (!str_arg(in, args[1], "file contents", &content))
         return NULL;
     f = fopen(path, "wb");
     if (!f)
-        return RT_ThrowValue(in, "OSError", "파일을 쓸 수 없습니다: %s", path);
+        return RT_ThrowValue(in, "OSError", "cannot write file: %s", path);
     if (content->length)
         fwrite(content->data, 1, content->length, f);
     fclose(f);
@@ -3588,7 +4403,7 @@ static RValue *files_exists(Interp *in, RValue *self, RValue **args, size_t narg
     FILE *f;
     (void)self;
     if (nargs != 1)
-        return RT_ThrowValue(in, "TypeError", "Files.exists()는 인자 1개가 필요합니다");
+        return RT_ThrowValue(in, "TypeError", "Files.exists() takes exactly 1 argument");
     path = path_bytes(in, args[0], &ok);
     if (!ok)
         return NULL;
@@ -3606,12 +4421,12 @@ static RValue *files_delete(Interp *in, RValue *self, RValue **args, size_t narg
     char *path;
     (void)self;
     if (nargs != 1)
-        return RT_ThrowValue(in, "TypeError", "Files.delete()는 인자 1개가 필요합니다");
+        return RT_ThrowValue(in, "TypeError", "Files.delete() takes exactly 1 argument");
     path = path_bytes(in, args[0], &ok);
     if (!ok)
         return NULL;
     if (remove(path) != 0)
-        return RT_ThrowValue(in, "OSError", "파일을 지울 수 없습니다: %s", path);
+        return RT_ThrowValue(in, "OSError", "cannot delete file: %s", path);
     return RValue_Null(in);
 }
 
@@ -3621,7 +4436,7 @@ static RValue *system_exit(Interp *in, RValue *self, RValue **args, size_t nargs
     int64_t code = 0;
     (void)self;
     if (nargs > 1)
-        return RT_ThrowValue(in, "TypeError", "System.exit()는 인자를 최대 1개 받습니다");
+        return RT_ThrowValue(in, "TypeError", "System.exit() takes at most 1 argument");
     if (nargs == 1) {
         code = RValue_AsInt(in, args[0], &ok);
         if (!ok)
@@ -3630,6 +4445,35 @@ static RValue *system_exit(Interp *in, RValue *self, RValue **args, size_t nargs
     fflush(stdout);
     exit((int)code);
     return RValue_Null(in);
+}
+
+static RValue *system_set_recursion_limit(Interp *in, RValue *self, RValue **args, size_t nargs)
+{
+    int ok;
+    int64_t limit;
+    (void)self;
+    if (nargs != 1)
+        return RT_ThrowValue(in, "TypeError",
+                             "System.setRecursionLimit() takes exactly 1 argument");
+    limit = RValue_AsInt(in, args[0], &ok);
+    if (!ok)
+        return NULL;
+    if (limit < 1)
+        return RT_ThrowValue(in, "ValueError",
+                             "recursion limit must be at least 1");
+    if (limit > 100000)
+        return RT_ThrowValue(in, "ValueError",
+                             "recursion limit must be at most 100000");
+    in->recursion_limit = (int)limit;
+    return RValue_Null(in);
+}
+
+static RValue *system_get_recursion_limit(Interp *in, RValue *self, RValue **args, size_t nargs)
+{
+    (void)self;
+    (void)args;
+    (void)nargs;
+    return RValue_Int(in, in->recursion_limit);
 }
 
 typedef struct {
@@ -3648,6 +4492,8 @@ static const MethodEntry list_methods[] = {
     {"index", list_m_index, 0},
     {"count", list_m_count, 0},
     {"copy", list_m_copy, 0},
+    {"map", list_m_map, 0},
+    {"filter", list_m_filter, 0},
     {"reverse", list_m_reverse, 1},
     {"sort", list_m_sort, 1},
 };
@@ -3723,12 +4569,76 @@ AstBuiltin *Collection_Method(Interp *in, RValue *self, const char *name)
     return NULL;
 }
 
+static int try_module_file(const char *dir, const char *rel, char *out, size_t cap)
+{
+    FILE *f;
+    if (dir && dir[0])
+        snprintf(out, cap, "%s/%s", dir, rel);
+    else
+        snprintf(out, cap, "%s", rel);
+    f = fopen(out, "rb");
+    if (!f)
+        return 0;
+    fclose(f);
+    return 1;
+}
+
+int Aster_ResolveModuleFile(const char *base_dir, const char *stdlib_dir,
+                            const char **module_dirs, size_t nmodule_dirs,
+                            const char *name, char *out, size_t cap)
+{
+    char rel[512], with_ast[600], with_init[620];
+    size_t i, o = 0;
+
+    for (i = 0; name[i] && o + 1 < sizeof(rel); i++)
+        rel[o++] = name[i] == '.' ? '/' : name[i];
+    rel[o] = 0;
+    snprintf(with_ast, sizeof with_ast, "%s.ast", rel);
+    snprintf(with_init, sizeof with_init, "%s/__init__.ast", rel);
+
+    if (try_module_file(base_dir, with_ast, out, cap))
+        return 1;
+    if (try_module_file(base_dir, with_init, out, cap))
+        return 1;
+    if (try_module_file(stdlib_dir, with_ast, out, cap))
+        return 1;
+    if (try_module_file(stdlib_dir, with_init, out, cap))
+        return 1;
+    for (i = 0; i < nmodule_dirs; i++) {
+        if (try_module_file(module_dirs[i], with_ast, out, cap))
+            return 1;
+        if (try_module_file(module_dirs[i], with_init, out, cap))
+            return 1;
+    }
+    return 0;
+}
+
 AstModule *Module_New(Interp *in, const char *name, const char *path)
 {
     AstModule *m = Arena_Alloc(in->arena, sizeof(AstModule));
     m->name = name;
     m->path = path;
     m->env = Env_New(in, in->globals);
+    return m;
+}
+
+AstModule *Module_Builtin(Interp *in, const char *name)
+{
+    size_t i;
+    for (i = 0; i < in->nbuiltin_modules; i++) {
+        if (!strcmp(in->builtin_modules[i]->name, name))
+            return in->builtin_modules[i];
+    }
+    return NULL;
+}
+
+static AstModule *register_builtin_module(Interp *in, const char *name)
+{
+    AstModule *m;
+    if (in->nbuiltin_modules >= sizeof in->builtin_modules / sizeof in->builtin_modules[0])
+        return NULL;
+    m = Module_New(in, name, "<builtin>");
+    in->builtin_modules[in->nbuiltin_modules++] = m;
     return m;
 }
 
@@ -3790,17 +4700,16 @@ void Interp_Init(Interp *in)
         "ImportError", "ModuleNotFoundError", "RecursionError",
         "NumberFormatError", "NotImplementedError", "StopIteration"
     };
-    AstClass *sys_cls, *stdout_cls, *stderr_cls, *stdin_cls, *scanner_cls, *files_cls;
-    AstInstance *sys_obj, *stdout_obj, *stderr_obj, *stdin_obj, *scanner_obj;
+    AstClass *stdout_cls, *stderr_cls, *stdin_cls, *scanner_cls, *files_cls;
+    AstInstance *stdout_obj, *stderr_obj, *stdin_obj, *scanner_obj;
     AstInstance *files_obj;
     AsterList *arglist;
     size_t i;
 
     in->globals = Env_New(in, NULL);
     in->sig = SIG_OK;
+    in->recursion_limit = ASTER_DEFAULT_RECURSION_LIMIT;
 
-    Env_Define(in, in->globals, "print", RValue_Builtin(in, Builtin_New(in, "print", bi_print)));
-    Env_Define(in, in->globals, "println", RValue_Builtin(in, Builtin_New(in, "println", bi_println)));
     Env_Define(in, in->globals, "memset", RValue_Builtin(in, Builtin_New(in, "memset", bi_memset)));
     Env_Define(in, in->globals, "len", RValue_Builtin(in, Builtin_New(in, "len", bi_len)));
     Env_Define(in, in->globals, "list", RValue_Builtin(in, Builtin_New(in, "list", bi_list)));
@@ -3811,6 +4720,23 @@ void Interp_Init(Interp *in)
                RValue_Builtin(in, Builtin_New(in, "frozenset", bi_frozenset)));
     Env_Define(in, in->globals, "range", RValue_Builtin(in, Builtin_New(in, "range", bi_range)));
     Env_Define(in, in->globals, "next", RValue_Builtin(in, Builtin_New(in, "next", bi_next)));
+    Env_Define(in, in->globals, "typeName",
+               RValue_Builtin(in, Builtin_New(in, "typeName", bi_typename)));
+    Env_Define(in, in->globals, "repr", RValue_Builtin(in, Builtin_New(in, "repr", bi_repr)));
+    Env_Define(in, in->globals, "chr", RValue_Builtin(in, Builtin_New(in, "chr", bi_chr)));
+    Env_Define(in, in->globals, "ord", RValue_Builtin(in, Builtin_New(in, "ord", bi_ord)));
+    Env_Define(in, in->globals, "_aster_now_ms",
+               RValue_Builtin(in, Builtin_New(in, "_aster_now_ms", bi_now_ms)));
+    Env_Define(in, in->globals, "_aster_sleep_ms",
+               RValue_Builtin(in, Builtin_New(in, "_aster_sleep_ms", bi_sleep_ms)));
+    Env_Define(in, in->globals, "_aster_cwd",
+               RValue_Builtin(in, Builtin_New(in, "_aster_cwd", bi_cwd)));
+    Env_Define(in, in->globals, "_aster_pid",
+               RValue_Builtin(in, Builtin_New(in, "_aster_pid", bi_pid)));
+    Env_Define(in, in->globals, "_aster_platform",
+               RValue_Builtin(in, Builtin_New(in, "_aster_platform", bi_platform)));
+    Env_Define(in, in->globals, "_aster_setenv",
+               RValue_Builtin(in, Builtin_New(in, "_aster_setenv", bi_setenv)));
 
     for (i = 0; i < sizeof exceptions / sizeof exceptions[0]; i++)
         Env_Define(in, in->globals, exceptions[i], RValue_ExcClass(in, exceptions[i]));
@@ -3900,40 +4826,41 @@ void Interp_Init(Interp *in)
     files_obj->cls = files_cls;
     Env_Define(in, in->globals, "Files", RValue_Object(in, files_obj));
 
-    /* System */
-    sys_cls = Arena_Alloc(in->arena, sizeof(AstClass));
-    sys_cls->name = "System";
-    sys_cls->env = in->globals;
-    sys_cls->nfields = 5;
-    sys_cls->fields = Arena_Alloc(in->arena, 5 * sizeof(FieldDesc));
-    sys_cls->fields[0].name = "stdout";
-    sys_cls->fields[1].name = "out";
-    sys_cls->fields[2].name = "err";
-    sys_cls->fields[3].name = "in";
-    sys_cls->fields[4].name = "args";
-    sys_cls->nmethods = 1;
-    sys_cls->methods = Arena_Alloc(in->arena, sizeof(MethodDesc));
-    sys_cls->methods[0].name = "exit";
-    sys_cls->methods[0].fn = make_builtin_method(in, "exit", system_exit);
-
     arglist = List_New(in);
     for (i = 0; in->argv && (int)i < in->argc; i++)
         List_Append(in, arglist, RValue_Str(in, AsterString_FromCStr(in->argv[i])));
 
-    sys_obj = Arena_Alloc(in->arena, sizeof(AstInstance));
-    sys_obj->cls = sys_cls;
-    sys_obj->nfields = 5;
-    sys_obj->fields = Arena_Alloc(in->arena, 5 * sizeof(InstField));
-    sys_obj->fields[0].name = "stdout";
-    sys_obj->fields[0].cell = RValue_Object(in, stdout_obj);
-    sys_obj->fields[1].name = "out";
-    sys_obj->fields[1].cell = RValue_Object(in, stdout_obj);
-    sys_obj->fields[2].name = "err";
-    sys_obj->fields[2].cell = RValue_Object(in, stderr_obj);
-    sys_obj->fields[3].name = "in";
-    sys_obj->fields[3].cell = RValue_Object(in, stdin_obj);
-    sys_obj->fields[4].name = "args";
-    sys_obj->fields[4].cell = RValue_List(in, arglist);
+    /* System은 import해야만 쓸 수 있는 내장 모듈이다. */
+    {
+        AstModule *sys_mod = register_builtin_module(in, "System");
+        AstModule *out_mod = register_builtin_module(in, "System.stdout");
+        AstModule *err_mod = register_builtin_module(in, "System.stderr");
+        AstModule *in_mod = register_builtin_module(in, "System.stdin");
 
-    Env_Define(in, in->globals, "System", RValue_Object(in, sys_obj));
+        Env_Define(in, out_mod->env, "print",
+                   RValue_Builtin(in, Builtin_New(in, "print", bi_print)));
+        Env_Define(in, out_mod->env, "println",
+                   RValue_Builtin(in, Builtin_New(in, "println", bi_println)));
+        Env_Define(in, err_mod->env, "print",
+                   RValue_Builtin(in, Builtin_New(in, "print", bi_eprint)));
+        Env_Define(in, err_mod->env, "println",
+                   RValue_Builtin(in, Builtin_New(in, "println", bi_eprintln)));
+
+        Env_Define(in, sys_mod->env, "stdout", RValue_Object(in, stdout_obj));
+        Env_Define(in, sys_mod->env, "out", RValue_Object(in, stdout_obj));
+        Env_Define(in, sys_mod->env, "stderr", RValue_Object(in, stderr_obj));
+        Env_Define(in, sys_mod->env, "err", RValue_Object(in, stderr_obj));
+        Env_Define(in, sys_mod->env, "stdin", RValue_Object(in, stdin_obj));
+        Env_Define(in, sys_mod->env, "in", RValue_Object(in, stdin_obj));
+        Env_Define(in, sys_mod->env, "args", RValue_List(in, arglist));
+        Env_Define(in, sys_mod->env, "exit",
+                   RValue_Builtin(in, Builtin_New(in, "exit", system_exit)));
+        Env_Define(in, sys_mod->env, "setRecursionLimit",
+                   RValue_Builtin(in, Builtin_New(in, "setRecursionLimit",
+                                                  system_set_recursion_limit)));
+        Env_Define(in, sys_mod->env, "getRecursionLimit",
+                   RValue_Builtin(in, Builtin_New(in, "getRecursionLimit",
+                                                  system_get_recursion_limit)));
+        (void)in_mod;
+    }
 }

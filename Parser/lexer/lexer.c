@@ -20,7 +20,7 @@ static void *xrealloc(void *p, size_t n)
 {
     void *q = realloc(p, n);
     if (!q) {
-        fputs("메모리가 부족합니다\n", stderr);
+        fputs("out of memory\n", stderr);
         abort();
     }
     return q;

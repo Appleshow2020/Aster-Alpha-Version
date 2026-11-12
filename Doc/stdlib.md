@@ -1,15 +1,17 @@
 # Aster 표준 라이브러리
 
-Aster의 표준 라이브러리는 전역 내장 함수, 값에 붙는 메서드, 그리고 `System`,
-`Scanner`, `Files` 객체로 구성됩니다. 문법 일반은 [language.md](language.md)를 봅니다.
+Aster의 표준 라이브러리는 전역 내장 함수, 내장 모듈(`System`), 값에 붙는 메서드,
+그리고 `Scanner`, `Files` 객체로 구성됩니다. `print`/`println`과 `System.*`는 내장
+모듈이라 `import System.stdout.*;`, `import System;`처럼 먼저 가져와야 합니다.
+문법 일반은 [language.md](language.md)를 봅니다.
 
-## 1. 전역 내장 함수
+## 1. 콘솔 출력과 전역 내장 함수
 
 | 함수 | 설명 |
 | --- | --- |
-| `print(값...)` | 값을 공백으로 구분해 표준 출력에 씁니다(줄바꿈 없음). |
-| `println(값...)` | `print` 후 줄바꿈합니다. |
-| `len(x)` | 문자열/리스트/튜플/딕셔너리/세트/제너레이터의 길이. 문자열과 제너레이터는 바이트 수와 남은 개수입니다. |
+| `print(값...)` | 값을 공백으로 구분해 표준 출력에 씁니다(줄바꿈 없음). `import System.stdout.*;` 필요. |
+| `println(값...)` | `print` 후 줄바꿈합니다. `import System.stdout.*;` 필요. |
+| `len(x)` | 문자열(코드포인트 수)/리스트/튜플/딕셔너리/세트의 길이. `__len__`을 가진 객체에도 씁니다. 제너레이터는 지원하지 않습니다. |
 | `list(x)` | 반복 가능한 값을 리스트로 복사합니다. 인자가 없으면 빈 리스트. |
 | `tuple(x)` | 튜플로 복사합니다. |
 | `dict(x)` | 딕셔너리를 복사하거나 `(키, 값)` 쌍의 반복에서 만듭니다. |
@@ -19,6 +21,9 @@ Aster의 표준 라이브러리는 전역 내장 함수, 값에 붙는 메서드
 | `next(g)` | 제너레이터에서 다음 값을 꺼냅니다. 남은 값이 없으면 `StopIteration`. |
 | `memset(ptr, value, size)` | C의 `memset`과 같은 의미로 구조체/값을 초기화합니다. |
 | `int(x)`, `float(x)`, `str(x)`, `bool(x)` | 기본 타입 변환. 인자가 없으면 기본값을 만듭니다. |
+| `typeName(x)` | 값의 타입 이름을 문자열로 돌려줍니다. |
+| `repr(x)` | repr 문자열을 돌려줍니다(`__repr__` 훅 사용). |
+| `chr(n)` / `ord(s)` | 코드포인트 ↔ 한 글자 문자열 변환. |
 
 `print`/`println`은 문자열이 아닌 값도 자동으로 문자열화합니다. 리스트, 딕셔너리,
 세트는 각각 `[...]`, `{...}`, `{...}` 형태로 출력됩니다.
@@ -32,8 +37,9 @@ println(3.5);                     // 3.5
 
 ## 2. 문자열
 
-문자열은 UTF-8 바이트 시퀀스입니다. `length()`, `charAt()`, 인덱스, 슬라이스는
-**바이트 단위**로 동작합니다. ASCII만 쓰는 경우 문자 단위와 같습니다.
+문자열은 내부적으로 UTF-8이지만 `length()`, `charAt()`, 인덱스, 슬라이스,
+`substring`, `chars()`, `for-in`은 모두 **유니코드 코드포인트 단위**입니다.
+ASCII만 쓰는 경우 바이트 단위와 같습니다.
 
 | 메서드 | 설명 |
 | --- | --- |
@@ -48,11 +54,11 @@ println(3.5);                     // 3.5
 | `count(sub)` | 겹치지 않는 등장 횟수. |
 | `to_int()` | 정수로 변환. 실패하면 `ValueError`. |
 | `to_float()` | 실수로 변환. 실패하면 `ValueError`. |
-| `length()` | 바이트 수. |
-| `charAt(i)` | i번째 바이트를 1글자 문자열로. 범위를 벗어나면 `IndexError`. |
-| `substring(start[, end])` | `[start, end)` 구간. |
+| `length()` | 코드포인트 수. |
+| `charAt(i)` | i번째 코드포인트를 1글자 문자열로. 범위를 벗어나면 `IndexError`. |
+| `substring(start[, end])` | `[start, end)` 구간(코드포인트 기준). |
 | `isdigit()` / `isalpha()` / `isspace()` | ASCII 기준 검사. 빈 문자열은 `false`. |
-| `chars()` | 바이트 단위 문자 리스트. |
+| `chars()` | 코드포인트 단위 문자 리스트. |
 | `toString()` | 자기 자신. |
 
 ## 3. 리스트
@@ -68,8 +74,12 @@ println(3.5);                     // 3.5
 | `index(x)` | 첫 위치. 없으면 `ValueError`. |
 | `count(x)` | 등장 횟수. |
 | `copy()` | 얕은 복사. |
+| `map(f)` | 각 원소에 `f`를 적용한 새 리스트. |
+| `filter(f)` | `f`가 true인 원소만 담은 새 리스트. |
 | `reverse()` | 제자리 뒤집기. |
 | `sort()` | 제자리 오름차순 정렬. 비교할 수 없는 값이 있으면 `TypeError`. |
+
+`map`/`filter`는 원본을 바꾸지 않고 새 리스트를 돌려줍니다.
 
 ## 4. 튜플
 
@@ -116,7 +126,8 @@ println(3.5);                     // 3.5
 
 ## 7. System
 
-`System`은 전역 객체입니다.
+`System`은 `import System;`으로 가져오는 내장 모듈입니다. import하지 않으면
+`NameError`입니다.
 
 | 멤버 | 설명 |
 | --- | --- |
@@ -126,12 +137,20 @@ println(3.5);                     // 3.5
 | `System.in` | 표준 입력. `Scanner`에 넘깁니다. |
 | `System.args` | 스크립트 이름 뒤의 명령줄 인자 리스트. |
 | `System.exit([code])` | 프로세스를 종료합니다. 기본 코드는 0. |
+| `System.setRecursionLimit(n)` | 최대 호출 깊이를 바꿉니다(1 이상 100000 이하). 기본값 512. |
+| `System.getRecursionLimit()` | 현재 최대 호출 깊이를 돌려줍니다. |
 
 ```aster
+import System;
+
 System.out.println("Hello");
 System.err.println("경고");
+System.setRecursionLimit(2000);
 System.exit(2);
 ```
+
+`import System.stdout.*;`는 표준 출력의 `print`/`println`을, `import
+System.stderr.*;`는 표준 에러의 `print`/`println`을 현재 범위에 바로 정의합니다.
 
 ## 8. Scanner
 
@@ -214,7 +233,30 @@ Exception
 
 ## 11. 표준 라이브러리 모듈
 
-`Lib/` 아래의 `.ast` 파일을 import할 수 있습니다. 탐색 경로와 export 규칙은
-[language.md](language.md) 12절을 봅니다. 현재 저장소의 `Lib/`에는 테스트용
-디렉터리만 있으므로, 실제 표준 모듈은 `ASTER_HOME/Lib`나 프로젝트의 `Lib/`에
-직접 추가합니다.
+`Lib/aster/` 아래에 Aster로 작성된 표준 모듈이 있습니다. 탐색 경로와 export
+규칙은 [language.md](language.md) 12절을 봅니다.
+
+```aster
+import aster.math;
+println(math.sqrt(16.0));      // 4.0
+
+from aster.time import seconds;
+println(seconds() > 0);
+
+import aster.json as jsonmod;
+str text = jsonmod.stringify({"a": 1});
+```
+
+| 모듈 | 공개 이름 |
+| --- | --- |
+| `aster.math` | `PI`, `E`, `TAU`, libm 함수(`sqrt`, `pow`, `sin`, `cos`, `floor`, `round`, …), `abs`, `degrees`, `radians`, `isclose`, `sign`, `clamp`, `isFinite`, `factorial`, `gcd`, `lcm`, `isPrime` |
+| `aster.os` | `env`, `setEnv`, `cwd`, `pid`, `platform`, `run`, `exit` |
+| `aster.io` | `readFile`, `writeFile`, `readLines`, `exists`, `deleteFile`, `print`, `println`, `eprintln` |
+| `aster.time` | `millis`, `seconds`, `cpuMillis`, `sleepMillis`, `sleep` |
+| `aster.json` | `parse`, `stringify`, `prettify` |
+
+- `aster.math`의 수학 함수는 [extern](#extern)으로 libm 심볼을 직접 호출합니다.
+- `aster.json`의 `parse`/`stringify`는 `var` 값을 다룹니다. 객체는 딕셔너리,
+  배열은 리스트, `null`은 null로 변환됩니다. 문법 오류는 모듈 내부의 `JsonError`
+  예외로 던져지므로 `catch (Exception e)`로 잡을 수 있습니다.
+- `aster.os.run`은 명령을 실행하고 종료 코드를 돌려줍니다.

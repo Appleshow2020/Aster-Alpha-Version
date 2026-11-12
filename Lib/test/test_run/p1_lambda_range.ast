@@ -1,0 +1,11 @@
+import System.stdout.*;
+var double_it = (int x) -> int => x * 2;
+var tri = x -> int => x * 3;
+quad = x -> int => x * 4;
+var no_arg = () -> int => 7;
+float half = (int x) -> float => (float)x / 2.0;
+println(double_it(4), tri(3), quad(5), no_arg());
+list<int> squares = [1, 2, 3, 4, 5].map(x -> int => x * x);
+println(squares.filter(x -> bool => x > 4));
+println(list(1..5), list(5..1..-2));
+println(half(3));

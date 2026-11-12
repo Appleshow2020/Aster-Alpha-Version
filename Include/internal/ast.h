@@ -73,7 +73,7 @@ struct _stmt {
     int end_col_offset;
 };
 
-enum _expr_kind { Lambda_kind = 1, Pipe_kind = 2, Coalesce_kind = 3, BoolOp_kind = 4, UnaryOp_kind = 5, BinOp_kind = 6, Compare_kind = 7, Is_kind = 8, In_kind = 9, Cast_kind = 10, AddressOf_kind = 11, Deref_kind = 12, SizeOf_kind = 13, Call_kind = 14, New_kind = 15, Attribute_kind = 16, PtrAttribute_kind = 17, OptionalAttribute_kind = 18, Name_kind = 19, Self_kind = 20, Constant_kind = 21, Array_kind = 22, Subscript_kind = 23, Slice_kind = 24, FString_kind = 25, FormattedValue_kind = 26, List_kind = 27, Tuple_kind = 28, Dict_kind = 29, Set_kind = 30, Spread_kind = 31, ListComp_kind = 32, SetComp_kind = 33, DictComp_kind = 34, Incr_kind = 35 };
+enum _expr_kind { Lambda_kind = 1, Pipe_kind = 2, Coalesce_kind = 3, BoolOp_kind = 4, UnaryOp_kind = 5, BinOp_kind = 6, Compare_kind = 7, Is_kind = 8, In_kind = 9, Cast_kind = 10, AddressOf_kind = 11, Deref_kind = 12, SizeOf_kind = 13, Call_kind = 14, New_kind = 15, Attribute_kind = 16, PtrAttribute_kind = 17, OptionalAttribute_kind = 18, Name_kind = 19, Self_kind = 20, Constant_kind = 21, Array_kind = 22, Range_kind = 23, Subscript_kind = 24, Slice_kind = 25, FString_kind = 26, FormattedValue_kind = 27, List_kind = 28, Tuple_kind = 29, Dict_kind = 30, Set_kind = 31, Spread_kind = 32, ListComp_kind = 33, SetComp_kind = 34, DictComp_kind = 35, Incr_kind = 36 };
 struct _expr {
     enum _expr_kind kind;
     union {
@@ -98,6 +98,7 @@ struct _expr {
         struct { identifier id; } Name;
         struct { Value value; } Constant;
         struct { asdl_seq *elements; } Array;
+        struct { expr_ty start; expr_ty stop; expr_ty step; } Range;
         struct { expr_ty value; expr_ty index; } Subscript;
         struct { expr_ty lower; expr_ty upper; expr_ty step; } Slice;
         struct { asdl_seq *values; } FString;
@@ -118,7 +119,7 @@ struct _expr {
     int end_col_offset;
 };
 
-enum _typeref_kind { Primitive_kind = 1, Named_kind = 2, StructRef_kind = 3, Pointer_kind = 4, Nullable_kind = 5 };
+enum _typeref_kind { Primitive_kind = 1, Named_kind = 2, StructRef_kind = 3, Pointer_kind = 4, Nullable_kind = 5, FunctionTy_kind = 6 };
 struct _typeref {
     enum _typeref_kind kind;
     union {
@@ -127,6 +128,7 @@ struct _typeref {
         struct { identifier tag; } StructRef;
         struct { typeref_ty base; } Pointer;
         struct { typeref_ty base; } Nullable;
+        struct { asdl_seq *params; ret_ty returns; } FunctionTy;
     } v;
 };
 
@@ -267,6 +269,7 @@ expr_ty _Aster_Name(identifier id, int lineno, int col_offset, int end_lineno, i
 expr_ty _Aster_Self(int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena);
 expr_ty _Aster_Constant(Value value, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena);
 expr_ty _Aster_Array(asdl_seq *elements, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena);
+expr_ty _Aster_Range(expr_ty start, expr_ty stop, expr_ty step, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena);
 expr_ty _Aster_Subscript(expr_ty value, expr_ty index, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena);
 expr_ty _Aster_Slice(expr_ty lower, expr_ty upper, expr_ty step, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena);
 expr_ty _Aster_FString(asdl_seq *values, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena);
@@ -285,6 +288,7 @@ typeref_ty _Aster_Named(identifier name, asdl_seq *args, Arena *arena);
 typeref_ty _Aster_StructRef(identifier tag, Arena *arena);
 typeref_ty _Aster_Pointer(typeref_ty base, Arena *arena);
 typeref_ty _Aster_Nullable(typeref_ty base, Arena *arena);
+typeref_ty _Aster_FunctionTy(asdl_seq *params, ret_ty returns, Arena *arena);
 ret_ty _Aster_VoidRet(Arena *arena);
 ret_ty _Aster_ValueRet(typeref_ty ty, Arena *arena);
 param_ty _Aster_param(typeref_ty ty, identifier name, Arena *arena);

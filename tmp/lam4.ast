@@ -1,0 +1,3 @@
+fn g(int x) -> int { return x; }
+var f = g;
+println(f(9));

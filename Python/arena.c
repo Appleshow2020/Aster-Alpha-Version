@@ -13,7 +13,7 @@ struct Arena { Block *head; };
 static Block *block_new(size_t cap, Block *next)
 {
     Block *b = malloc(sizeof(Block) + cap);
-    if (!b) { fputs("메모리가 부족합니다\n", stderr); abort(); }
+    if (!b) { fputs("out of memory\n", stderr); abort(); }
     b->next = next; b->used = 0; b->cap = cap;
     return b;
 }

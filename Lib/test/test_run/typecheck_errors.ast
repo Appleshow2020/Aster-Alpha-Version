@@ -1,0 +1,36 @@
+import System.stdout.*;
+interface Shape {
+    fn area() -> float;
+    fn name() -> str;
+}
+
+class Unfinished implements Shape {
+    public fn area() -> float {
+        return 1.0;
+    }
+}
+
+class Wrong implements Shape {
+    public fn area() -> float {
+        return 2.0;
+    }
+
+    public fn name() -> int {
+        return 3;
+    }
+}
+
+class Vault {
+    private int secret;
+
+    constructor(int v) {
+        self->secret = v;
+    }
+}
+
+from aster.math import sqrt;
+from aster.math import nosuch;
+
+Vault v = new Vault(3);
+println(v->secret);
+println(sqrt("nope"));

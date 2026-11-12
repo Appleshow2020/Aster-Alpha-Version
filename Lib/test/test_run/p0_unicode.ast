@@ -1,0 +1,25 @@
+import System.stdout.*;
+fn main() -> void {
+    str s = "привет мир";
+    println(len(s));
+    println(s[0]);
+    println(s[-1]);
+    println(s[0:6]);
+    println(s.upper());
+    println("ПРИВЕТ".lower());
+    println("straße".upper());
+    println("αβγ".upper());
+    println("ΣΑΣ".lower());
+    println(s.charAt(7));
+    println(s.substring(7, 10));
+    println(s.find("мир"));
+    println("한글".length());
+    println("한글".chars());
+    println("  \t 한 글 \u3000 ".trim());
+    for (str ch in "가나다") { println(ch); }
+    println("가 나\t다".split());
+    println("x\u00A0y".split());
+    println(list("a나c"));
+    println("한".upper());
+}
+main();

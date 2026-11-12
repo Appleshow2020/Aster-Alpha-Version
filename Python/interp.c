@@ -4,13 +4,29 @@
 #include "internal/interp.h"
 #include "internal/parser.h"
 
-#define MAX_CALL_DEPTH 512
+#define ASTER_GEN_STACK (256 * 1024)
+
+#if defined(_WIN32)
+/* windows.h는 value.h의 VT_* 열거자와 충돌하므로 섬유 API만 직접 선언한다. */
+typedef void (__stdcall *AsterFiberProc)(void *);
+__declspec(dllimport) void *__stdcall ConvertThreadToFiber(void *param);
+__declspec(dllimport) void *__stdcall CreateFiber(size_t stack_size,
+                                                  AsterFiberProc proc, void *param);
+__declspec(dllimport) void __stdcall SwitchToFiber(void *fiber);
+__declspec(dllimport) void __stdcall DeleteFiber(void *fiber);
+__declspec(dllimport) void *__stdcall GetModuleHandleA(const char *name);
+__declspec(dllimport) void *__stdcall GetProcAddress(void *module, const char *name);
+__declspec(dllimport) void *__stdcall LoadLibraryA(const char *name);
+#else
+#include <ucontext.h>
+#include <dlfcn.h>
+#endif
 
 static void *xmalloc_fallback(size_t n)
 {
     void *p = malloc(n ? n : 1);
     if (!p) {
-        fputs("메모리가 부족합니다\n", stderr);
+        fputs("out of memory\n", stderr);
         abort();
     }
     return p;
@@ -174,7 +190,7 @@ static int bind_params(Interp *in, AstFn *fn, Env *env, RValue **args, size_t na
     size_t i;
 
     if (nparams != nargs) {
-        RT_Throw(in, "TypeError", "'%s'에는 인자가 %zu개 필요하지만 %zu개가 넘어왔습니다",
+        RT_Throw(in, "TypeError", "'%s' takes %zu argument(s) but %zu were given",
                  fn->name ? fn->name : "lambda", nparams, nargs);
         return 0;
     }
@@ -203,11 +219,12 @@ static RValue *call_fn(Interp *in, AstFn *fn, RValue **args, size_t nargs)
     if (in->sig != SIG_OK)
         return NULL;
 
-    if (in->depth >= MAX_CALL_DEPTH) {
-        RT_Throw(in, "RecursionError", "호출 깊이가 너무 깊습니다 (무한 재귀일 수 있습니다)");
+    if (in->recursion_limit > 0 && in->depth >= in->recursion_limit) {
+        RT_Throw(in, "RecursionError", "call depth exceeded (possible infinite recursion)");
         return NULL;
     }
     in->depth++;
+    Interp_FramePush(in, fn->name ? fn->name : "lambda");
 
     env = Env_New(in, fn->env);
     if (fn->self) {
@@ -223,31 +240,16 @@ static RValue *call_fn(Interp *in, AstFn *fn, RValue **args, size_t nargs)
     if (fn->kind == FN_LAMBDA) {
         result = eval(in, fn->body_expr, env);
         in->depth--;
+        if (in->sig != SIG_THROW)
+            Interp_FramePop(in);
         return result;
     }
 
     if (fn->is_generator) {
-        AsterList *saved = in->yield_buf;
-        AsterList *items = List_New(in);
-        in->yield_buf = items;
-        exec_block(in, fn->body, env);
-        in->yield_buf = saved;
-        if (in->sig == SIG_RETURN) {
-            in->sig = SIG_OK;
-            in->ret = NULL;
-        }
-        else if (in->sig == SIG_BREAK || in->sig == SIG_CONTINUE) {
-            in->sig = SIG_OK;
-            in->depth--;
-            RT_Throw(in, "RuntimeError", "'break'와 'continue'는 반복문 안에서만 쓸 수 있습니다");
-            return NULL;
-        }
-        else if (in->sig == SIG_THROW) {
-            in->depth--;
-            return NULL;
-        }
+        RValue *g = RValue_Generator(in, fn, env, fn->self);
         in->depth--;
-        return RValue_Generator(in, items);
+        Interp_FramePop(in);
+        return g;
     }
 
     exec_block(in, fn->body, env);
@@ -256,20 +258,24 @@ static RValue *call_fn(Interp *in, AstFn *fn, RValue **args, size_t nargs)
         in->sig = SIG_OK;
         in->ret = NULL;
         in->depth--;
+        Interp_FramePop(in);
         return ret;
     }
     if (in->sig == SIG_BREAK || in->sig == SIG_CONTINUE) {
         in->sig = SIG_OK;
         in->depth--;
-        RT_Throw(in, "RuntimeError", "'break'와 'continue'는 반복문 안에서만 쓸 수 있습니다");
+        Interp_FramePop(in);
+        RT_Throw(in, "RuntimeError", "'break' and 'continue' are only allowed inside loops");
         return NULL;
     }
     if (in->sig == SIG_THROW) {
+        /* 예외가 풀려 나가는 동안에는 프레임을 남겨 트레이스백에 쓴다. */
         in->depth--;
         return NULL;
     }
     in->ret = NULL;
     in->depth--;
+    Interp_FramePop(in);
     return null_value(in);
 }
 
@@ -298,7 +304,7 @@ static int fn_accepts(Interp *in, AstFn *fn, RValue **args, size_t nargs)
 static RValue *call_value(Interp *in, RValue *callee, RValue **args, size_t nargs)
 {
     if (!callee) {
-        return RT_ThrowValue(in, "TypeError", "호출할 수 없는 값입니다");
+        return RT_ThrowValue(in, "TypeError", "value is not callable");
     }
     switch (callee->kind) {
     case RV_FUNC:
@@ -320,19 +326,19 @@ static RValue *call_value(Interp *in, RValue *callee, RValue **args, size_t narg
         }
         if (fallback)
             return call_fn(in, fallback, args, nargs);
-        return RT_ThrowValue(in, "TypeError", "'%s'에 인자 %zu개에 맞는 정의가 없습니다",
+        return RT_ThrowValue(in, "TypeError", "no definition of '%s' accepts %zu argument(s)",
                              ov->count ? ov->fns[0]->name : "overload", nargs);
     }
     case RV_SUPER: {
         AstClass *base = callee->u.super->owner ? callee->u.super->owner->base : NULL;
         AstFn *ctor = find_ctor(base);
         if (!ctor)
-            return RT_ThrowValue(in, "TypeError", "상위 클래스에 생성자가 없습니다");
+            return RT_ThrowValue(in, "TypeError", "base class has no constructor");
         call_fn(in, bind_method(in, ctor, callee->u.super->self), args, nargs);
         return in->sig == SIG_OK ? null_value(in) : NULL;
     }
     case RV_CLASS:
-        return RT_ThrowValue(in, "TypeError", "'%s'을(를) 만들 때는 new를 사용하세요",
+        return RT_ThrowValue(in, "TypeError", "use 'new' to create '%s'",
                              callee->u.cls->name);
     case RV_EXC_CLASS: {
         RValue *message = nargs > 0
@@ -341,8 +347,208 @@ static RValue *call_value(Interp *in, RValue *callee, RValue **args, size_t narg
         return RValue_Exception(in, callee->u.exc_name, message);
     }
     default:
-        return RT_ThrowValue(in, "TypeError", "값을 함수처럼 호출할 수 없습니다");
+        return RT_ThrowValue(in, "TypeError", "value is not callable");
     }
+}
+
+RValue *Interp_CallValue(Interp *in, RValue *callee, RValue **args, size_t nargs)
+{
+    return call_value(in, callee, args, nargs);
+}
+
+RValue *Interp_CallMethod(Interp *in, RValue *self, const char *name,
+                          RValue **args, size_t nargs)
+{
+    RValue *fn;
+    if (!RValue_HasMethod(in, self, name))
+        return RT_ThrowValue(in, "AttributeError", "'%s' object has no method '%s'",
+                             RValue_TypeName(self), name);
+    fn = get_attr(in, self, name);
+    if (in->sig != SIG_OK)
+        return NULL;
+    return call_value(in, fn, args, nargs);
+}
+
+int RValue_HasMethod(Interp *in, const RValue *v, const char *name)
+{
+    (void)in;
+    if (!v)
+        return 0;
+    if (v->kind == RV_OBJECT)
+        return Class_FindMethod(v->u.obj->cls, name) != NULL;
+    return 0;
+}
+
+/* ---- 제너레이터 실행 컨텍스트 ---- */
+
+static AstGenerator *g_current_gen;   /* 지금 실행 중인 제너레이터 (없으면 NULL) */
+
+#if defined(_WIN32)
+static void *g_main_fiber;
+
+static void *gen_context_current(void)
+{
+    if (g_current_gen && g_current_gen->ctx)
+        return g_current_gen->ctx;
+    if (!g_main_fiber)
+        g_main_fiber = ConvertThreadToFiber(NULL);
+    return g_main_fiber;
+}
+
+static void gen_context_switch(void *save, void *target)
+{
+    (void)save;
+    SwitchToFiber(target);
+}
+
+static void gen_context_release(AstGenerator *gen)
+{
+    if (gen->ctx)
+        DeleteFiber(gen->ctx);
+    gen->ctx = NULL;
+}
+#else
+static AstGenerator *g_starting_gen;  /* 새 컨텍스트가 시작할 제너레이터 */
+static ucontext_t g_main_ctx;
+
+static void *gen_context_current(void)
+{
+    if (g_current_gen && g_current_gen->ctx)
+        return g_current_gen->ctx;
+    return &g_main_ctx;
+}
+
+static void gen_context_switch(void *save, void *target)
+{
+    swapcontext((ucontext_t *)save, (ucontext_t *)target);
+}
+
+static void gen_context_release(AstGenerator *gen)
+{
+    if (gen->ctx)
+        free(gen->ctx);
+    if (gen->stack)
+        free(gen->stack);
+    gen->ctx = NULL;
+    gen->stack = NULL;
+}
+#endif
+
+/* 제너레이터 본문을 끝까지 실행하고 호출자에게 영원히 제어를 넘긴다. */
+static void gen_finish(AstGenerator *gen)
+{
+    gen->done = 1;
+    for (;;)
+        gen_context_switch(gen->ctx, gen->caller_ctx);
+}
+
+static void gen_body_run(AstGenerator *gen)
+{
+    Interp *gin = gen->interp;
+    Signal sig;
+
+    gin->sig = SIG_OK;
+    gin->ret = NULL;
+    gin->exc = NULL;
+    gin->gen = gen;
+    gin->depth = 0;
+    sig = exec_block(gin, gen->fn->body, gen->body_env);
+    if (sig == SIG_RETURN) {
+        gin->sig = SIG_OK;
+        gin->ret = NULL;
+    }
+    else if (sig == SIG_BREAK || sig == SIG_CONTINUE) {
+        gin->sig = SIG_OK;
+        RT_Throw(gin, "RuntimeError", "'break' and 'continue' are only allowed inside loops");
+        gen->failed = 1;
+    }
+    else if (sig == SIG_THROW) {
+        gen->failed = 1;
+    }
+    gen_finish(gen);
+}
+
+#if defined(_WIN32)
+static void __stdcall gen_fiber_proc(void *param)
+{
+    gen_body_run((AstGenerator *)param);
+}
+#else
+static void gen_ucontext_proc(void)
+{
+    gen_body_run(g_starting_gen);
+}
+#endif
+
+RValue *Generator_Next(Interp *in, AstGenerator *gen, int *ended)
+{
+    *ended = 0;
+    if (!gen || gen->done) {
+        *ended = 1;
+        return NULL;
+    }
+
+    if (!gen->started) {
+        gen->started = 1;
+        gen->caller_gen = g_current_gen;
+        gen->caller_ctx = gen_context_current();
+#if defined(_WIN32)
+        gen->ctx = CreateFiber(ASTER_GEN_STACK, gen_fiber_proc, gen);
+        if (!gen->ctx) {
+            RT_Throw(in, "RuntimeError", "cannot create a generator execution context");
+            return NULL;
+        }
+#else
+        {
+            ucontext_t *uc = xmalloc_fallback(sizeof(ucontext_t));
+            gen->stack = xmalloc_fallback(ASTER_GEN_STACK);
+            gen->ctx = uc;
+            if (getcontext(uc) != 0) {
+                gen_context_release(gen);
+                RT_Throw(in, "RuntimeError", "cannot create a generator execution context");
+                return NULL;
+            }
+            uc->uc_stack.ss_sp = gen->stack;
+            uc->uc_stack.ss_size = ASTER_GEN_STACK;
+            uc->uc_link = NULL;
+            g_starting_gen = gen;
+            makecontext(uc, gen_ucontext_proc, 0);
+        }
+#endif
+    }
+    else {
+        gen->caller_gen = g_current_gen;
+        gen->caller_ctx = gen_context_current();
+    }
+
+    {
+        void *save = gen_context_current();
+        g_current_gen = gen;
+        gen_context_switch(save, gen->ctx);
+    }
+    g_current_gen = gen->caller_gen;
+
+    if (gen->failed) {
+        Interp *gin = gen->interp;
+        size_t i;
+        /* 제너레이터 안쪽 프레임을 호출자 스택 뒤에 이어 붙인다. */
+        for (i = 0; i < gin->nframes; i++)
+            Interp_FrameAppend(in, gin->frames[i].name, gin->frames[i].line);
+        in->sig = SIG_THROW;
+        in->exc = gin->exc;
+        in->line = gin->line;
+        gin->sig = SIG_OK;
+        gin->exc = NULL;
+        gen_context_release(gen);
+        *ended = 1;
+        return NULL;
+    }
+    if (gen->done) {
+        gen_context_release(gen);
+        *ended = 1;
+        return NULL;
+    }
+    return gen->yielded;
 }
 
 /* ---- 연산 ---- */
@@ -357,19 +563,59 @@ static int to_int_pair(Interp *in, RValue *l, RValue *r, int64_t *a, int64_t *b)
     return ok;
 }
 
-static int64_t ipow(Interp *in, int64_t base, int64_t exp)
+static int64_t ipow(Interp *in, int64_t base, int64_t exp, int *ok)
 {
     int64_t result = 1;
+    *ok = 1;
     while (exp > 0) {
-        if (exp & 1)
-            result *= base;
+        if (exp & 1) {
+            if (__builtin_mul_overflow(result, base, &result)) {
+                *ok = 0;
+                return 0;
+            }
+        }
         exp >>= 1;
-        if (exp)
-            base *= base;
+        if (exp) {
+            if (__builtin_mul_overflow(base, base, &base)) {
+                *ok = 0;
+                return 0;
+            }
+        }
     }
     (void)in;
     return result;
 }
+
+static RValue *int_overflow(Interp *in)
+{
+    RT_Throw(in, "OverflowError", "integer arithmetic overflowed int range");
+    return NULL;
+}
+
+static RValue *int_add(Interp *in, int64_t a, int64_t b)
+{
+    int64_t r;
+    if (__builtin_add_overflow(a, b, &r))
+        return int_overflow(in);
+    return RValue_Int(in, r);
+}
+
+static RValue *int_sub(Interp *in, int64_t a, int64_t b)
+{
+    int64_t r;
+    if (__builtin_sub_overflow(a, b, &r))
+        return int_overflow(in);
+    return RValue_Int(in, r);
+}
+
+static RValue *int_mul(Interp *in, int64_t a, int64_t b)
+{
+    int64_t r;
+    if (__builtin_mul_overflow(a, b, &r))
+        return int_overflow(in);
+    return RValue_Int(in, r);
+}
+
 
 static int repeat_count(Interp *in, RValue *v, int64_t *out)
 {
@@ -381,7 +627,7 @@ static int repeat_count(Interp *in, RValue *v, int64_t *out)
         *out = v->u.b;
         return 1;
     }
-    RT_Throw(in, "TypeError", "시퀀스 반복 횟수는 정수여야 합니다");
+    RT_Throw(in, "TypeError", "sequence repeat count must be an integer");
     return 0;
 }
 
@@ -403,7 +649,7 @@ static RValue *seq_repeat(Interp *in, RValue *seq, int64_t times)
         times = 0;
     unit = n;
     if (times > 0 && unit && (uint64_t)unit > (uint64_t)SIZE_MAX / (uint64_t)times)
-        return RT_ThrowValue(in, "OverflowError", "시퀀스가 너무 커집니다");
+        return RT_ThrowValue(in, "OverflowError", "sequence is too large");
     total = unit * (size_t)times;
 
     if (seq->kind == RV_LIST) {
@@ -421,14 +667,78 @@ static RValue *seq_repeat(Interp *in, RValue *seq, int64_t times)
     }
 }
 
+static const char *binop_hook_name(operator_ty op)
+{
+    switch (op) {
+    case Add: return "__add__";
+    case Sub: return "__sub__";
+    case Mult: return "__mul__";
+    case Div: return "__div__";
+    case FloorDiv: return "__floordiv__";
+    case Mod: return "__mod__";
+    case Pow: return "__pow__";
+    }
+    return NULL;
+}
+
+static const char *binop_reflected_name(operator_ty op)
+{
+    switch (op) {
+    case Add: return "__radd__";
+    case Sub: return "__rsub__";
+    case Mult: return "__rmul__";
+    case Div: return "__rdiv__";
+    case FloorDiv: return "__rfloordiv__";
+    case Mod: return "__rmod__";
+    case Pow: return "__rpow__";
+    }
+    return NULL;
+}
+
+/* 객체 피연산자의 연산자 훅. 처리했으면 결과를, 아니면 NULL(신호 없음)을 준다. */
+static int binop_hook(Interp *in, operator_ty op, RValue *left, RValue *right,
+                      RValue **out)
+{
+    const char *name = binop_hook_name(op);
+    const char *reflected = binop_reflected_name(op);
+
+    *out = NULL;
+    if (!name)
+        return 0;
+    if (left && left->kind == RV_OBJECT && RValue_HasMethod(in, left, name)) {
+        RValue *args[1];
+        args[0] = right;
+        *out = Interp_CallMethod(in, left, name, args, 1);
+        return 1;
+    }
+    if (right && right->kind == RV_OBJECT && reflected &&
+        RValue_HasMethod(in, right, reflected)) {
+        RValue *args[1];
+        args[0] = left;
+        *out = Interp_CallMethod(in, right, reflected, args, 1);
+        return 1;
+    }
+    return 0;
+}
+
 static RValue *apply_binop(Interp *in, operator_ty op, RValue *left, RValue *right)
 {
     int use_float = 0;
     int ok;
+    RValue *hooked;
+    int handled;
 
-    if (op == Add && (left->kind == RV_STR || right->kind == RV_STR))
-        return RValue_Str(in, RString_Concat(in, RValue_ToString(in, left),
-                                            RValue_ToString(in, right)));
+    handled = binop_hook(in, op, left, right, &hooked);
+    if (handled)
+        return hooked;
+    if (in->sig != SIG_OK)
+        return NULL;
+
+    if (op == Add && (left->kind == RV_STR || right->kind == RV_STR)) {
+        RValue *result = RValue_Str(in, RString_Concat(in, RValue_ToString(in, left),
+                                                       RValue_ToString(in, right)));
+        return in->sig == SIG_OK ? result : NULL;
+    }
 
     if (op == Add && left->kind == RV_LIST && right->kind == RV_LIST) {
         AsterList *list = List_New(in);
@@ -476,7 +786,7 @@ static RValue *apply_binop(Interp *in, operator_ty op, RValue *left, RValue *rig
     }
 
     if (!RValue_IsNumber(left) || !RValue_IsNumber(right)) {
-        return RT_ThrowValue(in, "TypeError", "산술 연산에는 숫자가 필요합니다");
+        return RT_ThrowValue(in, "TypeError", "arithmetic requires numbers");
     }
     use_float = left->kind == RV_FLOAT || right->kind == RV_FLOAT;
 
@@ -497,16 +807,16 @@ static RValue *apply_binop(Interp *in, operator_ty op, RValue *left, RValue *rig
             return RValue_Float(in, a * b);
         case Div:
             if (b == 0.0)
-                return RT_ThrowValue(in, "ZeroDivisionError", "0으로 나눌 수 없습니다");
+                return RT_ThrowValue(in, "ZeroDivisionError", "division by zero");
             return RValue_Float(in, a / b);
         case FloorDiv:
             if (b == 0.0)
-                return RT_ThrowValue(in, "ZeroDivisionError", "0으로 나눌 수 없습니다");
+                return RT_ThrowValue(in, "ZeroDivisionError", "division by zero");
             return RValue_Float(in, __builtin_floor(a / b));
         case Mod: {
             double r;
             if (b == 0.0)
-                return RT_ThrowValue(in, "ZeroDivisionError", "0으로 나눌 수 없습니다");
+                return RT_ThrowValue(in, "ZeroDivisionError", "division by zero");
             r = a - __builtin_floor(a / b) * b;
             return RValue_Float(in, r);
         }
@@ -522,19 +832,23 @@ static RValue *apply_binop(Interp *in, operator_ty op, RValue *left, RValue *rig
             return NULL;
         switch (op) {
         case Add:
-            return RValue_Int(in, a + b);
+            return int_add(in, a, b);
         case Sub:
-            return RValue_Int(in, a - b);
+            return int_sub(in, a, b);
         case Mult:
-            return RValue_Int(in, a * b);
+            return int_mul(in, a, b);
         case Div:
             if (b == 0)
-                return RT_ThrowValue(in, "ZeroDivisionError", "0으로 나눌 수 없습니다");
+                return RT_ThrowValue(in, "ZeroDivisionError", "division by zero");
+            if (a == INT64_MIN && b == -1)
+                return int_overflow(in);
             return RValue_Int(in, a / b);
         case FloorDiv: {
             int64_t q;
             if (b == 0)
-                return RT_ThrowValue(in, "ZeroDivisionError", "0으로 나눌 수 없습니다");
+                return RT_ThrowValue(in, "ZeroDivisionError", "division by zero");
+            if (a == INT64_MIN && b == -1)
+                return int_overflow(in);
             q = a / b;
             if ((a % b != 0) && ((a < 0) != (b < 0)))
                 q -= 1;
@@ -543,16 +857,24 @@ static RValue *apply_binop(Interp *in, operator_ty op, RValue *left, RValue *rig
         case Mod: {
             int64_t r;
             if (b == 0)
-                return RT_ThrowValue(in, "ZeroDivisionError", "0으로 나눌 수 없습니다");
+                return RT_ThrowValue(in, "ZeroDivisionError", "division by zero");
+            if (a == INT64_MIN && b == -1)
+                return RValue_Int(in, 0);
             r = a % b;
             if (r != 0 && ((r < 0) != (b < 0)))
                 r += b;
             return RValue_Int(in, r);
         }
-        case Pow:
+        case Pow: {
+            int64_t r;
+            int ok;
             if (b < 0)
                 return RValue_Float(in, __builtin_pow((double)a, (double)b));
-            return RValue_Int(in, ipow(in, a, b));
+            r = ipow(in, a, b, &ok);
+            if (!ok)
+                return int_overflow(in);
+            return RValue_Int(in, r);
+        }
         }
         return null_value(in);
     }
@@ -585,7 +907,7 @@ static operator_ty assign_op_to_operator(assign_op_ty op)
 static RValue *get_attr(Interp *in, RValue *base, const char *name)
 {
     if (!base || base->kind == RV_NULL)
-        return RT_ThrowValue(in, "NullPointerError", "null 값에서 '%s'에 접근했습니다", name);
+        return RT_ThrowValue(in, "NullPointerError", "accessed '%s' on a null value", name);
 
     switch (base->kind) {
     case RV_OBJECT: {
@@ -596,7 +918,7 @@ static RValue *get_attr(Interp *in, RValue *base, const char *name)
 
         if (prop) {
             if (!prop->getter)
-                return RT_ThrowValue(in, "AttributeError", "프로퍼티 '%s'에 getter가 없습니다", name);
+                return RT_ThrowValue(in, "AttributeError", "property '%s' has no getter", name);
             return call_fn(in, bind_method(in, prop->getter, base), NULL, 0);
         }
         field = Instance_FindField(obj, name);
@@ -608,19 +930,19 @@ static RValue *get_attr(Interp *in, RValue *base, const char *name)
                 return bind_overload(in, method->overload, base, NULL);
             return RValue_Func(in, bind_method(in, method->fn, base));
         }
-        return RT_ThrowValue(in, "AttributeError", "'%s'에는 '%s' 속성이 없습니다",
+        return RT_ThrowValue(in, "AttributeError", "'%s' has no attribute '%s'",
                              obj->cls->name, name);
     }
     case RV_PTR: {
         RValue *inner = base->u.ptr.slot ? *base->u.ptr.slot : NULL;
         if (!inner || inner->kind == RV_NULL)
-            return RT_ThrowValue(in, "NullPointerError", "null 포인터에서 '%s'에 접근했습니다", name);
+            return RT_ThrowValue(in, "NullPointerError", "accessed '%s' through a null pointer", name);
         return get_attr(in, inner, name);
     }
     case RV_STRUCT: {
         int index = StructValue_FieldIndex(base->u.stv->type, name);
         if (index < 0)
-            return RT_ThrowValue(in, "AttributeError", "'%s' 구조체에 '%s' 필드가 없습니다",
+            return RT_ThrowValue(in, "AttributeError", "struct '%s' has no field '%s'",
                                  base->u.stv->type->tag, name);
         return RValue_Copy(in, base->u.stv->cells[index]);
     }
@@ -632,20 +954,20 @@ static RValue *get_attr(Interp *in, RValue *base, const char *name)
         AstBuiltin *method = Collection_Method(in, base, name);
         if (method)
             return RValue_Builtin(in, method);
-        return RT_ThrowValue(in, "AttributeError", "'%s' 객체에는 '%s' 속성이 없습니다",
+        return RT_ThrowValue(in, "AttributeError", "'%s' object has no attribute '%s'",
                              RValue_TypeName(base), name);
     }
     case RV_STR: {
         AstBuiltin *method = String_Method(in, base, name);
         if (method)
             return RValue_Builtin(in, method);
-        return RT_ThrowValue(in, "AttributeError", "str 객체에는 '%s' 속성이 없습니다", name);
+        return RT_ThrowValue(in, "AttributeError", "str has no attribute '%s'", name);
     }
     case RV_MODULE: {
         RValue *exported = Module_GetExported(in, base->u.module, name);
         if (exported)
             return exported;
-        return RT_ThrowValue(in, "AttributeError", "모듈 '%s'에 '%s'이(가) 없습니다",
+        return RT_ThrowValue(in, "AttributeError", "module '%s' has no member '%s'",
                              base->u.module->name, name);
     }
     case RV_SUPER: {
@@ -654,7 +976,7 @@ static RValue *get_attr(Interp *in, RValue *base, const char *name)
         MethodDesc *method = base_cls ? Class_FindMethod(base_cls, name) : NULL;
         AstFn *bound;
         if (!method)
-            return RT_ThrowValue(in, "AttributeError", "상위 클래스에 '%s' 메서드가 없습니다",
+            return RT_ThrowValue(in, "AttributeError", "base class has no method '%s'",
                                  name);
         if (method->overload)
             return bind_overload(in, method->overload, base->u.super->self, base_cls);
@@ -679,7 +1001,7 @@ static RValue *get_attr(Interp *in, RValue *base, const char *name)
                 return bind_overload(in, method->overload, NULL, NULL);
             return RValue_Func(in, method->fn);
         }
-        return RT_ThrowValue(in, "AttributeError", "클래스 '%s'에는 정적 멤버 '%s'이(가) 없습니다",
+        return RT_ThrowValue(in, "AttributeError", "class '%s' has no static member '%s'",
                              base->u.cls->name, name);
     }
     case RV_ENUM:
@@ -691,14 +1013,14 @@ static RValue *get_attr(Interp *in, RValue *base, const char *name)
             AstEnumMember *m = &base->u.en.type->members[base->u.en.index];
             return m->value ? m->value : RValue_Int(in, (int64_t)base->u.en.index);
         }
-        return RT_ThrowValue(in, "AttributeError", "enum 값에는 '%s' 속성이 없습니다", name);
+        return RT_ThrowValue(in, "AttributeError", "enum value has no attribute '%s'", name);
     case RV_ENUMTYPE: {
         size_t i;
         for (i = 0; i < base->u.etype->nmembers; i++) {
             if (!strcmp(base->u.etype->members[i].name, name))
                 return RValue_Enum(in, base->u.etype, name, i);
         }
-        return RT_ThrowValue(in, "AttributeError", "enum '%s'에 '%s'이(가) 없습니다",
+        return RT_ThrowValue(in, "AttributeError", "enum '%s' has no member '%s'",
                              base->u.etype->name, name);
     }
     case RV_EXC:
@@ -706,9 +1028,9 @@ static RValue *get_attr(Interp *in, RValue *base, const char *name)
             return base->u.exc->message;
         if (!strcmp(name, "name"))
             return RValue_Str(in, AsterString_FromCStr(base->u.exc->name));
-        return RT_ThrowValue(in, "AttributeError", "예외 값에는 '%s' 속성이 없습니다", name);
+        return RT_ThrowValue(in, "AttributeError", "exception value has no attribute '%s'", name);
     default:
-        return RT_ThrowValue(in, "AttributeError", "이 값에는 '%s' 속성이 없습니다", name);
+        return RT_ThrowValue(in, "AttributeError", "this value has no attribute '%s'", name);
     }
 }
 
@@ -753,6 +1075,8 @@ static int value_is_type(Interp *in, RValue *v, typeref_ty ty)
             return inner && value_is_type(in, inner, ty->v.Pointer.base);
         }
         return value_is_type(in, v, ty->v.Pointer.base);
+    case FunctionTy_kind:
+        return v->kind == RV_FUNC || v->kind == RV_BUILTIN || v->kind == RV_OVERLOAD;
     case StructRef_kind:
         if (v->kind == RV_STRUCT) {
             AstStructType *t = v->u.stv->type;
@@ -811,6 +1135,7 @@ static RValue *do_cast(Interp *in, typeref_ty ty, RValue *value)
     case Nullable_kind:
     case StructRef_kind:
     case Named_kind:
+    case FunctionTy_kind:
         return value;
     }
     return value;
@@ -830,7 +1155,7 @@ static RValue *eval_initializer(Interp *in, Env *env, typeref_ty ty, initializer
         size_t i;
 
         if (!type)
-            return RT_ThrowValue(in, "TypeError", "구조체 초기화는 구조체 타입에만 쓸 수 있습니다");
+            return RT_ThrowValue(in, "TypeError", "struct initializers can only be used with struct types");
         base = DefaultForType(in, env, ty);
         if (!base || base->kind != RV_STRUCT)
             return base;
@@ -838,7 +1163,7 @@ static RValue *eval_initializer(Interp *in, Env *env, typeref_ty ty, initializer
             asdl_seq *values = init->v.PositionalInit.values;
             size_t n = asdl_seq_LEN(values);
             if (n > type->nfields)
-                return RT_ThrowValue(in, "TypeError", "'%s' 초기화 값이 너무 많습니다", type->tag);
+                return RT_ThrowValue(in, "TypeError", "too many initializers for '%s'", type->tag);
             for (i = 0; i < n; i++) {
                 RValue *v = eval(in, asdl_seq_GET(values, i), env);
                 if (in->sig != SIG_OK)
@@ -854,7 +1179,7 @@ static RValue *eval_initializer(Interp *in, Env *env, typeref_ty ty, initializer
                 int index = StructValue_FieldIndex(type, d->field);
                 RValue *v;
                 if (index < 0)
-                    return RT_ThrowValue(in, "TypeError", "'%s'에 '%s' 필드가 없습니다",
+                    return RT_ThrowValue(in, "TypeError", "'%s' has no field '%s'",
                                          type->tag, d->field);
                 v = eval(in, d->value, env);
                 if (in->sig != SIG_OK)
@@ -891,7 +1216,7 @@ static void resolve_bases(Interp *in, AstClass *cls)
     {
         RValue **cell = Env_LookupCell(cls->env, cls->base_name);
         if (!cell || !*cell || (*cell)->kind != RV_CLASS) {
-            RT_Throw(in, "TypeError", "기반 클래스 '%s'을(를) 찾을 수 없습니다", cls->base_name);
+            RT_Throw(in, "TypeError", "cannot find base class '%s'", cls->base_name);
             return;
         }
         cls->base = (*cell)->u.cls;
@@ -961,7 +1286,7 @@ static RValue *instantiate_class(Interp *in, AstClass *cls, RValue **args, size_
             return NULL;
     }
     else if (nargs != 0) {
-        return RT_ThrowValue(in, "TypeError", "'%s'에는 생성자가 없습니다", cls->name);
+        return RT_ThrowValue(in, "TypeError", "'%s' has no constructor", cls->name);
     }
     return self;
 }
@@ -1009,7 +1334,7 @@ static RValue *instantiate_struct(Interp *in, AstStructType *type, RValue **args
     if (!desc) {
         if (nargs == 0 && type->nctors == 0)
             return self;
-        return RT_ThrowValue(in, "TypeError", "'%s'에 맞는 생성자가 없습니다", type->tag);
+        return RT_ThrowValue(in, "TypeError", "no constructor of '%s' matches the arguments", type->tag);
     }
 
     {
@@ -1024,7 +1349,7 @@ static RValue *instantiate_struct(Interp *in, AstStructType *type, RValue **args
             int index = StructValue_FieldIndex(type, mi->field);
             RValue *v;
             if (index < 0)
-                return RT_ThrowValue(in, "TypeError", "'%s'에 '%s' 필드가 없습니다",
+                return RT_ThrowValue(in, "TypeError", "'%s' has no field '%s'",
                                      type->tag, mi->field);
             v = eval(in, mi->value, env);
             if (in->sig != SIG_OK)
@@ -1263,14 +1588,229 @@ static AstStructType *build_struct(Interp *in, stmt_ty s, Env *env)
     return type;
 }
 
+/* ---- FFI ---- */
+
+#if defined(_WIN32)
+static void *native_symbol(const char *name)
+{
+    static void *modules[4];
+    static int loaded;
+    void *sym;
+    int i;
+
+    if (!loaded) {
+        loaded = 1;
+        modules[0] = GetModuleHandleA(NULL);
+        modules[1] = LoadLibraryA("msvcrt.dll");
+        modules[2] = LoadLibraryA("ucrtbase.dll");
+        modules[3] = LoadLibraryA("kernel32.dll");
+    }
+    for (i = 0; i < 4; i++) {
+        if (modules[i] && (sym = GetProcAddress(modules[i], name)))
+            return sym;
+    }
+    return NULL;
+}
+#else
+static void *native_symbol(const char *name)
+{
+    return dlsym(RTLD_DEFAULT, name);
+}
+#endif
+
+typedef union {
+    int64_t i;
+    double d;
+} FfiArg;
+
+void *Interp_NativeSymbol(const char *name)
+{
+    return native_symbol(name);
+}
+
+static typeref_ty ffi_return_type(ret_ty ret)
+{
+    if (ret && ret->kind == ValueRet_kind)
+        return ret->v.ValueRet.ty;
+    return NULL;
+}
+
+static int ffi_is_float(typeref_ty ty)
+{
+    return ty && ty->kind == Primitive_kind && ty->v.Primitive.kind == FloatT;
+}
+
+static RValue *ffi_result(Interp *in, ret_ty ret, int64_t ir, double dr)
+{
+    typeref_ty ty = ffi_return_type(ret);
+
+    if (ffi_is_float(ty))
+        return RValue_Float(in, dr);
+    if (ty && ty->kind == Primitive_kind && ty->v.Primitive.kind == StrT) {
+        const char *p = (const char *)(intptr_t)ir;
+        return p ? RValue_Str(in, AsterString_FromCStr(p)) : RValue_Null(in);
+    }
+    if (ty && ty->kind == Primitive_kind && ty->v.Primitive.kind == BoolT)
+        return RValue_Bool(in, ir != 0);
+    if (!ty || (ty->kind == Primitive_kind && ty->v.Primitive.kind == NullT))
+        return RValue_Null(in);
+    return RValue_Int(in, ir);
+}
+
+/* all_double이면 모든 인자를 double로, 아니면 int64로 넘긴다.
+   부동소수/정수가 섞인 시그니처는 지원하지 않는다 (호출부에서 거른다). */
+static RValue *ffi_invoke(Interp *in, AstFn *decl, void *sym, FfiArg *a, int all_double)
+{
+    int ret_double = ffi_is_float(ffi_return_type(decl->ret));
+    size_t n = asdl_seq_LEN(decl->params);
+    int64_t ir = 0;
+    double dr = 0;
+
+    switch (n) {
+    case 0:
+        if (ret_double)
+            dr = ((double (*)(void))sym)();
+        else
+            ir = ((int64_t (*)(void))sym)();
+        break;
+    case 1:
+        if (all_double) {
+            if (ret_double)
+                dr = ((double (*)(double))sym)(a[0].d);
+            else
+                ir = ((int64_t (*)(double))sym)(a[0].d);
+        }
+        else {
+            if (ret_double)
+                dr = ((double (*)(int64_t))sym)(a[0].i);
+            else
+                ir = ((int64_t (*)(int64_t))sym)(a[0].i);
+        }
+        break;
+    case 2:
+        if (all_double) {
+            if (ret_double)
+                dr = ((double (*)(double, double))sym)(a[0].d, a[1].d);
+            else
+                ir = ((int64_t (*)(double, double))sym)(a[0].d, a[1].d);
+        }
+        else {
+            if (ret_double)
+                dr = ((double (*)(int64_t, int64_t))sym)(a[0].i, a[1].i);
+            else
+                ir = ((int64_t (*)(int64_t, int64_t))sym)(a[0].i, a[1].i);
+        }
+        break;
+    case 3:
+        if (all_double) {
+            if (ret_double)
+                dr = ((double (*)(double, double, double))sym)(a[0].d, a[1].d, a[2].d);
+            else
+                ir = ((int64_t (*)(double, double, double))sym)(a[0].d, a[1].d, a[2].d);
+        }
+        else {
+            if (ret_double)
+                dr = ((double (*)(int64_t, int64_t, int64_t))sym)(a[0].i, a[1].i, a[2].i);
+            else
+                ir = ((int64_t (*)(int64_t, int64_t, int64_t))sym)(a[0].i, a[1].i, a[2].i);
+        }
+        break;
+    case 4:
+        if (all_double) {
+            if (ret_double)
+                dr = ((double (*)(double, double, double, double))sym)(a[0].d, a[1].d,
+                                                                      a[2].d, a[3].d);
+            else
+                ir = ((int64_t (*)(double, double, double, double))sym)(a[0].d, a[1].d,
+                                                                        a[2].d, a[3].d);
+        }
+        else {
+            if (ret_double)
+                dr = ((double (*)(int64_t, int64_t, int64_t, int64_t))sym)(
+                    a[0].i, a[1].i, a[2].i, a[3].i);
+            else
+                ir = ((int64_t (*)(int64_t, int64_t, int64_t, int64_t))sym)(
+                    a[0].i, a[1].i, a[2].i, a[3].i);
+        }
+        break;
+    default:
+        return RT_ThrowValue(in, "NotImplementedError",
+                             "extern function '%s' supports at most 4 arguments",
+                             decl->name);
+    }
+    return ffi_result(in, decl->ret, ir, dr);
+}
+
+/* extern 선언에 구현이 있는지: 내장 함수나 네이티브 심볼 중 하나. */
+static RValue *bi_extern_call(Interp *in, RValue *self, RValue **args, size_t nargs);
+
+static int extern_has_impl(Env *env, const char *name)
+{
+    RValue **cell = Env_LookupCell(env, name);
+    if (cell && *cell && (*cell)->kind == RV_BUILTIN &&
+        (*cell)->u.builtin->fn != bi_extern_call)
+        return 1;
+    return native_symbol(name) != NULL;
+}
+
 static RValue *bi_extern_call(Interp *in, RValue *self, RValue **args, size_t nargs)
 {
-    const char *name = self && self->kind == RV_STR ? self->u.s->data : "?";
-    RValue **cell = Env_LookupCell(in->globals, name);
-    if (cell && *cell && (*cell)->kind == RV_BUILTIN && (*cell)->u.builtin->fn != bi_extern_call)
+    AstFn *decl = NULL;
+    const char *name;
+    FfiArg *argv;
+    size_t i, n;
+    size_t ndouble = 0;
+    int ok = 1;
+    void *sym;
+    RValue **cell;
+
+    if (self && self->kind == RV_FUNC && self->u.fn)
+        decl = self->u.fn;
+    name = decl ? decl->name : "?";
+
+    cell = Env_LookupCell(in->globals, name);
+    if (cell && *cell && (*cell)->kind == RV_BUILTIN &&
+        (*cell)->u.builtin->fn != bi_extern_call)
         return (*cell)->u.builtin->fn(in, (*cell)->u.builtin->self, args, nargs);
-    return RT_ThrowValue(in, "NotImplementedError",
-                         "extern 함수 '%s'에 연결된 네이티브 구현이 없습니다", name);
+
+    if (!decl)
+        return RT_ThrowValue(in, "NotImplementedError",
+                             "extern function '%s' has no native implementation", name);
+    n = asdl_seq_LEN(decl->params);
+    if (n != nargs)
+        return RT_ThrowValue(in, "TypeError", "extern function '%s' requires %zu argument(s)",
+                             name, n);
+    argv = n ? Arena_Alloc(in->arena, n * sizeof(FfiArg)) : NULL;
+    for (i = 0; i < n; i++) {
+        param_ty p = asdl_seq_GET(decl->params, i);
+        if (ffi_is_float(p->ty)) {
+            argv[i].d = RValue_AsDouble(in, args[i], &ok);
+            ndouble++;
+        }
+        else if (p->ty && p->ty->kind == Primitive_kind &&
+                 p->ty->v.Primitive.kind == StrT) {
+            if (args[i]->kind != RV_STR) {
+                return RT_ThrowValue(in, "TypeError",
+                                     "argument %zu of extern function '%s' must be str",
+                                     name, i + 1);
+            }
+            argv[i].i = (int64_t)(intptr_t)args[i]->u.s->data;
+        }
+        else {
+            argv[i].i = RValue_AsInt(in, args[i], &ok);
+        }
+        if (!ok)
+            return NULL;
+    }
+    if (ndouble != 0 && ndouble != n)
+        return RT_ThrowValue(in, "NotImplementedError",
+                             "extern function '%s': cannot mix float and non-float arguments",
+                             name);
+    sym = native_symbol(name);
+    if (!sym)
+        return RT_ThrowValue(in, "NotImplementedError",
+                             "extern function '%s' has no native implementation", name);
+    return ffi_invoke(in, decl, sym, argv, ndouble == n);
 }
 
 static Signal exec_decl(Interp *in, stmt_ty s, Env *env)
@@ -1279,9 +1819,20 @@ static Signal exec_decl(Interp *in, stmt_ty s, Env *env)
     case FunctionDef_kind:
         if (!Env_HasLocal(env, s->v.FunctionDef.name)) {
             if (s->v.FunctionDef.is_extern) {
-                AstBuiltin *b = Builtin_New(in, s->v.FunctionDef.name, bi_extern_call);
-                b->self = RValue_Str(in, AsterString_FromCStr(s->v.FunctionDef.name));
-                Env_Define(in, env, s->v.FunctionDef.name, RValue_Builtin(in, b));
+                AstFn *decl = make_fn(in, env, s->v.FunctionDef.name,
+                                      s->v.FunctionDef.params, 0,
+                                      s->v.FunctionDef.returns, NULL, NULL);
+                if (!extern_has_impl(env, decl->name)) {
+                    RT_Throw(in, "NotImplementedError",
+                             "extern function '%s' has no native implementation",
+                             decl->name);
+                    return SIG_THROW;
+                }
+                decl->kind = FN_BUILTIN;
+                decl->builtin.name = decl->name;
+                decl->builtin.fn = bi_extern_call;
+                decl->builtin.self = RValue_Func(in, decl);
+                Env_Define(in, env, decl->name, RValue_Func(in, decl));
                 return SIG_OK;
             }
             AstFn *fn = make_fn(in, env, s->v.FunctionDef.name, s->v.FunctionDef.params, 0,
@@ -1422,6 +1973,7 @@ static int declared_type_known(typeref_ty ty)
     case Pointer_kind:
     case Nullable_kind:
     case StructRef_kind:
+    case FunctionTy_kind:
         return 1;
     case Named_kind: {
         const char *name = ty->v.Named.name;
@@ -1445,7 +1997,7 @@ static int check_declared_value(Interp *in, typeref_ty ty, RValue *value)
             return 1;
     }
     if (!value_is_type(in, value, ty)) {
-        RT_Throw(in, "TypeError", "%s 타입 변수에 %s 값을 넣을 수 없습니다",
+        RT_Throw(in, "TypeError", "cannot assign %s to a variable of type %s",
                  typeref_name(ty), RValue_TypeName(value));
         return 0;
     }
@@ -1454,10 +2006,14 @@ static int check_declared_value(Interp *in, typeref_ty ty, RValue *value)
 
 static Signal exec_var_decl(Interp *in, stmt_ty s, Env *env)
 {
-    RValue *value = eval_initializer(in, env, s->v.VarDecl.ty, s->v.VarDecl.init);
+    initializer_ty init = s->v.VarDecl.init;
+    /* 람다 초기화에서 선언 타입은 람다의 반환 타입 표기다. 값은 람다 자체다. */
+    int lambda_init = init && init->kind == ExprInit_kind &&
+                      init->v.ExprInit.value->kind == Lambda_kind;
+    RValue *value = eval_initializer(in, env, s->v.VarDecl.ty, init);
     if (in->sig != SIG_OK)
         return in->sig;
-    if (!check_declared_value(in, s->v.VarDecl.ty, value))
+    if (!lambda_init && !check_declared_value(in, s->v.VarDecl.ty, value))
         return in->sig;
     if (s->v.VarDecl.is_const)
         Env_DefineConst(in, env, s->v.VarDecl.name, RValue_Copy(in, value));
@@ -1471,28 +2027,31 @@ static Signal exec_destructure(Interp *in, stmt_ty s, Env *env)
     RValue *value = eval(in, s->v.Destructure.value, env);
     asdl_seq *names = s->v.Destructure.names;
     size_t n = asdl_seq_LEN(names);
-    size_t len, i;
-    int ok = 1;
+    RValue **items = n ? Arena_Alloc(in->arena, n * sizeof(RValue *)) : NULL;
+    IterCursor cur;
+    size_t got = 0, i;
 
     if (in->sig != SIG_OK)
         return in->sig;
-    if (!RValue_Iterable(value)) {
-        RT_Throw(in, "TypeError", "%s 값은 구조 분해할 수 없습니다", RValue_TypeName(value));
-        return SIG_THROW;
-    }
-    len = RValue_IterLen(in, value, &ok);
-    if (!ok)
+    if (!Iter_Begin(in, value, &cur))
         return in->sig;
-    if (len != n) {
-        RT_Throw(in, "ValueError", "값 %zu개를 이름 %zu개로 분해할 수 없습니다", len, n);
-        return SIG_THROW;
-    }
-    for (i = 0; i < n; i++) {
-        RValue *item = RValue_IterAt(in, value, i, &ok);
+    for (;;) {
+        int ended = 0, ok = 1;
+        RValue *item = Iter_Next(in, &cur, &ended, &ok);
         if (!ok)
             return in->sig;
-        Env_Define(in, env, (identifier)asdl_seq_GET(names, i), RValue_Copy(in, item));
+        if (ended)
+            break;
+        if (got < n)
+            items[got] = item;
+        got++;
     }
+    if (got != n) {
+        RT_Throw(in, "ValueError", "cannot unpack %zu values into %zu names", got, n);
+        return SIG_THROW;
+    }
+    for (i = 0; i < n; i++)
+        Env_Define(in, env, (identifier)asdl_seq_GET(names, i), RValue_Copy(in, items[i]));
     return SIG_OK;
 }
 
@@ -1512,7 +2071,7 @@ static Signal exec_assert(Interp *in, stmt_ty s, Env *env)
         RT_Throw(in, "AssertionError", "%.*s", (int)text->length, text->data);
     }
     else {
-        RT_Throw(in, "AssertionError", "단언이 실패했습니다");
+        RT_Throw(in, "AssertionError", "assertion failed");
     }
     return SIG_THROW;
 }
@@ -1539,7 +2098,7 @@ static int attr_target(Interp *in, RValue *base, const char *name, Target *out)
     if (base && base->kind == RV_PTR)
         base = base->u.ptr.slot ? *base->u.ptr.slot : NULL;
     if (!base || base->kind == RV_NULL) {
-        RT_Throw(in, "NullPointerError", "null 값의 '%s'에 접근했습니다", name);
+        RT_Throw(in, "NullPointerError", "accessed '%s' on a null value", name);
         return 0;
     }
     if (base->kind == RV_CLASS) {
@@ -1553,7 +2112,7 @@ static int attr_target(Interp *in, RValue *base, const char *name, Target *out)
                 }
             }
         }
-        RT_Throw(in, "AttributeError", "클래스 '%s'에는 정적 필드 '%s'이(가) 없습니다",
+        RT_Throw(in, "AttributeError", "class '%s' has no static field '%s'",
                  base->u.cls->name, name);
         return 0;
     }
@@ -1567,7 +2126,7 @@ static int attr_target(Interp *in, RValue *base, const char *name, Target *out)
         }
         field = Instance_FindField(base->u.obj, name);
         if (!field) {
-            RT_Throw(in, "AttributeError", "'%s'에는 '%s' 필드가 없습니다",
+            RT_Throw(in, "AttributeError", "'%s' has no field '%s'",
                      base->u.obj->cls->name, name);
             return 0;
         }
@@ -1577,14 +2136,14 @@ static int attr_target(Interp *in, RValue *base, const char *name, Target *out)
     if (base->kind == RV_STRUCT) {
         int index = StructValue_FieldIndex(base->u.stv->type, name);
         if (index < 0) {
-            RT_Throw(in, "AttributeError", "'%s' 구조체에 '%s' 필드가 없습니다",
+            RT_Throw(in, "AttributeError", "struct '%s' has no field '%s'",
                      base->u.stv->type->tag, name);
             return 0;
         }
         out->slot = &base->u.stv->cells[index];
         return 1;
     }
-    RT_Throw(in, "AttributeError", "이 값에는 '%s'에 접근할 수 없습니다", name);
+    RT_Throw(in, "AttributeError", "cannot access '%s' on this value", name);
     return 0;
 }
 
@@ -1595,7 +2154,7 @@ static RValue *eval_ref(Interp *in, expr_ty e, Env *env)
     case Name_kind: {
         RValue **cell = Env_LookupCell(env, e->v.Name.id);
         if (!cell || !*cell) {
-            RT_Throw(in, "NameError", "이름 '%s'이(가) 정의되지 않았습니다", e->v.Name.id);
+            RT_Throw(in, "NameError", "name '%s' is not defined", e->v.Name.id);
             return NULL;
         }
         return *cell;
@@ -1607,15 +2166,15 @@ static RValue *eval_ref(Interp *in, expr_ty e, Env *env)
         if (p && p->kind == RV_OBJECT)
             return p;
         if (!p || p->kind == RV_NULL) {
-            RT_Throw(in, "NullPointerError", "null 포인터를 역참조했습니다");
+            RT_Throw(in, "NullPointerError", "dereferenced a null pointer");
             return NULL;
         }
         if (p->kind != RV_PTR) {
-            RT_Throw(in, "TypeError", "역참조할 수 없는 값입니다");
+            RT_Throw(in, "TypeError", "value cannot be dereferenced");
             return NULL;
         }
         if (!p->u.ptr.slot || !*p->u.ptr.slot) {
-            RT_Throw(in, "NullPointerError", "null 포인터를 역참조했습니다");
+            RT_Throw(in, "NullPointerError", "dereferenced a null pointer");
             return NULL;
         }
         return *p->u.ptr.slot;
@@ -1656,7 +2215,7 @@ static int resolve_target(Interp *in, expr_ty target, Env *env, Target *out)
     case Name_kind: {
         RValue **cell = Env_LookupCell(env, target->v.Name.id);
         if (!cell) {
-            RT_Throw(in, "NameError", "이름 '%s'이(가) 정의되지 않았습니다", target->v.Name.id);
+            RT_Throw(in, "NameError", "name '%s' is not defined", target->v.Name.id);
             return 0;
         }
         out->slot = cell;
@@ -1667,15 +2226,15 @@ static int resolve_target(Interp *in, expr_ty target, Env *env, Target *out)
         if (in->sig != SIG_OK)
             return 0;
         if (!p || p->kind == RV_NULL) {
-            RT_Throw(in, "NullPointerError", "null 포인터를 역참조했습니다");
+            RT_Throw(in, "NullPointerError", "dereferenced a null pointer");
             return 0;
         }
         if (p->kind != RV_PTR) {
-            RT_Throw(in, "TypeError", "역참조할 수 없는 값에 대입했습니다");
+            RT_Throw(in, "TypeError", "cannot assign through a non-dereferenceable value");
             return 0;
         }
         if (!p->u.ptr.slot || !*p->u.ptr.slot) {
-            RT_Throw(in, "NullPointerError", "null 포인터를 역참조했습니다");
+            RT_Throw(in, "NullPointerError", "dereferenced a null pointer");
             return 0;
         }
         out->slot = p->u.ptr.slot;
@@ -1700,7 +2259,7 @@ static int resolve_target(Interp *in, expr_ty target, Env *env, Target *out)
         if (in->sig != SIG_OK)
             return 0;
         if (target->v.Subscript.index->kind == Slice_kind) {
-            RT_Throw(in, "TypeError", "슬라이스 대입은 아직 지원하지 않습니다");
+            RT_Throw(in, "TypeError", "slice assignment is not supported");
             return 0;
         }
         index = eval(in, target->v.Subscript.index, env);
@@ -1712,7 +2271,7 @@ static int resolve_target(Interp *in, expr_ty target, Env *env, Target *out)
         return 1;
     }
     default:
-        RT_Throw(in, "TypeError", "대입할 수 없는 대상입니다");
+        RT_Throw(in, "TypeError", "invalid assignment target");
         return 0;
     }
 }
@@ -1720,7 +2279,7 @@ static int resolve_target(Interp *in, expr_ty target, Env *env, Target *out)
 static RValue *property_read(Interp *in, PropDesc *prop, RValue *self)
 {
     if (!prop->getter)
-        return RT_ThrowValue(in, "AttributeError", "프로퍼티 '%s'에 getter가 없습니다", prop->name);
+        return RT_ThrowValue(in, "AttributeError", "property '%s' has no getter", prop->name);
     return call_fn(in, bind_method(in, prop->getter, self), NULL, 0);
 }
 
@@ -1728,7 +2287,7 @@ static void property_write(Interp *in, PropDesc *prop, RValue *self, RValue *val
 {
     RValue *args[1];
     if (!prop->setter) {
-        RT_Throw(in, "AttributeError", "프로퍼티 '%s'에 setter가 없습니다", prop->name);
+        RT_Throw(in, "AttributeError", "property '%s' has no setter", prop->name);
         return;
     }
     args[0] = value;
@@ -1754,7 +2313,7 @@ static int eval_slice_index_bound(Interp *in, expr_ty e, Env *env, size_t fallba
     if (in->sig != SIG_OK)
         return 0;
     if (!v || v->kind != RV_INT) {
-        RT_Throw(in, "TypeError", "슬라이스 경계는 int여야 합니다");
+        RT_Throw(in, "TypeError", "slice bounds must be int");
         return 0;
     }
     n = v->u.i;
@@ -1775,12 +2334,11 @@ static Signal exec_slice_assign(Interp *in, expr_ty target, RValue *value, Env *
     expr_ty slice = target->v.Subscript.index;
     int lo, hi;
     size_t len, i, count;
-    int ok = 1;
 
     if (in->sig != SIG_OK)
         return in->sig;
     if (!container || container->kind != RV_LIST) {
-        RT_Throw(in, "TypeError", "슬라이스 대입은 리스트에만 쓸 수 있습니다");
+        RT_Throw(in, "TypeError", "slice assignment is only allowed on lists");
         return SIG_THROW;
     }
     len = container->u.list->len;
@@ -1789,7 +2347,7 @@ static Signal exec_slice_assign(Interp *in, expr_ty target, RValue *value, Env *
         if (in->sig != SIG_OK)
             return in->sig;
         if (!step || step->kind != RV_INT || step->u.i != 1) {
-            RT_Throw(in, "ValueError", "슬라이스 대입의 step은 1이어야 합니다");
+            RT_Throw(in, "ValueError", "slice assignment step must be 1");
             return SIG_THROW;
         }
     }
@@ -1798,20 +2356,28 @@ static Signal exec_slice_assign(Interp *in, expr_ty target, RValue *value, Env *
         return in->sig;
     if (hi < lo)
         hi = lo;
-    if (!RValue_Iterable(value)) {
-        RT_Throw(in, "TypeError", "슬라이스 대입에는 순회 가능한 값이 필요합니다");
-        return SIG_THROW;
-    }
-    count = RValue_IterLen(in, value, &ok);
-    if (!ok)
-        return in->sig;
-    for (i = 0; i < (size_t)(hi - lo); i++)
-        List_RemoveAt(container->u.list, (size_t)lo);
-    for (i = 0; i < count; i++) {
-        RValue *item = RValue_IterAt(in, value, i, &ok);
-        if (!ok)
-            return in->sig;
-        List_Insert(in, container->u.list, (size_t)lo + i, RValue_Copy(in, item));
+    {
+        IterCursor cur;
+        AsterList *vals;
+        if (!Iter_Begin(in, value, &cur)) {
+            RT_Throw(in, "TypeError", "slice assignment requires an iterable value");
+            return SIG_THROW;
+        }
+        vals = List_New(in);
+        for (;;) {
+            int ended = 0, ok = 1;
+            RValue *item = Iter_Next(in, &cur, &ended, &ok);
+            if (!ok)
+                return in->sig;
+            if (ended)
+                break;
+            List_Append(in, vals, RValue_Copy(in, item));
+        }
+        count = vals->len;
+        for (i = 0; i < (size_t)(hi - lo); i++)
+            List_RemoveAt(container->u.list, (size_t)lo);
+        for (i = 0; i < count; i++)
+            List_Insert(in, container->u.list, (size_t)lo + i, vals->items[i]);
     }
     return SIG_OK;
 }
@@ -1828,7 +2394,7 @@ static Signal exec_assign(Interp *in, stmt_ty s, Env *env)
     if (target->kind == Subscript_kind &&
         target->v.Subscript.index->kind == Slice_kind) {
         if (s->v.Assign.op != AssignEq) {
-            RT_Throw(in, "TypeError", "슬라이스 대입에는 '='만 쓸 수 있습니다");
+            RT_Throw(in, "TypeError", "slice assignment only supports '='");
             return SIG_THROW;
         }
         return exec_slice_assign(in, target, value, env);
@@ -1837,34 +2403,41 @@ static Signal exec_assign(Interp *in, stmt_ty s, Env *env)
     if (target->kind == Tuple_kind) {
         asdl_seq *elems = target->v.Tuple.elements;
         size_t n = asdl_seq_LEN(elems);
-        size_t len, i;
-        int ok = 1;
+        RValue **items = n ? Arena_Alloc(in->arena, n * sizeof(RValue *)) : NULL;
+        IterCursor cur;
+        size_t got = 0, i;
         if (s->v.Assign.op != AssignEq) {
-            RT_Throw(in, "TypeError", "구조 분해에는 '='만 쓸 수 있습니다");
+            RT_Throw(in, "TypeError", "destructuring only supports '='");
             return SIG_THROW;
         }
-        if (!RValue_Iterable(value)) {
-            RT_Throw(in, "TypeError", "%s 값은 구조 분해할 수 없습니다", RValue_TypeName(value));
+        if (!Iter_Begin(in, value, &cur)) {
+            RT_Throw(in, "TypeError", "cannot destructure a %s value", RValue_TypeName(value));
             return SIG_THROW;
         }
-        len = RValue_IterLen(in, value, &ok);
-        if (!ok)
-            return in->sig;
-        if (len != n) {
-            RT_Throw(in, "ValueError", "값 %zu개를 이름 %zu개로 분해할 수 없습니다", len, n);
+        for (;;) {
+            int ended = 0, ok = 1;
+            RValue *item = Iter_Next(in, &cur, &ended, &ok);
+            if (!ok)
+                return in->sig;
+            if (ended)
+                break;
+            if (got < n)
+                items[got] = item;
+            got++;
+        }
+        if (got != n) {
+            RT_Throw(in, "ValueError", "cannot unpack %zu values into %zu names", got, n);
             return SIG_THROW;
         }
         for (i = 0; i < n; i++) {
             expr_ty sub = asdl_seq_GET(elems, i);
-            RValue *item = RValue_IterAt(in, value, i, &ok);
-            if (!ok)
-                return in->sig;
+            RValue *item = items[i];
             if (sub->kind != Name_kind) {
-                RT_Throw(in, "TypeError", "구조 분해 대상은 이름이어야 합니다");
+                RT_Throw(in, "TypeError", "destructuring targets must be names");
                 return SIG_THROW;
             }
             if (Env_IsConst(env, sub->v.Name.id)) {
-                RT_Throw(in, "TypeError", "const 변수 '%s'에는 대입할 수 없습니다",
+                RT_Throw(in, "TypeError", "cannot assign to const variable '%s'",
                          sub->v.Name.id);
                 return SIG_THROW;
             }
@@ -1874,7 +2447,7 @@ static Signal exec_assign(Interp *in, stmt_ty s, Env *env)
     }
 
     if (target->kind == Name_kind && Env_IsConst(env, target->v.Name.id)) {
-        RT_Throw(in, "TypeError", "const 변수 '%s'에는 대입할 수 없습니다",
+        RT_Throw(in, "TypeError", "cannot assign to const variable '%s'",
                  target->v.Name.id);
         return SIG_THROW;
     }
@@ -1886,7 +2459,7 @@ static Signal exec_assign(Interp *in, stmt_ty s, Env *env)
             Env_Define(in, env, target->v.Name.id, RValue_Copy(in, value));
             return SIG_OK;
         }
-        RT_Throw(in, "NameError", "이름 '%s'이(가) 정의되지 않았습니다", target->v.Name.id);
+        RT_Throw(in, "NameError", "name '%s' is not defined", target->v.Name.id);
         return SIG_THROW;
     }
 
@@ -2028,7 +2601,7 @@ static Signal exec_for_range(Interp *in, stmt_ty s, Env *env)
     if (!ok)
         return in->sig;
     if (step == 0) {
-        RT_Throw(in, "ValueError", "범위 for의 간격은 0일 수 없습니다");
+        RT_Throw(in, "ValueError", "range for step cannot be zero");
         return SIG_THROW;
     }
 
@@ -2056,28 +2629,24 @@ static Signal exec_for_in(Interp *in, stmt_ty s, Env *env)
 {
     Env *loop_env = Env_New(in, env);
     RValue *iterable = eval(in, s->v.ForIn.iter, env);
+    IterCursor cur;
     RValue **cell;
-    size_t len, i;
-    int ok = 1;
 
     if (in->sig != SIG_OK)
         return in->sig;
-    if (!RValue_Iterable(iterable)) {
-        RT_Throw(in, "TypeError", "%s 값은 for-in으로 순회할 수 없습니다",
-                 RValue_TypeName(iterable));
-        return SIG_THROW;
-    }
-    len = RValue_IterLen(in, iterable, &ok);
-    if (!ok)
+    if (!Iter_Begin(in, iterable, &cur))
         return in->sig;
 
     Env_Define(in, loop_env, s->v.ForIn.name, null_value(in));
     cell = Env_LookupCell(loop_env, s->v.ForIn.name);
-    for (i = 0; i < len; i++) {
-        RValue *item = RValue_IterAt(in, iterable, i, &ok);
+    for (;;) {
+        int ended = 0, ok = 1;
+        RValue *item = Iter_Next(in, &cur, &ended, &ok);
         Signal sig;
         if (!ok)
             return in->sig;
+        if (ended)
+            break;
         if (!check_declared_value(in, s->v.ForIn.ty, item))
             return in->sig;
         *cell = item;
@@ -2098,6 +2667,7 @@ static Signal exec_for_in(Interp *in, stmt_ty s, Env *env)
 
 static Signal exec_try(Interp *in, stmt_ty s, Env *env)
 {
+    size_t saved_frames = in->nframes;
     Signal sig = exec_block(in, s->v.Try.body, Env_New(in, env));
 
     if (sig == SIG_THROW) {
@@ -2111,6 +2681,7 @@ static Signal exec_try(Interp *in, stmt_ty s, Env *env)
                 RValue *exc = in->exc;
                 in->exc = NULL;
                 in->sig = SIG_OK;
+                Interp_FrameTruncate(in, saved_frames);
                 Env_Define(in, handler_env, h->name, exc);
                 sig = exec_block(in, h->body, handler_env);
                 break;
@@ -2129,6 +2700,8 @@ static Signal exec_try(Interp *in, stmt_ty s, Env *env)
         else
             in->sig = sig = pending;
     }
+    if (sig != SIG_THROW)
+        Interp_FrameTruncate(in, saved_frames);
     return sig;
 }
 
@@ -2224,46 +2797,10 @@ static char *module_name_from_path(Interp *in, asdl_seq *path)
     return name;
 }
 
-static int try_module_file(const char *dir, const char *rel, char *out, size_t cap)
-{
-    FILE *f;
-    if (dir && dir[0])
-        snprintf(out, cap, "%s/%s", dir, rel);
-    else
-        snprintf(out, cap, "%s", rel);
-    f = fopen(out, "rb");
-    if (!f)
-        return 0;
-    fclose(f);
-    return 1;
-}
-
 static int resolve_module_file(Interp *in, const char *name, char *out, size_t cap)
 {
-    char rel[512], with_ast[600], with_init[620];
-    size_t i, o = 0;
-
-    for (i = 0; name[i] && o + 1 < sizeof(rel); i++)
-        rel[o++] = name[i] == '.' ? '/' : name[i];
-    rel[o] = 0;
-    snprintf(with_ast, sizeof with_ast, "%s.ast", rel);
-    snprintf(with_init, sizeof with_init, "%s/__init__.ast", rel);
-
-    if (try_module_file(in->base_dir, with_ast, out, cap))
-        return 1;
-    if (try_module_file(in->base_dir, with_init, out, cap))
-        return 1;
-    if (try_module_file(in->stdlib_dir, with_ast, out, cap))
-        return 1;
-    if (try_module_file(in->stdlib_dir, with_init, out, cap))
-        return 1;
-    for (i = 0; i < in->nmodule_dirs; i++) {
-        if (try_module_file(in->module_dirs[i], with_ast, out, cap))
-            return 1;
-        if (try_module_file(in->module_dirs[i], with_init, out, cap))
-            return 1;
-    }
-    return 0;
+    return Aster_ResolveModuleFile(in->base_dir, in->stdlib_dir, in->module_dirs,
+                                   in->nmodule_dirs, name, out, cap);
 }
 
 static AstModule *module_cache_find(Interp *in, const char *name)
@@ -2330,6 +2867,7 @@ static AstModule *load_module(Interp *in, asdl_seq *path)
 {
     char *name = module_name_from_path(in, path);
     AstModule *module = module_cache_find(in, name);
+    AstModule *builtin = Module_Builtin(in, name);
     char file[1024];
     char *source;
     size_t size = 0;
@@ -2339,13 +2877,15 @@ static AstModule *load_module(Interp *in, asdl_seq *path)
 
     if (module)
         return module;
+    if (builtin)
+        return builtin;
     if (!resolve_module_file(in, name, file, sizeof file)) {
-        RT_Throw(in, "ModuleNotFoundError", "모듈 '%s'을(를) 찾을 수 없습니다", name);
+        RT_Throw(in, "ModuleNotFoundError", "cannot find module '%s'", name);
         return NULL;
     }
     source = read_source_file(file, &size);
     if (!source) {
-        RT_Throw(in, "ImportError", "모듈 '%s'을(를) 읽을 수 없습니다: %s", name, file);
+        RT_Throw(in, "ImportError", "cannot read module '%s': %s", name, file);
         return NULL;
     }
     mod = Aster_ParseFile(source, size, in->arena, &err);
@@ -2425,7 +2965,7 @@ static Signal exec_import_from(Interp *in, stmt_ty s, Env *env)
         const char *name = s->v.ImportFrom.name;
         RValue *value = Module_GetExported(in, module, name);
         if (!value) {
-            RT_Throw(in, "ImportError", "모듈 '%s'에 '%s'이(가) 없습니다",
+            RT_Throw(in, "ImportError", "module '%s' has no member '%s'",
                      module->name, name);
             return SIG_THROW;
         }
@@ -2441,6 +2981,8 @@ static Signal exec_import_from(Interp *in, stmt_ty s, Env *env)
 static Signal exec_stmt(Interp *in, stmt_ty s, Env *env)
 {
     in->line = s->lineno;
+    if (in->nframes > 0)
+        in->frames[in->nframes - 1].line = s->lineno;
 
     switch (s->kind) {
     case FunctionDef_kind:
@@ -2476,11 +3018,12 @@ static Signal exec_stmt(Interp *in, stmt_ty s, Env *env)
         RValue *value = s->v.Yield.value ? eval(in, s->v.Yield.value, env) : null_value(in);
         if (in->sig != SIG_OK)
             return in->sig;
-        if (!in->yield_buf) {
-            RT_Throw(in, "RuntimeError", "yield는 제너레이터 함수 안에서만 쓸 수 있습니다");
+        if (!in->gen) {
+            RT_Throw(in, "RuntimeError", "'yield' is only allowed inside generator functions");
             return SIG_THROW;
         }
-        List_Append(in, in->yield_buf, value);
+        in->gen->yielded = value;
+        gen_context_switch(in->gen->ctx, in->gen->caller_ctx);
         return SIG_OK;
     }
     case Throw_kind:
@@ -2536,7 +3079,7 @@ static RValue *make_exception(Interp *in, RValue *value, const char *exc_type)
     case RV_STR:
         return RValue_Exception(in, "Exception", value);
     default:
-        RT_Throw(in, "TypeError", "throw에는 문자열이나 예외 값이 필요합니다");
+        RT_Throw(in, "TypeError", "'throw' requires a string or an exception value");
         return NULL;
     }
 }
@@ -2549,7 +3092,7 @@ static RValue *eval_new(Interp *in, expr_ty e, Env *env)
     RValue *type_value;
 
     if (!cell || !*cell)
-        return RT_ThrowValue(in, "NameError", "타입 '%s'을(를) 찾을 수 없습니다", e->v.New.cls);
+        return RT_ThrowValue(in, "NameError", "cannot find type '%s'", e->v.New.cls);
     type_value = *cell;
     if (!eval_args(in, e->v.New.args, env, &args, &nargs))
         return NULL;
@@ -2558,7 +3101,7 @@ static RValue *eval_new(Interp *in, expr_ty e, Env *env)
         return instantiate_class(in, type_value->u.cls, args, nargs);
     if (type_value->kind == RV_STRUCTTYPE)
         return instantiate_struct(in, type_value->u.stype, args, nargs);
-    return RT_ThrowValue(in, "TypeError", "'%s'은(는) new로 만들 수 있는 타입이 아닙니다",
+    return RT_ThrowValue(in, "TypeError", "'%s' cannot be created with 'new'",
                          e->v.New.cls);
 }
 
@@ -2591,7 +3134,7 @@ static int eval_slice_bound(Interp *in, expr_ty e, Env *env, int *present, int64
     if (in->sig != SIG_OK)
         return 0;
     if (!v || (v->kind != RV_INT && v->kind != RV_BOOL)) {
-        RT_Throw(in, "TypeError", "슬라이스 인덱스는 정수여야 합니다");
+        RT_Throw(in, "TypeError", "slice indices must be integers");
         return 0;
     }
     *present = 1;
@@ -2639,9 +3182,9 @@ static RValue *eval_slice(Interp *in, RValue *container, expr_ty slice_expr, Env
     else if (container->kind == RV_TUPLE)
         len = (int64_t)container->u.tuple->len;
     else if (container->kind == RV_STR)
-        len = (int64_t)container->u.s->length;
+        len = (int64_t)container->u.s->cp_length;
     else
-        return RT_ThrowValue(in, "TypeError", "'%s' 객체는 슬라이스를 지원하지 않습니다",
+        return RT_ThrowValue(in, "TypeError", "'%s' object does not support slicing",
                              RValue_TypeName(container));
 
     if (has_lower)
@@ -2654,9 +3197,14 @@ static RValue *eval_slice(Interp *in, RValue *container, expr_ty slice_expr, Env
         stop = step > 0 ? len : -1;
 
     if (container->kind == RV_STR) {
-        char *buf = xmalloc_fallback(len + 1);
+        AsterString *s = container->u.s;
+        char *buf = xmalloc_fallback(s->length + 1);
         for (i = start; step > 0 ? i < stop : i > stop; ) {
-            buf[n++] = container->u.s->data[i];
+            size_t off = AsterString_ByteOffset(s, (size_t)i);
+            size_t adv = 1;
+            Aster_UTF8_Decode(s->data + off, s->length - off, &adv);
+            memcpy(buf + n, s->data + off, adv);
+            n += adv;
             if (step > 0) {
                 if (i > INT64_MAX - step)
                     break;
@@ -2735,7 +3283,7 @@ static RValue *eval(Interp *in, expr_ty e, Env *env)
     case Name_kind: {
         RValue **cell = Env_LookupCell(env, e->v.Name.id);
         if (!cell) {
-            RT_Throw(in, "NameError", "이름 '%s'이(가) 정의되지 않았습니다", e->v.Name.id);
+            RT_Throw(in, "NameError", "name '%s' is not defined", e->v.Name.id);
             return NULL;
         }
         return *cell;
@@ -2743,7 +3291,7 @@ static RValue *eval(Interp *in, expr_ty e, Env *env)
     case Self_kind: {
         RValue **cell = Env_LookupCell(env, "self");
         if (!cell) {
-            RT_Throw(in, "RuntimeError", "'self'는 메서드 안에서만 쓸 수 있습니다");
+            RT_Throw(in, "RuntimeError", "'self' is only allowed inside methods");
             return NULL;
         }
         return *cell;
@@ -2756,22 +3304,18 @@ static RValue *eval(Interp *in, expr_ty e, Env *env)
             expr_ty item_expr = asdl_seq_GET(elements, i);
             if (item_expr->kind == Spread_kind) {
                 RValue *inner = eval(in, item_expr->v.Spread.value, env);
-                size_t k, n;
-                int ok = 1;
+                IterCursor cur;
                 if (in->sig != SIG_OK)
                     return NULL;
-                if (!RValue_Iterable(inner)) {
-                    RT_Throw(in, "TypeError", "%s 값은 펼칠 수 없습니다",
-                             RValue_TypeName(inner));
+                if (!Iter_Begin(in, inner, &cur))
                     return NULL;
-                }
-                n = RValue_IterLen(in, inner, &ok);
-                if (!ok)
-                    return NULL;
-                for (k = 0; k < n; k++) {
-                    RValue *v = RValue_IterAt(in, inner, k, &ok);
+                for (;;) {
+                    int ended = 0, ok = 1;
+                    RValue *v = Iter_Next(in, &cur, &ended, &ok);
                     if (!ok)
                         return NULL;
+                    if (ended)
+                        break;
                     List_Append(in, list, RValue_Copy(in, v));
                 }
             }
@@ -2811,7 +3355,7 @@ static RValue *eval(Interp *in, expr_ty e, Env *env)
                 if (in->sig != SIG_OK)
                     return NULL;
                 if (!src || src->kind != RV_DICT) {
-                    RT_Throw(in, "TypeError", "딕셔너리는 딕셔너리로만 펼칠 수 있습니다");
+                    RT_Throw(in, "TypeError", "dicts can only be spread into dicts");
                     return NULL;
                 }
                 for (k = 0; k < src->u.dict->len; k++) {
@@ -2841,21 +3385,18 @@ static RValue *eval(Interp *in, expr_ty e, Env *env)
             expr_ty item_expr = asdl_seq_GET(elements, i);
             if (item_expr->kind == Spread_kind) {
                 RValue *inner = eval(in, item_expr->v.Spread.value, env);
-                size_t k, n;
+                IterCursor cur;
                 if (in->sig != SIG_OK)
                     return NULL;
-                if (!RValue_Iterable(inner)) {
-                    RT_Throw(in, "TypeError", "%s 값은 펼칠 수 없습니다",
-                             RValue_TypeName(inner));
+                if (!Iter_Begin(in, inner, &cur))
                     return NULL;
-                }
-                n = RValue_IterLen(in, inner, &ok);
-                if (!ok)
-                    return NULL;
-                for (k = 0; k < n; k++) {
-                    RValue *v = RValue_IterAt(in, inner, k, &ok);
+                for (;;) {
+                    int ended = 0, ok = 1;
+                    RValue *v = Iter_Next(in, &cur, &ended, &ok);
                     if (!ok)
                         return NULL;
+                    if (ended)
+                        break;
                     if (!Set_Add(in, set, RValue_Copy(in, v), &ok))
                         return NULL;
                 }
@@ -2881,16 +3422,11 @@ static RValue *eval(Interp *in, expr_ty e, Env *env)
         Env *loop_env;
         AsterList *list = NULL;
         AsterSet *set = NULL;
-        size_t len, i;
-        int ok = 1;
+        IterCursor cur;
+        int ok;
         if (in->sig != SIG_OK)
             return NULL;
-        if (!RValue_Iterable(source)) {
-            RT_Throw(in, "TypeError", "%s 값은 순회할 수 없습니다", RValue_TypeName(source));
-            return NULL;
-        }
-        len = RValue_IterLen(in, source, &ok);
-        if (!ok)
+        if (!Iter_Begin(in, source, &cur))
             return NULL;
         loop_env = Env_New(in, env);
         if (is_set)
@@ -2898,11 +3434,15 @@ static RValue *eval(Interp *in, expr_ty e, Env *env)
         else
             list = List_New(in);
         Env_Define(in, loop_env, name, null_value(in));
-        for (i = 0; i < len; i++) {
-            RValue *item = RValue_IterAt(in, source, i, &ok);
-            RValue *value;
+        for (;;) {
+            int ended = 0;
+            RValue *item, *value;
+            ok = 1;
+            item = Iter_Next(in, &cur, &ended, &ok);
             if (!ok)
                 return NULL;
+            if (ended)
+                break;
             Env_Assign(loop_env, name, RValue_Copy(in, item));
             if (cond) {
                 RValue *keep = eval(in, cond, loop_env);
@@ -2928,25 +3468,24 @@ static RValue *eval(Interp *in, expr_ty e, Env *env)
         RValue *source = eval(in, e->v.DictComp.iter, env);
         Env *loop_env;
         AsterDict *dict;
-        size_t len, i;
-        int ok = 1;
+        IterCursor cur;
+        int ok;
         if (in->sig != SIG_OK)
             return NULL;
-        if (!RValue_Iterable(source)) {
-            RT_Throw(in, "TypeError", "%s 값은 순회할 수 없습니다", RValue_TypeName(source));
-            return NULL;
-        }
-        len = RValue_IterLen(in, source, &ok);
-        if (!ok)
+        if (!Iter_Begin(in, source, &cur))
             return NULL;
         loop_env = Env_New(in, env);
         dict = Dict_New(in);
         Env_Define(in, loop_env, e->v.DictComp.name, null_value(in));
-        for (i = 0; i < len; i++) {
-            RValue *item = RValue_IterAt(in, source, i, &ok);
-            RValue *key, *value;
+        for (;;) {
+            int ended = 0;
+            RValue *item, *key, *value;
+            ok = 1;
+            item = Iter_Next(in, &cur, &ended, &ok);
             if (!ok)
                 return NULL;
+            if (ended)
+                break;
             Env_Assign(loop_env, e->v.DictComp.name, RValue_Copy(in, item));
             if (e->v.DictComp.cond) {
                 RValue *keep = eval(in, e->v.DictComp.cond, loop_env);
@@ -2967,7 +3506,7 @@ static RValue *eval(Interp *in, expr_ty e, Env *env)
         return RValue_Dict(in, dict);
     }
     case Spread_kind:
-        return RT_ThrowValue(in, "SyntaxError", "이 위치에서는 펼치기를 쓸 수 없습니다");
+        return RT_ThrowValue(in, "SyntaxError", "spread is not allowed here");
     case Incr_kind: {
         Target tgt;
         RValue *current, *updated;
@@ -2984,12 +3523,15 @@ static RValue *eval(Interp *in, expr_ty e, Env *env)
             return NULL;
         if (!ok)
             return NULL;
-        if (current->kind == RV_INT)
-            updated = RValue_Int(in, current->u.i + (e->v.Incr.is_inc ? 1 : -1));
+        if (current->kind == RV_INT) {
+            updated = int_add(in, current->u.i, e->v.Incr.is_inc ? 1 : -1);
+            if (!updated)
+                return NULL;
+        }
         else if (current->kind == RV_FLOAT)
             updated = RValue_Float(in, current->u.f + (e->v.Incr.is_inc ? 1.0 : -1.0));
         else
-            return RT_ThrowValue(in, "TypeError", "%s 값은 증감할 수 없습니다",
+            return RT_ThrowValue(in, "TypeError", "cannot increment/decrement a %s value",
                                  RValue_TypeName(current));
         if (tgt.prop)
             property_write(in, tgt.prop, tgt.self, updated);
@@ -3027,11 +3569,15 @@ static RValue *eval(Interp *in, expr_ty e, Env *env)
                 return RValue_Float(in, operand->u.f);
             return RValue_Int(in, RValue_AsInt(in, operand, &ok));
         case USub:
+            if (operand->kind == RV_OBJECT && RValue_HasMethod(in, operand, "__neg__"))
+                return Interp_CallMethod(in, operand, "__neg__", NULL, 0);
             if (operand->kind == RV_FLOAT)
                 return RValue_Float(in, -operand->u.f);
+            if (operand->kind == RV_INT && operand->u.i == INT64_MIN)
+                return int_overflow(in);
             if (operand->kind == RV_INT || operand->kind == RV_BOOL)
                 return RValue_Int(in, -RValue_AsInt(in, operand, &ok));
-            RT_Throw(in, "TypeError", "단항 '-'에는 숫자가 필요합니다");
+            RT_Throw(in, "TypeError", "unary '-' requires a number");
             return NULL;
         }
         return null_value(in);
@@ -3055,6 +3601,37 @@ static RValue *eval(Interp *in, expr_ty e, Env *env)
         right = eval(in, e->v.Compare.right, env);
         if (in->sig != SIG_OK)
             return NULL;
+        if (left->kind == RV_OBJECT || right->kind == RV_OBJECT) {
+            const char *name = NULL, *reflected = NULL;
+            RValue *handled = NULL;
+            switch (e->v.Compare.op) {
+            case Eq: name = "__eq__"; reflected = "__eq__"; break;
+            case NotEq: name = "__eq__"; reflected = "__eq__"; break;
+            case Lt: name = "__lt__"; reflected = "__gt__"; break;
+            case LtE: name = "__le__"; reflected = "__ge__"; break;
+            case Gt: name = "__gt__"; reflected = "__lt__"; break;
+            case GtE: name = "__ge__"; reflected = "__le__"; break;
+            }
+            if (left->kind == RV_OBJECT && RValue_HasMethod(in, left, name)) {
+                RValue *args[1];
+                args[0] = right;
+                handled = Interp_CallMethod(in, left, name, args, 1);
+            }
+            else if (right->kind == RV_OBJECT &&
+                     RValue_HasMethod(in, right, reflected)) {
+                RValue *args[1];
+                args[0] = left;
+                handled = Interp_CallMethod(in, right, reflected, args, 1);
+            }
+            if (handled) {
+                int truth = RValue_Truthy(handled);
+                if (e->v.Compare.op == NotEq)
+                    truth = !truth;
+                return RValue_Bool(in, truth);
+            }
+            if (in->sig != SIG_OK)
+                return NULL;
+        }
         switch (e->v.Compare.op) {
         case Eq:
             return RValue_Bool(in, RValue_Equal(left, right));
@@ -3127,11 +3704,11 @@ static RValue *eval(Interp *in, expr_ty e, Env *env)
         if (!resolve_target(in, e->v.AddressOf.value, env, &target))
             return NULL;
         if (target.is_subscript) {
-            RT_Throw(in, "TypeError", "컬렉션 원소의 주소는 구할 수 없습니다");
+            RT_Throw(in, "TypeError", "cannot take the address of a collection element");
             return NULL;
         }
         if (target.prop) {
-            RT_Throw(in, "TypeError", "프로퍼티의 주소는 구할 수 없습니다");
+            RT_Throw(in, "TypeError", "cannot take the address of a property");
             return NULL;
         }
         return RValue_Ptr(in, target.slot, NULL);
@@ -3141,17 +3718,17 @@ static RValue *eval(Interp *in, expr_ty e, Env *env)
         if (in->sig != SIG_OK)
             return NULL;
         if (!operand || operand->kind == RV_NULL) {
-            RT_Throw(in, "NullPointerError", "null 포인터를 역참조했습니다");
+            RT_Throw(in, "NullPointerError", "dereferenced a null pointer");
             return NULL;
         }
         if (operand->kind == RV_OBJECT)
             return operand;
         if (operand->kind != RV_PTR) {
-            RT_Throw(in, "TypeError", "역참조할 수 없는 값입니다");
+            RT_Throw(in, "TypeError", "value cannot be dereferenced");
             return NULL;
         }
         if (!operand->u.ptr.slot || !*operand->u.ptr.slot) {
-            RT_Throw(in, "NullPointerError", "null 포인터를 역참조했습니다");
+            RT_Throw(in, "NullPointerError", "dereferenced a null pointer");
             return NULL;
         }
         return RValue_Copy(in, *operand->u.ptr.slot);
@@ -3234,7 +3811,53 @@ static RValue *eval(Interp *in, expr_ty e, Env *env)
         return RValue_Func(in, fn);
     }
     case Array_kind:
-        return RT_ThrowValue(in, "TypeError", "배열 리터럴은 아직 지원하지 않습니다");
+        return RT_ThrowValue(in, "TypeError", "array literals are not supported");
+    case Range_kind: {
+        RValue *lo_v = eval(in, e->v.Range.start, env);
+        RValue *hi_v, *step_v = NULL;
+        AsterList *list;
+        int64_t lo, hi, step = 1, i;
+        int ok = 1;
+        if (in->sig != SIG_OK)
+            return NULL;
+        hi_v = eval(in, e->v.Range.stop, env);
+        if (in->sig != SIG_OK)
+            return NULL;
+        if (e->v.Range.step) {
+            step_v = eval(in, e->v.Range.step, env);
+            if (in->sig != SIG_OK)
+                return NULL;
+        }
+        lo = RValue_AsInt(in, lo_v, &ok);
+        if (!ok)
+            return NULL;
+        hi = RValue_AsInt(in, hi_v, &ok);
+        if (!ok)
+            return NULL;
+        if (step_v) {
+            step = RValue_AsInt(in, step_v, &ok);
+            if (!ok)
+                return NULL;
+        }
+        if (step == 0)
+            return RT_ThrowValue(in, "ValueError", "range step cannot be zero");
+        list = List_New(in);
+        if (step > 0) {
+            for (i = lo; i <= hi; i += step) {
+                List_Append(in, list, RValue_Int(in, i));
+                if (i > INT64_MAX - step)
+                    break;
+            }
+        }
+        else {
+            for (i = lo; i >= hi; i += step) {
+                List_Append(in, list, RValue_Int(in, i));
+                if (i < INT64_MIN - step)
+                    break;
+            }
+        }
+        return RValue_List(in, list);
+    }
     case Subscript_kind: {
         RValue *value = eval(in, e->v.Subscript.value, env);
         RValue *index;
@@ -3252,7 +3875,7 @@ static RValue *eval(Interp *in, expr_ty e, Env *env)
         return value;
     }
     case Slice_kind:
-        return RT_ThrowValue(in, "TypeError", "슬라이스는 대괄호 안에서만 쓸 수 있습니다");
+        return RT_ThrowValue(in, "TypeError", "slicing is only allowed inside brackets");
     case FString_kind: {
         asdl_seq *values = e->v.FString.values;
         RValue *result = RValue_Str(in, AsterString_FromCStr(""));
@@ -3320,7 +3943,7 @@ static RValue *eval(Interp *in, expr_ty e, Env *env)
         return RValue_Str(in, text);
     }
     }
-    return RT_ThrowValue(in, "RuntimeError", "알 수 없는 식 노드입니다");
+    return RT_ThrowValue(in, "RuntimeError", "unknown expression node");
 }
 
 /* ---- 진입점 ---- */
@@ -3338,7 +3961,7 @@ int Interp_RunModule(Interp *in, mod_ty mod)
     }
     if (in->sig == SIG_BREAK || in->sig == SIG_CONTINUE) {
         in->sig = SIG_OK;
-        RT_Throw(in, "RuntimeError", "'break'와 'continue'는 반복문 안에서만 쓸 수 있습니다");
+        RT_Throw(in, "RuntimeError", "'break' and 'continue' are only allowed inside loops");
         return 1;
     }
     return in->sig == SIG_THROW ? 1 : 0;

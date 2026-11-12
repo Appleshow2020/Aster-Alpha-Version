@@ -1,0 +1,5 @@
+'Wrong' method 'name' does not match interface 'Shape'
+class 'Unfinished' does not implement interface 'Shape' method 'name'
+module 'aster.math' has no member 'nosuch'
+private and cannot be used outside 'Vault'
+argument: expected float but got str
