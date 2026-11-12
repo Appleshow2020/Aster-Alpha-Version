@@ -1,0 +1,35 @@
+/* aster.io.StringWriter: 문자열을 모으는 Writer. */
+
+import aster.io.Writer;
+from aster.lang.String import StringBuilder;
+
+export class StringWriter extends Writer {
+    private StringBuilder buffer;
+
+    constructor() {
+        super();
+        self->buffer = new StringBuilder();
+    }
+
+    public fn write(str text) -> void {
+        self->buffer.append(text);
+    }
+
+    public fn write(int c) -> void {
+        self->buffer.append(chr(c));
+    }
+
+    public fn toString() -> str {
+        return self->buffer.toString();
+    }
+
+    public fn getBuffer() -> StringBuilder {
+        return self->buffer;
+    }
+
+    public fn flush() -> void {
+    }
+
+    public fn close() -> void {
+    }
+}

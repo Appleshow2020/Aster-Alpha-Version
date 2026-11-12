@@ -1,0 +1,32 @@
+/* aster.io.Writer: Java Writer의 기반 클래스.
+   문자는 str 조각으로, 코드포인트 출력은 chr(int)로 처리한다. */
+
+import aster.io.Flushable;
+import aster.io.Closeable;
+
+export class Writer implements Flushable, Closeable {
+    protected str data;
+
+    constructor() {
+        self->data = "";
+    }
+
+    public fn write(str text) -> void {
+        self->data = self->data + text;
+    }
+
+    public fn write(int c) -> void {
+        self->write(chr(c));
+    }
+
+    public fn append(str text) -> Writer {
+        self->write(text);
+        return self;
+    }
+
+    public fn flush() -> void {
+    }
+
+    public fn close() -> void {
+    }
+}

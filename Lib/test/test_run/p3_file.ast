@@ -1,0 +1,27 @@
+import System.stdout.*;
+import aster.io.File;
+
+File here = new File("Lib/test/test_run/p3_file.ast");
+println(here.exists());
+println(here.isFile());
+println(here.isDirectory());
+println(here.getName());
+println(here.getParent());
+println(here.length() > 0);
+
+File dir = new File("tmp/aster_file_test/nested");
+println(dir.mkdirs());
+println(dir.exists());
+println(dir.isDirectory());
+
+File note = new File("tmp/aster_file_test/nested/note.txt");
+Files.writeString(note.getPath(), "hello");
+println(note.length());
+println(note.isFile());
+println(note.renameTo(new File("tmp/aster_file_test/nested/renamed.txt")));
+println(dir.list());
+
+println(new File("tmp/aster_file_test/nested/renamed.txt").delete());
+println(dir.delete());
+println(new File("tmp/aster_file_test").delete());
+println(File.separator().length());

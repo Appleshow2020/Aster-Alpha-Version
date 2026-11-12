@@ -1,0 +1,5 @@
+/* aster.util.function.IntUnaryOperator: Java IntUnaryOperator shape. */
+
+export interface IntUnaryOperator {
+    fn applyAsInt(int value) -> int;
+}

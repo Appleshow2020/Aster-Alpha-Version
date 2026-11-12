@@ -1,0 +1,96 @@
+import System.stdout.*;
+import aster.lang.String as StrLib;
+from System.io import readLine as read_line;
+exception AppError extends Exception;
+interface Shape {
+    fn area() -> float;
+}
+enum Color { Red, Green = 5, Blue(int shade) }
+typedef struct Point {
+    int x;
+    int y;
+    Point(int a, int b): x(a), y(b) {
+    }
+} Point;
+class Circle implements Shape {
+    private float r;
+    public static int created = 0;
+    constructor(float r) {
+        self->r = r;
+        Circle.created += 1;
+    }
+    @property float radius;
+    getter radius {
+        return self->r;
+    }
+    setter radius(float value) {
+        self->r = value;
+    }
+    public fn area() -> float {
+        return 3.14159 * self->r ** 2;
+    }
+}
+fn classify(int | str value) -> str {
+    switch (value) {
+        case 1 {
+            return 'one';
+        }
+        case 'two' {
+            return 'two';
+        }
+        case other {
+            return 'other: ' + (str)other;
+        }
+    }
+}
+fn compute(int n) -> int {
+    int total = 0;
+    for (int i = 0; i < n; i++) {
+        if (i % 2 == 0) {
+            total += i;
+        } else if (i == 7) {
+            continue;
+        } else {
+            total -= 1;
+        }
+    }
+    for (int x; x = 0..n..2) {
+        total += x;
+    }
+    for (int v in [1, 2, 3]) {
+        total += v;
+    }
+    return total;
+}
+fn safe(int n) -> int {
+    try {
+        if (n < 0) {
+            throw 'negative' as AppError;
+        }
+        return n * 2;
+    } catch (AppError e) {
+        println('caught', e.message);
+        return 0;
+    } finally {
+        println('done');
+    }
+}
+export fn main() -> void {
+    var (a, b) = (1, 2);
+    list<int> xs = [1, 2, 3];
+    dict<str, int> m = {'a': 1, 'b': 2};
+    set<int> s = {1, 2, 3};
+    var doubled = (int x) -> int => x * 2;
+    var name = 'aster';
+    println(f"hello {name}! {a + b} {{literal}}");
+    println(xs[0:2], xs[::2], m['a'], s);
+    println([x * x for x in xs if x > 1]);
+    println({x: x * 2 for x in xs});
+    Point* p = new Point(3, 4);
+    p->x++;
+    println(p->x, p?.y, &p->y, sizeof(struct Point));
+    println(classify(1), classify('two'), compute(5), safe(-1), doubled(21));
+    list<int> arr = [1, 2, 3];
+    assert a < b, 'a must be smaller';
+    StrLib.repeat('*', 3);
+}

@@ -1,0 +1,187 @@
+/* aster.lang.Double: wrapper and helpers for 64-bit floating point.
+   Aster float is already a C double, so doubleValue and floatValue are
+   the same. Special values are built without exponent literals. */
+
+import aster.lang.Object;
+
+fn _doubleInf() -> float {
+    float v = 1.0;
+    int i = 0;
+    while (i < 400) {
+        v = v * 10.0;
+        i = i + 1;
+    }
+    return v;
+}
+
+fn _doubleNaN() -> float {
+    float inf = _doubleInf();
+    return inf - inf;
+}
+
+fn _doubleMin() -> float {
+    float v = 1.0;
+    int i = 0;
+    while (i < 1074) {
+        v = v / 2.0;
+        i = i + 1;
+    }
+    return v;
+}
+
+fn _doubleIsInf(float v) -> bool {
+    if (v > 0.0 and v / 2.0 == v) { return true; }
+    if (v < 0.0 and v / 2.0 == v) { return true; }
+    return false;
+}
+
+fn _doubleString(float v) -> str {
+    if (v != v) {
+        return "NaN";
+    }
+    if (_doubleIsInf(v)) {
+        if (v > 0.0) {
+            return "Infinity";
+        }
+        return "-Infinity";
+    }
+    return str(v);
+}
+
+fn _doubleHash(float v) -> int {
+    if (v != v) {
+        return 0;
+    }
+    if (v == 0.0) {
+        return 0;
+    }
+    if (v >= -2147483648.0 and v <= 2147483647.0) {
+        return (int) v;
+    }
+    if (v > 0.0) {
+        return 1;
+    }
+    return -1;
+}
+
+export class Double extends Object {
+    public static float MAX_VALUE = 179769313486231570000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000.0;
+    public static float MIN_VALUE = _doubleMin();
+    public static float NaN = _doubleNaN();
+    public static float POSITIVE_INFINITY = _doubleInf();
+    public static float NEGATIVE_INFINITY = 0.0 - _doubleInf();
+
+    private float dv;
+
+    constructor(float v) {
+        self->dv = v;
+    }
+
+    public static fn parseDouble(str s) -> float {
+        str t = s.trim();
+        str lower = t.lower();
+        if (lower == "nan" or lower == "+nan" or lower == "-nan") {
+            return Double.NaN;
+        }
+        if (lower == "infinity" or lower == "+infinity" or lower == "inf" or lower == "+inf") {
+            return Double.POSITIVE_INFINITY;
+        }
+        if (lower == "-infinity" or lower == "-inf") {
+            return Double.NEGATIVE_INFINITY;
+        }
+        return t.to_float();
+    }
+
+    public static fn isNaN(float v) -> bool {
+        return v != v;
+    }
+
+    public static fn isInfinite(float v) -> bool {
+        return _doubleIsInf(v);
+    }
+
+    public static fn isFinite(float v) -> bool {
+        return v == v and not _doubleIsInf(v);
+    }
+
+    public static fn compare(float a, float b) -> int {
+        if (a < b) {
+            return -1;
+        }
+        if (a > b) {
+            return 1;
+        }
+        if (a == b) {
+            return 0;
+        }
+        if (a != a) {
+            if (b != b) {
+                return 0;
+            }
+            return 1;
+        }
+        return -1;
+    }
+
+    public static fn toString(float v) -> str {
+        return _doubleString(v);
+    }
+
+    public static fn valueOf(float v) -> Double {
+        return new Double(v);
+    }
+
+    public static fn valueOf(str s) -> Double {
+        return new Double(Double.parseDouble(s));
+    }
+
+    public fn doubleValue() -> float {
+        return self->dv;
+    }
+
+    public fn floatValue() -> float {
+        return self->dv;
+    }
+
+    public fn intValue() -> int {
+        return (int) self->dv;
+    }
+
+    public fn longValue() -> int {
+        return (int) self->dv;
+    }
+
+    public fn isNaN() -> bool {
+        return self->dv != self->dv;
+    }
+
+    public fn isInfinite() -> bool {
+        return _doubleIsInf(self->dv);
+    }
+
+    public fn equals(Object? o) -> bool {
+        if (not o) {
+            return false;
+        }
+        if (typeName(o) != "Double") {
+            return false;
+        }
+        Double other = (Double) o;
+        if (self->isNaN()) {
+            return other->isNaN();
+        }
+        return self->dv == other->doubleValue();
+    }
+
+    public fn hashCode() -> int {
+        return _doubleHash(self->dv);
+    }
+
+    public fn toString() -> str {
+        return _doubleString(self->dv);
+    }
+
+    public fn __str__() -> str {
+        return _doubleString(self->dv);
+    }
+}

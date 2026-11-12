@@ -1,0 +1,13 @@
+import System.stdout.*;
+import aster.math.BigInteger;
+BigInteger n = new BigInteger("1000");
+BigInteger b = new BigInteger("4");
+println(n.toString(), b.toString());
+println(n.divide(b).toString());
+println(n.remainder(b).toString());
+println(n.divide(new BigInteger("5")).toString());
+println(n.divide(new BigInteger("8")).toString());
+println(new BigInteger("100").divide(new BigInteger("4")).toString());
+println(new BigInteger("1000").divide(new BigInteger("4")).toString());
+BigInteger m = new BigInteger("1000");
+println(m.toString(10));

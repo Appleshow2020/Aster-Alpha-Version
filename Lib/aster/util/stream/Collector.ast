@@ -1,0 +1,19 @@
+/* aster.util.stream.Collector: 수집기.
+   내부에 `fn(list<T>) -> A` 마무리 함수 하나를 담는 단순한 상자다.
+   Collectors의 정적 팩토리로 만들고 Stream.collect에 넘긴다. */
+
+export class Collector<T, A> {
+    private fn(list<T>) -> A finisher;
+
+    constructor(fn(list<T>) -> A finish) {
+        self->finisher = finish;
+    }
+
+    public fn finish(list<T> xs) -> A {
+        return (self->finisher)(xs);
+    }
+
+    public fn __str__() -> str {
+        return "Collector";
+    }
+}

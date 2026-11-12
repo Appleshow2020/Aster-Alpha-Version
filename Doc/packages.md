@@ -111,10 +111,10 @@ shared/
 ```
 
 ```aster
-// shared/text.ast
+# shared/text.ast
 export fn shout(str s) -> str { return s.upper() + "!"; }
 
-// shared/__init__.ast
+# shared/__init__.ast
 import text;
 export fn hello() -> str { return text.shout("hello"); }
 ```

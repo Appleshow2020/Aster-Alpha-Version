@@ -1,0 +1,97 @@
+/* aster.io.File: Java File 스타일 경로·디렉터리 API */
+
+fn stripTrailingSep(str s) -> str {
+    int end = s.length();
+    while (end > 1) {
+        str ch = s.charAt(end - 1);
+        if (ch == "/" or ch == "\\") { end = end - 1; }
+        else { break; }
+    }
+    return s.substring(0, end);
+}
+
+fn lastSep(str s) -> int {
+    int i = s.length() - 1;
+    while (i >= 0) {
+        str ch = s.charAt(i);
+        if (ch == "/" or ch == "\\") { return i; }
+        i = i - 1;
+    }
+    return -1;
+}
+
+export class File {
+    private str path;
+
+    constructor(str path) {
+        self->path = path;
+    }
+
+    public fn getPath() -> str {
+        return self->path;
+    }
+
+    public fn getAbsolutePath() -> str {
+        return Files.absolutePath(self->path);
+    }
+
+    public fn getName() -> str {
+        str clean = stripTrailingSep(self->path);
+        int i = lastSep(clean);
+        if (i < 0) { return clean; }
+        return clean.substring(i + 1);
+    }
+
+    public fn getParent() -> str? {
+        str clean = stripTrailingSep(self->path);
+        int i = lastSep(clean);
+        if (i < 0) { return null; }
+        if (i == 0) { return clean.substring(0, 1); }
+        return clean.substring(0, i);
+    }
+
+    public fn exists() -> bool {
+        return Files.exists(self->path);
+    }
+
+    public fn isFile() -> bool {
+        return Files.isFile(self->path);
+    }
+
+    public fn isDirectory() -> bool {
+        return Files.isDirectory(self->path);
+    }
+
+    public fn length() -> int {
+        return Files.length(self->path);
+    }
+
+    public fn list() -> list<str> {
+        if (not Files.isDirectory(self->path)) { return []; }
+        return Files.list(self->path);
+    }
+
+    public fn mkdir() -> bool {
+        return Files.mkdir(self->path);
+    }
+
+    public fn mkdirs() -> bool {
+        return Files.mkdirs(self->path);
+    }
+
+    public fn delete() -> bool {
+        return Files.remove(self->path);
+    }
+
+    public fn renameTo(File dest) -> bool {
+        return Files.rename(self->path, dest.getPath());
+    }
+
+    public static fn separator() -> str {
+        return Files.separator();
+    }
+
+    public fn __str__() -> str {
+        return self->path;
+    }
+}

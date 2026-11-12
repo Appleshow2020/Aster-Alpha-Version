@@ -1,0 +1,5 @@
+missing ), unterminated subpattern at position 0
+min repeat greater than max repeat at position 2
+bad escape \q at position 0
+redefinition of group name 'x' as group 2; was group 1 at position 12
+look-behind requires fixed-width pattern

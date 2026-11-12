@@ -1,0 +1,6 @@
+/* aster.util.function.LongSupplier: Java LongSupplier shape.
+   Aster `int` is 64-bit, so it stands in for `long`. */
+
+export interface LongSupplier {
+    fn getAsLong() -> int;
+}

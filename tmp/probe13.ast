@@ -1,0 +1,6 @@
+import System.stdout.*;
+import aster.math.BigInteger;
+BigInteger n = new BigInteger("1000");
+list<BigInteger> qr = n.divideAndRemainder(new BigInteger("4"));
+println(qr[0].toString(), qr[1].toString(), qr[1].signum());
+println(n.remainder(new BigInteger("4")).signum());

@@ -1,0 +1,36 @@
+(?P<year>\d{4})-(?P<mon>\d{2})
+32
+{'year': 1, 'mon': 2}
+['<a>', '<b>']
+['aaa']
+[]
+['10', '2']
+['a', '1', 'b', '22', 'c']
+['a', 'b', 'c3d']
+world hello
+a\.b\*c
+3..10
+2024-05
+05
+8
+2
+mon
+0-5 hello
+6-11 world
+12-14 42
+1
+a\.b\*c
+true
+false
+true
+world hello
+yx
+['', ' b c']
+34
+true
+1
+true
+2
+['café', '٣', 'Ⅷ', 'あ']
+['٣', '１２3']
+true

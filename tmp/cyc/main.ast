@@ -1,0 +1,3 @@
+import System.stdout.*;
+import A;
+println(A.make().f());

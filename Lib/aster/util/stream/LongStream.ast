@@ -1,0 +1,113 @@
+/* aster.util.stream.LongStream: 64비트 정수 전용 스트림.
+   Aster의 int가 64비트이므로 IntStream과 같은 값을 다루되 API 이름만 long이다. */
+
+import aster.util.stream.Stream;
+
+export class LongStream {
+    private list<int> items;
+
+    constructor(list<int> xs) {
+        self->items = xs.copy();
+    }
+
+    public static fn of(list<int> xs) -> LongStream {
+        return new LongStream(xs);
+    }
+
+    public static fn range(int start, int end) -> LongStream {
+        list<int> out = [];
+        int i = start;
+        while (i < end) {
+            out.append(i);
+            i = i + 1;
+        }
+        return new LongStream(out);
+    }
+
+    public static fn rangeClosed(int start, int end) -> LongStream {
+        list<int> out = [];
+        int i = start;
+        while (i <= end) {
+            out.append(i);
+            i = i + 1;
+        }
+        return new LongStream(out);
+    }
+
+    public fn filter(fn(int) -> bool predicate) -> LongStream {
+        list<int> out = [];
+        for (int x in self->items) {
+            if (predicate(x)) {
+                out.append(x);
+            }
+        }
+        return new LongStream(out);
+    }
+
+    public fn map(fn(int) -> int mapper) -> LongStream {
+        list<int> out = [];
+        for (int x in self->items) {
+            out.append(mapper(x));
+        }
+        return new LongStream(out);
+    }
+
+    public fn sum() -> int {
+        int total = 0;
+        for (int x in self->items) {
+            total = total + x;
+        }
+        return total;
+    }
+
+    public fn average() -> float {
+        if (len(self->items) == 0) {
+            return 0.0;
+        }
+        return (float)self->sum() / (float)len(self->items);
+    }
+
+    public fn min() -> int? {
+        if (len(self->items) == 0) {
+            return null;
+        }
+        int best = self->items[0];
+        for (int x in self->items) {
+            if (x < best) {
+                best = x;
+            }
+        }
+        return best;
+    }
+
+    public fn max() -> int? {
+        if (len(self->items) == 0) {
+            return null;
+        }
+        int best = self->items[0];
+        for (int x in self->items) {
+            if (x > best) {
+                best = x;
+            }
+        }
+        return best;
+    }
+
+    public fn count() -> int {
+        return len(self->items);
+    }
+
+    public fn boxed() -> Stream<int> {
+        return new Stream<int>(self->items);
+    }
+
+    public fn toList() -> list<int> {
+        return self->items.copy();
+    }
+
+    public fn forEach(fn(int) -> void action) -> void {
+        for (int x in self->items) {
+            action(x);
+        }
+    }
+}

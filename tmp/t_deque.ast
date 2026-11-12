@@ -1,0 +1,17 @@
+import System.stdout.*;
+import aster.util.Deque;
+
+Deque<int>* d = new Deque<int>();
+d.addLast(2);
+d.addLast(3);
+d.addFirst(1);
+d.addFirst(0);
+println(d.size());
+println(d);
+println(d.removeFirst());
+println(d.removeLast());
+println(d.peekFirst());
+println(d.peekLast());
+d.addLast(4);
+println(d.toList());
+println(d.get(1));

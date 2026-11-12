@@ -1,0 +1,48 @@
+/* aster.io.Reader: Java Reader의 문자 스트림 기반 클래스.
+   Aster에는 char 타입이 없으므로 문자는 코드포인트 int로 다룬다. */
+
+import aster.io.Readable;
+import aster.io.Closeable;
+
+export class Reader implements Readable, Closeable {
+    protected str data;
+    protected int pos;
+
+    constructor(str text) {
+        self->data = text;
+        self->pos = 0;
+    }
+
+    /* 다음 코드포인트를 돌려준다. 끝이면 -1. */
+    public fn read() -> int {
+        if (self->pos >= self->data.length()) {
+            return -1;
+        }
+        str ch = self->data.charAt(self->pos);
+        self->pos = self->pos + 1;
+        return ord(ch);
+    }
+
+    /* 최대 n개의 코드포인트를 리스트로 돌려준다. */
+    public fn read(int n) -> list<int> {
+        list<int> out = [];
+        int i = 0;
+        while (i < n) {
+            int c = self->read();
+            if (c < 0) {
+                break;
+            }
+            out.append(c);
+            i = i + 1;
+        }
+        return out;
+    }
+
+    /* 남은 문자가 있는지. */
+    public fn ready() -> bool {
+        return self->pos < self->data.length();
+    }
+
+    public fn close() -> void {
+    }
+}

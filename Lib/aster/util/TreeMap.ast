@@ -1,0 +1,178 @@
+/* aster.util.TreeMap: 정렬된 키를 가진 사전.
+
+   내부 dict<K,V> + 키를 정렬한 뷰. firstKey/lastKey/headMap/tailMap/subMap은
+   정렬 순서를 기준으로 동작하고, keySet()은 TreeSet을 돌려준다.
+   정렬과 비교는 Objects.compare(자연 순서)를 쓴다. */
+
+import aster.util.Map;
+import aster.util.MapEntry;
+import aster.util.Set;
+import aster.util.TreeSet;
+import aster.util.Collection;
+import aster.util.CollectionList;
+import aster.util.Objects;
+
+export class TreeMap<K, V> implements Map {
+    private dict<K, V> map;
+
+    constructor() {
+        self->map = {};
+    }
+
+    public fn put(K key, V value) -> V? {
+        V? old = null;
+        if (key in self->map) {
+            old = self->map[key];
+        }
+        self->map[key] = value;
+        return old;
+    }
+
+    public fn get(K key) -> V? {
+        if (not (key in self->map)) {
+            return null;
+        }
+        return self->map[key];
+    }
+
+    public fn remove(K key) -> V? {
+        if (not (key in self->map)) {
+            return null;
+        }
+        return self->map.pop(key);
+    }
+
+    public fn containsKey(K key) -> bool {
+        return key in self->map;
+    }
+
+    public fn containsValue(V value) -> bool {
+        for (V item in self->map.values()) {
+            if (item == value) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private fn sortedKeys() -> list<K> {
+        list<K> keys = self->map.keys();
+        keys.sort();
+        return keys;
+    }
+
+    public fn keySet() -> Set<K> {
+        Set<K> keys = new TreeSet<K>();
+        for (K key in self->sortedKeys()) {
+            keys.add(key);
+        }
+        return keys;
+    }
+
+    public fn values() -> Collection {
+        Collection vals = new CollectionList<V>(self->map.values());
+        return vals;
+    }
+
+    public fn entrySet() -> list<MapEntry<K, V>> {
+        list<MapEntry<K, V>> entries = [];
+        for (K key in self->sortedKeys()) {
+            entries.append(new MapEntry<K, V>(key, self->map[key]));
+        }
+        return entries;
+    }
+
+    public fn size() -> int {
+        return len(self->map);
+    }
+
+    public fn isEmpty() -> bool {
+        return len(self->map) == 0;
+    }
+
+    public fn clear() -> void {
+        self->map.clear();
+    }
+
+    public fn firstKey() -> K {
+        list<K> keys = self->sortedKeys();
+        if (len(keys) == 0) {
+            throw "map is empty" as NoSuchElementError;
+        }
+        return keys[0];
+    }
+
+    public fn lastKey() -> K {
+        list<K> keys = self->sortedKeys();
+        if (len(keys) == 0) {
+            throw "map is empty" as NoSuchElementError;
+        }
+        return keys[len(keys) - 1];
+    }
+
+    public fn headMap(K toKey) -> TreeMap<K, V> {
+        TreeMap<K, V> part = new TreeMap<K, V>();
+        for (K key in self->sortedKeys()) {
+            if (Objects.compare(key, toKey) < 0) {
+                part.put(key, self->map[key]);
+            }
+        }
+        return part;
+    }
+
+    public fn tailMap(K fromKey) -> TreeMap<K, V> {
+        TreeMap<K, V> part = new TreeMap<K, V>();
+        for (K key in self->sortedKeys()) {
+            if (Objects.compare(key, fromKey) >= 0) {
+                part.put(key, self->map[key]);
+            }
+        }
+        return part;
+    }
+
+    public fn subMap(K fromKey, K toKey) -> TreeMap<K, V> {
+        TreeMap<K, V> part = new TreeMap<K, V>();
+        for (K key in self->sortedKeys()) {
+            if (Objects.compare(key, fromKey) >= 0 and
+                Objects.compare(key, toKey) < 0) {
+                part.put(key, self->map[key]);
+            }
+        }
+        return part;
+    }
+
+    public fn getOrDefault(K key, V fallback) -> V {
+        if (key in self->map) {
+            if (self->map[key] is not null) {
+                return self->map[key];
+            }
+        }
+        return fallback;
+    }
+
+    public fn putIfAbsent(K key, V value) -> V? {
+        if (key in self->map) {
+            if (self->map[key] is not null) {
+                return self->map[key];
+            }
+        }
+        self->map[key] = value;
+        return null;
+    }
+
+    public fn keys() -> list<K> {
+        return self->sortedKeys();
+    }
+
+    public fn __len__() -> int {
+        return len(self->map);
+    }
+
+    public fn __str__() -> str {
+        return str(self->map);
+    }
+
+    public fn toString() -> str {
+        return str(self->map);
+    }
+}

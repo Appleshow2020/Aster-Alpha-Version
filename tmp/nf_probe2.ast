@@ -1,0 +1,8 @@
+import System.stdout.*;
+import aster.text.NumberFormat;
+NumberFormat nc = NumberFormat.getCurrencyInstance();
+println(nc.format(1234.5));
+println(nc.parse("$1,234.50"));
+NumberFormat np = NumberFormat.getPercentInstance();
+println(np.format(0.125));
+println(np.parse("12.5%"));

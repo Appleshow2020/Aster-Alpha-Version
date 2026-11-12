@@ -1,0 +1,274 @@
+/* aster.util.Formatter: printf 스타일 포매터 (Java Formatter 스타일).
+
+   지원 변환: %s %d %f %e %x %X %o %b %c %n %%. 폭(width), 정밀도(.N),
+   왼쪽 정렬(-), 0 채움(0), 부호(+, 공백), 위치 지정(%1$s)을 지원한다.
+
+   사용 예:
+       println(Formatter.format("%s=%d", ["n", 3]));       # n=3
+       println(Formatter.format("%1$s-%1$s", ["ab"]));     # ab-ab
+       Formatter f = new Formatter("[%5.2f]");
+       println(f.format([3.14159])->toString());           # [ 3.14] */
+
+fn isDigitChar(str ch) -> bool {
+    if (ch.length() != 1) {
+        return false;
+    }
+    return "0123456789".find(ch) >= 0;
+}
+
+fn digitValue(str ch) -> int {
+    return "0123456789".find(ch);
+}
+
+fn padText(str text, int width, bool leftAlign, str fill) -> str {
+    if (text.length() >= width) {
+        return text;
+    }
+    str padding = "";
+    int need = width - text.length();
+    while (need > 0) {
+        padding = padding + fill;
+        need = need - 1;
+    }
+    if (leftAlign) {
+        return text + padding;
+    }
+    return padding + text;
+}
+
+/* 부호와 0 채움을 처리해 숫자 문자열을 만든다. */
+fn padNumber(str digits, str sign, int width, bool leftAlign, bool zeroPad) -> str {
+    if (zeroPad and not leftAlign) {
+        str zeros = "";
+        int need = width - sign.length() - digits.length();
+        while (need > 0) {
+            zeros = zeros + "0";
+            need = need - 1;
+        }
+        return sign + zeros + digits;
+    }
+    return padText(sign + digits, width, leftAlign, " ");
+}
+
+fn octOf(int value) -> str {
+    if (value == 0) {
+        return "0";
+    }
+    list<str> digits = [];
+    int n = value;
+    while (n > 0) {
+        digits.append(str(n % 8));
+        n = n // 8;
+    }
+    digits.reverse();
+    return "".join(digits);
+}
+
+export class Formatter {
+    private str template;
+    private list<str> chunks;
+
+    constructor(str pattern) {
+        self->template = pattern;
+        self->chunks = [];
+    }
+
+    public fn pattern() -> str {
+        return self->template;
+    }
+
+    public static fn format(str fmt, list<var> args) -> str {
+        list<str> out = [];
+        int i = 0;
+        int nextArg = 0;
+        while (i < fmt.length()) {
+            str ch = fmt.charAt(i);
+            if (ch != "%") {
+                out.append(ch);
+                i = i + 1;
+                continue;
+            }
+            i = i + 1;
+            if (i >= fmt.length()) {
+                out.append("%");
+                break;
+            }
+            str c = fmt.charAt(i);
+            if (c == "%") {
+                out.append("%");
+                i = i + 1;
+                continue;
+            }
+            if (c == "n") {
+                out.append("\n");
+                i = i + 1;
+                continue;
+            }
+            int explicitIndex = -1;
+            int save = i;
+            int num = 0;
+            bool sawDigits = false;
+            while (i < fmt.length() and isDigitChar(fmt.charAt(i))) {
+                num = num * 10 + digitValue(fmt.charAt(i));
+                sawDigits = true;
+                i = i + 1;
+            }
+            if (sawDigits and i < fmt.length() and fmt.charAt(i) == "$") {
+                explicitIndex = num - 1;
+                i = i + 1;
+            }
+            else {
+                i = save;
+            }
+            bool leftAlign = false;
+            bool zeroPad = false;
+            bool plusSign = false;
+            bool spaceSign = false;
+            while (i < fmt.length()) {
+                str flag = fmt.charAt(i);
+                if (flag == "-") {
+                    leftAlign = true;
+                    i = i + 1;
+                }
+                else if (flag == "0") {
+                    zeroPad = true;
+                    i = i + 1;
+                }
+                else if (flag == "+") {
+                    plusSign = true;
+                    i = i + 1;
+                }
+                else if (flag == " ") {
+                    spaceSign = true;
+                    i = i + 1;
+                }
+                else {
+                    break;
+                }
+            }
+            int width = 0;
+            while (i < fmt.length() and isDigitChar(fmt.charAt(i))) {
+                width = width * 10 + digitValue(fmt.charAt(i));
+                i = i + 1;
+            }
+            int precision = -1;
+            if (i < fmt.length() and fmt.charAt(i) == ".") {
+                i = i + 1;
+                precision = 0;
+                while (i < fmt.length() and isDigitChar(fmt.charAt(i))) {
+                    precision = precision * 10 + digitValue(fmt.charAt(i));
+                    i = i + 1;
+                }
+            }
+            if (i >= fmt.length()) {
+                out.append("%");
+                break;
+            }
+            str conv = fmt.charAt(i);
+            i = i + 1;
+            int index = explicitIndex;
+            if (index < 0) {
+                index = nextArg;
+                nextArg = nextArg + 1;
+            }
+            if (index < 0 or index >= len(args)) {
+                throw "missing format argument " + str(index) as IndexError;
+            }
+            out.append(Formatter.formatOne(conv, args[index], width, precision,
+                                           leftAlign, zeroPad, plusSign, spaceSign));
+        }
+        return "".join(out);
+    }
+
+    private static fn formatOne(str conv, any value, int width, int precision,
+                                bool leftAlign, bool zeroPad, bool plusSign,
+                                bool spaceSign) -> str {
+        if (conv == "s") {
+            str text = "null";
+            if (value is not null) {
+                text = str(value);
+            }
+            if (precision >= 0 and text.length() > precision) {
+                text = text.substring(0, precision);
+            }
+            return padText(text, width, leftAlign, " ");
+        }
+        if (conv == "d") {
+            int n = int(value);
+            str sign = "";
+            if (n < 0) {
+                sign = "-";
+                n = -n;
+            }
+            else if (plusSign) {
+                sign = "+";
+            }
+            else if (spaceSign) {
+                sign = " ";
+            }
+            return padNumber(str(n), sign, width, leftAlign, zeroPad);
+        }
+        if (conv == "x" or conv == "X" or conv == "o") {
+            int n = int(value);
+            str sign = "";
+            if (n < 0) {
+                sign = "-";
+                n = -n;
+            }
+            str digits = "{:x}".format(n);
+            if (conv == "X") {
+                digits = digits.upper();
+            }
+            else if (conv == "o") {
+                digits = octOf(n);
+            }
+            return padNumber(digits, sign, width, leftAlign, zeroPad);
+        }
+        if (conv == "f" or conv == "e" or conv == "E") {
+            int places = 6;
+            if (precision >= 0) {
+                places = precision;
+            }
+            str text = "";
+            if (conv == "f") {
+                text = ("{:." + str(places) + "f}").format(float(value));
+            }
+            else if (conv == "e") {
+                text = ("{:." + str(places) + "e}").format(float(value));
+            }
+            else {
+                text = ("{:." + str(places) + "E}").format(float(value));
+            }
+            return padText(text, width, leftAlign, " ");
+        }
+        if (conv == "b") {
+            return padText(str(bool(value)), width, leftAlign, " ");
+        }
+        if (conv == "c") {
+            if (typeName(value) == "int") {
+                return padText(chr(int(value)), width, leftAlign, " ");
+            }
+            return padText(str(value), width, leftAlign, " ");
+        }
+        throw "unknown format conversion '" + conv + "'" as ValueError;
+    }
+
+    public fn format(list<var> args) -> Formatter {
+        self->chunks.append(Formatter.format(self->template, args));
+        return self;
+    }
+
+    public fn toString() -> str {
+        return "".join(self->chunks);
+    }
+
+    public fn flush() -> void {
+    }
+
+    public fn close() -> void {
+    }
+
+    public fn __str__() -> str {
+        return self->toString();
+    }
+}

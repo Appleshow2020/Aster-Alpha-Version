@@ -1,0 +1,71 @@
+/* aster.util.Date: 에포크 밀리초를 감싼 시각 값.
+
+   `new Date()`는 현재 시각, 특정 시각은 `Date.fromMillis(ms)`로 만든다
+   (Aster는 생성자 오버로드를 지원하지 않는다).
+   toString은 로컬 시각의 "YYYY-MM-DD HH:MM:SS" 문자열이다. */
+
+extern fn _aster_now_ms() -> int;
+extern fn _aster_format_time(int epochSeconds, str pattern) -> str;
+
+export class Date {
+    private int when;
+
+    constructor() {
+        self->when = _aster_now_ms();
+    }
+
+    public static fn fromMillis(int milliseconds) -> Date {
+        Date d = new Date();
+        d.when = milliseconds;
+        return d;
+    }
+
+    public fn getTime() -> int {
+        return self->when;
+    }
+
+    public fn setTime(int milliseconds) -> void {
+        self->when = milliseconds;
+    }
+
+    public fn before(Date* other) -> bool {
+        return self->when < other->when;
+    }
+
+    public fn after(Date* other) -> bool {
+        return self->when > other->when;
+    }
+
+    public fn compareTo(Date* other) -> int {
+        if (self->when == other->when) {
+            return 0;
+        }
+        if (self->when < other->when) {
+            return -1;
+        }
+        return 1;
+    }
+
+    public fn equals(Date* other) -> bool {
+        if (other is null) {
+            return false;
+        }
+        return self->when == other->when;
+    }
+
+    public fn hashCode() -> int {
+        int n = self->when % 2147483647;
+        if (n < 0) {
+            n = -n;
+        }
+        return n;
+    }
+
+    public fn toString() -> str {
+        return _aster_format_time(self->when // 1000, "%Y-%m-%d %H:%M:%S");
+    }
+
+    public fn __str__() -> str {
+        return self->toString();
+    }
+}

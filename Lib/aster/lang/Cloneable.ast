@@ -1,0 +1,4 @@
+/* aster.lang.Cloneable: marker interface; no members. */
+
+export interface Cloneable {
+}

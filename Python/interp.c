@@ -22,8 +22,7 @@ __declspec(dllimport) void *__stdcall LoadLibraryA(const char *name);
 #include <dlfcn.h>
 #endif
 
-static void *xmalloc_fallback(size_t n)
-{
+static void *xmalloc_fallback(size_t n) {
     void *p = malloc(n ? n : 1);
     if (!p) {
         fputs("out of memory\n", stderr);
@@ -49,13 +48,11 @@ static AstFn *find_ctor(AstClass *cls);
 
 /* ---- 공통 ---- */
 
-static RValue *null_value(Interp *in)
-{
+static RValue *null_value(Interp *in) {
     return RValue_Null(in);
 }
 
-static const char *typeref_name(typeref_ty ty)
-{
+static const char *typeref_name(typeref_ty ty) {
     if (!ty)
         return "Exception";
     switch (ty->kind) {
@@ -77,6 +74,8 @@ static const char *typeref_name(typeref_ty ty)
             return "null";
         }
         return "int";
+    case UnionTy_kind:
+        return "union";
     default:
         return "Exception";
     }
@@ -85,8 +84,7 @@ static const char *typeref_name(typeref_ty ty)
 /* 본문에 yield가 있는지 훑는다. 중첩 함수/클래스의 yield는 세지 않는다. */
 static int body_has_yield(asdl_seq *body);
 
-static int stmt_has_yield(stmt_ty s)
-{
+static int stmt_has_yield(stmt_ty s) {
     size_t i;
     if (!s)
         return 0;
@@ -104,6 +102,14 @@ static int stmt_has_yield(stmt_ty s)
         return body_has_yield(s->v.ForRange.body);
     case ForIn_kind:
         return body_has_yield(s->v.ForIn.body);
+    case Switch_kind: {
+        for (i = 0; i < asdl_seq_LEN(s->v.Switch.cases); i++) {
+            match_case_ty mc = asdl_seq_GET(s->v.Switch.cases, i);
+            if (body_has_yield(mc->body))
+                return 1;
+        }
+        return 0;
+    }
     case Try_kind:
         if (body_has_yield(s->v.Try.body) || body_has_yield(s->v.Try.finalbody))
             return 1;
@@ -118,8 +124,7 @@ static int stmt_has_yield(stmt_ty s)
     }
 }
 
-static int body_has_yield(asdl_seq *body)
-{
+static int body_has_yield(asdl_seq *body) {
     size_t i;
     for (i = 0; i < asdl_seq_LEN(body); i++) {
         if (stmt_has_yield(asdl_seq_GET(body, i)))
@@ -128,9 +133,242 @@ static int body_has_yield(asdl_seq *body)
     return 0;
 }
 
+/*
+ * 호출 환경이 함수 밖으로 새는지 훑는다. 새지 않으면 호출이 끝날 때 환경을
+ * 풀에 되돌려 다음 호출이 재사용한다. 클로저(람다/중첩 정의), 제너레이터,
+ * 지역 변수 주소(&x)는 환경을 붙잡으므로 재사용하면 안 된다.
+ */
+static int expr_escapes_env(expr_ty e);
+static int stmt_escapes_env(stmt_ty s);
+
+static int exprs_escape_env(asdl_seq *seq) {
+    size_t i;
+    for (i = 0; i < asdl_seq_LEN(seq); i++) {
+        if (expr_escapes_env((expr_ty)asdl_seq_GET(seq, i)))
+            return 1;
+    }
+    return 0;
+}
+
+static int initializer_escapes_env(initializer_ty init) {
+    size_t i;
+    if (!init)
+        return 0;
+    switch (init->kind) {
+    case NoInit_kind:
+        return 0;
+    case ExprInit_kind:
+        return expr_escapes_env(init->v.ExprInit.value);
+    case PositionalInit_kind:
+        return exprs_escape_env(init->v.PositionalInit.values);
+    case DesignatedInit_kind:
+        for (i = 0; i < asdl_seq_LEN(init->v.DesignatedInit.items); i++) {
+            designation_ty d = asdl_seq_GET(init->v.DesignatedInit.items, i);
+            if (expr_escapes_env(d->value))
+                return 1;
+        }
+        return 0;
+    }
+    return 1;
+}
+
+static int pattern_escapes_env(match_pattern_ty p) {
+    if (!p)
+        return 0;
+    switch (p->kind) {
+    case PLiteral_kind:
+        return expr_escapes_env(p->v.PLiteral.value);
+    case PVariant_kind:
+        return expr_escapes_env(p->v.PVariant.path) ||
+               exprs_escape_env(p->v.PVariant.items);
+    case PBind_kind:
+        return 0;
+    }
+    return 1;
+}
+
+static int body_escapes_env(asdl_seq *body);
+
+static int expr_escapes_env(expr_ty e) {
+    size_t i;
+    if (!e)
+        return 0;
+    switch (e->kind) {
+    case Lambda_kind:
+    case AddressOf_kind:
+        return 1;
+    case Pipe_kind:
+        return expr_escapes_env(e->v.Pipe.value) || expr_escapes_env(e->v.Pipe.func);
+    case Coalesce_kind:
+        return expr_escapes_env(e->v.Coalesce.left) ||
+               expr_escapes_env(e->v.Coalesce.right);
+    case BoolOp_kind:
+        return expr_escapes_env(e->v.BoolOp.left) || expr_escapes_env(e->v.BoolOp.right);
+    case UnaryOp_kind:
+        return expr_escapes_env(e->v.UnaryOp.operand);
+    case BinOp_kind:
+        return expr_escapes_env(e->v.BinOp.left) || expr_escapes_env(e->v.BinOp.right);
+    case Compare_kind:
+        return expr_escapes_env(e->v.Compare.left) ||
+               expr_escapes_env(e->v.Compare.right);
+    case Is_kind:
+        return expr_escapes_env(e->v.Is.value);
+    case In_kind:
+        return expr_escapes_env(e->v.In.item) || expr_escapes_env(e->v.In.container);
+    case Cast_kind:
+        return expr_escapes_env(e->v.Cast.value);
+    case Deref_kind:
+        return expr_escapes_env(e->v.Deref.value);
+    case SizeOf_kind:
+        return 0;
+    case Call_kind:
+        return expr_escapes_env(e->v.Call.func) || exprs_escape_env(e->v.Call.args);
+    case New_kind:
+        return exprs_escape_env(e->v.New.args);
+    case Attribute_kind:
+        return expr_escapes_env(e->v.Attribute.value);
+    case PtrAttribute_kind:
+        return expr_escapes_env(e->v.PtrAttribute.value);
+    case OptionalAttribute_kind:
+        return expr_escapes_env(e->v.OptionalAttribute.value);
+    case Name_kind:
+    case Self_kind:
+    case Constant_kind:
+        return 0;
+    case Array_kind:
+        return exprs_escape_env(e->v.Array.elements);
+    case Range_kind:
+        return expr_escapes_env(e->v.Range.start) || expr_escapes_env(e->v.Range.stop) ||
+               expr_escapes_env(e->v.Range.step);
+    case Subscript_kind:
+        return expr_escapes_env(e->v.Subscript.value) ||
+               expr_escapes_env(e->v.Subscript.index);
+    case Slice_kind:
+        return expr_escapes_env(e->v.Slice.lower) ||
+               expr_escapes_env(e->v.Slice.upper) ||
+               expr_escapes_env(e->v.Slice.step);
+    case FString_kind:
+        return exprs_escape_env(e->v.FString.values);
+    case FormattedValue_kind:
+        return expr_escapes_env(e->v.FormattedValue.value) ||
+               expr_escapes_env(e->v.FormattedValue.format_spec);
+    case List_kind:
+        return exprs_escape_env(e->v.List.elements);
+    case Tuple_kind:
+        return exprs_escape_env(e->v.Tuple.elements);
+    case Dict_kind:
+        if (exprs_escape_env(e->v.Dict.keys))
+            return 1;
+        for (i = 0; i < asdl_seq_LEN(e->v.Dict.values); i++) {
+            if (expr_escapes_env((expr_ty)asdl_seq_GET(e->v.Dict.values, i)))
+                return 1;
+        }
+        return 0;
+    case Set_kind:
+        return exprs_escape_env(e->v.Set.elements);
+    case Spread_kind:
+        return expr_escapes_env(e->v.Spread.value);
+    case ListComp_kind:
+        return expr_escapes_env(e->v.ListComp.elt) || expr_escapes_env(e->v.ListComp.iter) ||
+               expr_escapes_env(e->v.ListComp.cond);
+    case SetComp_kind:
+        return expr_escapes_env(e->v.SetComp.elt) || expr_escapes_env(e->v.SetComp.iter) ||
+               expr_escapes_env(e->v.SetComp.cond);
+    case DictComp_kind:
+        return expr_escapes_env(e->v.DictComp.key) ||
+               expr_escapes_env(e->v.DictComp.value) ||
+               expr_escapes_env(e->v.DictComp.iter) ||
+               expr_escapes_env(e->v.DictComp.cond);
+    case Incr_kind:
+        return expr_escapes_env(e->v.Incr.target);
+    }
+    return 1;   /* 모르는 종류는 보수적으로 재사용하지 않는다 */
+}
+
+static int stmt_escapes_env(stmt_ty s) {
+    size_t i;
+    if (!s)
+        return 0;
+    switch (s->kind) {
+    case FunctionDef_kind:
+    case ClassDef_kind:
+    case InterfaceDef_kind:
+    case StructDef_kind:
+    case EnumDef_kind:
+    case ExceptionDef_kind:
+    case Yield_kind:
+        return 1;
+    case VarDecl_kind:
+        return initializer_escapes_env(s->v.VarDecl.init);
+    case Destructure_kind:
+        return expr_escapes_env(s->v.Destructure.value);
+    case Assert_kind:
+        return expr_escapes_env(s->v.Assert.test) ||
+               expr_escapes_env(s->v.Assert.message);
+    case Assign_kind:
+        return expr_escapes_env(s->v.Assign.target) ||
+               expr_escapes_env(s->v.Assign.value);
+    case If_kind:
+        return expr_escapes_env(s->v.If.test) ||
+               body_escapes_env(s->v.If.body) || body_escapes_env(s->v.If.orelse);
+    case While_kind:
+        return expr_escapes_env(s->v.While.test) || body_escapes_env(s->v.While.body);
+    case For_kind:
+        return stmt_escapes_env(s->v.For.init) || expr_escapes_env(s->v.For.test) ||
+               stmt_escapes_env(s->v.For.step) || body_escapes_env(s->v.For.body);
+    case ForRange_kind:
+        return expr_escapes_env(s->v.ForRange.iter->start) ||
+               expr_escapes_env(s->v.ForRange.iter->stop) ||
+               expr_escapes_env(s->v.ForRange.iter->step) ||
+               body_escapes_env(s->v.ForRange.body);
+    case ForIn_kind:
+        return expr_escapes_env(s->v.ForIn.iter) || body_escapes_env(s->v.ForIn.body);
+    case Switch_kind:
+        if (expr_escapes_env(s->v.Switch.subject))
+            return 1;
+        for (i = 0; i < asdl_seq_LEN(s->v.Switch.cases); i++) {
+            match_case_ty mc = asdl_seq_GET(s->v.Switch.cases, i);
+            if (pattern_escapes_env(mc->pattern) || body_escapes_env(mc->body))
+                return 1;
+        }
+        return 0;
+    case Try_kind:
+        if (body_escapes_env(s->v.Try.body) || body_escapes_env(s->v.Try.finalbody))
+            return 1;
+        for (i = 0; i < asdl_seq_LEN(s->v.Try.handlers); i++) {
+            handler_ty h = asdl_seq_GET(s->v.Try.handlers, i);
+            if (body_escapes_env(h->body))
+                return 1;
+        }
+        return 0;
+    case Return_kind:
+        return expr_escapes_env(s->v.Return.value);
+    case Throw_kind:
+        return expr_escapes_env(s->v.Throw.value);
+    case Break_kind:
+    case Continue_kind:
+    case Import_kind:
+    case ImportFrom_kind:
+        return 0;
+    case Export_kind:
+        return stmt_escapes_env(s->v.Export.body);
+    case ExprStmt_kind:
+        return expr_escapes_env(s->v.ExprStmt.value);
+    }
+    return 1;
+}
+
+static int body_escapes_env(asdl_seq *body) {
+    size_t i;
+    for (i = 0; i < asdl_seq_LEN(body); i++) {
+        if (stmt_escapes_env((stmt_ty)asdl_seq_GET(body, i)))
+            return 1;
+    }
+    return 0;
+}
+
 static AstFn *make_fn(Interp *in, Env *env, const char *name, asdl_seq *params,
-                      int lambda_params, ret_ty ret, asdl_seq *body, expr_ty body_expr)
-{
+                      int lambda_params, ret_ty ret, asdl_seq *body, expr_ty body_expr) {
     AstFn *fn = Arena_Alloc(in->arena, sizeof(AstFn));
     fn->kind = lambda_params ? FN_LAMBDA : FN_USER;
     fn->name = name;
@@ -144,8 +382,7 @@ static AstFn *make_fn(Interp *in, Env *env, const char *name, asdl_seq *params,
     return fn;
 }
 
-static AstFn *bind_method(Interp *in, AstFn *fn, RValue *self)
-{
+static AstFn *bind_method(Interp *in, AstFn *fn, RValue *self) {
     AstFn *bound = Arena_Alloc(in->arena, sizeof(AstFn));
     *bound = *fn;
     bound->self = self;
@@ -154,8 +391,7 @@ static AstFn *bind_method(Interp *in, AstFn *fn, RValue *self)
 
 /* 오버로드 묶음의 각 함수를 self에 묶는다. self가 NULL이면 정적 호출이다. */
 static RValue *bind_overload(Interp *in, AstOverload *overload, RValue *self,
-                             AstClass *owner)
-{
+                             AstClass *owner) {
     AstOverload *bound = Arena_Alloc(in->arena, sizeof(AstOverload));
     size_t i;
     bound->count = bound->cap = overload->count;
@@ -169,8 +405,7 @@ static RValue *bind_overload(Interp *in, AstOverload *overload, RValue *self,
     return RValue_Overload(in, bound);
 }
 
-static void overload_append(Interp *in, AstOverload *overload, AstFn *fn)
-{
+static void overload_append(Interp *in, AstOverload *overload, AstFn *fn) {
     if (overload->count == overload->cap) {
         size_t cap = overload->cap ? overload->cap * 2 : 2;
         AstFn **grown = Arena_Alloc(in->arena, cap * sizeof(AstFn *));
@@ -184,8 +419,7 @@ static void overload_append(Interp *in, AstOverload *overload, AstFn *fn)
 
 /* ---- 함수 호출 ---- */
 
-static int bind_params(Interp *in, AstFn *fn, Env *env, RValue **args, size_t nargs)
-{
+static int bind_params(Interp *in, AstFn *fn, Env *env, RValue **args, size_t nargs) {
     size_t nparams = asdl_seq_LEN(fn->params);
     size_t i;
 
@@ -209,10 +443,54 @@ static int bind_params(Interp *in, AstFn *fn, Env *env, RValue **args, size_t na
     return 1;
 }
 
-static RValue *call_fn(Interp *in, AstFn *fn, RValue **args, size_t nargs)
-{
+/* 호출 환경이 새지 않으면 재사용해도 된다. 판정은 함수마다 한 번만 한다. */
+static int fn_can_reuse_env(AstFn *fn) {
+    if (fn->env_reuse == 0) {
+        int escapes = fn->kind == FN_LAMBDA ? expr_escapes_env(fn->body_expr)
+                                            : body_escapes_env(fn->body);
+        fn->env_reuse = escapes ? -1 : 1;
+    }
+    return fn->env_reuse > 0;
+}
+
+/*
+ * 함수 본문의 최상위 문장만 이 호출 환경에 바인딩을 만든다. 중첩 블록은
+ * 자체 Env를 쓰므로 여기서 세지 않는다. 재사용 시 이 수만큼 슬롯을 준비하면
+ * 호출마다 바인딩을 새로 할당하지 않는다.
+ */
+static int fn_env_bind_sites(AstFn *fn) {
+    size_t i;
+    int n = 0;
+    if (fn->env_bind_sites)
+        return fn->env_bind_sites - 1;
+    for (i = 0; i < asdl_seq_LEN(fn->body); i++) {
+        stmt_ty s = asdl_seq_GET(fn->body, i);
+        if (!s)
+            continue;
+        switch (s->kind) {
+        case VarDecl_kind:
+            n += 1;
+            break;
+        case Destructure_kind:
+            n += (int)asdl_seq_LEN(s->v.Destructure.names);
+            break;
+        case Import_kind:
+        case ImportFrom_kind:
+            n += 1;
+            break;
+        default:
+            break;
+        }
+    }
+    fn->env_bind_sites = n + 1;
+    return n;
+}
+
+static RValue *call_fn(Interp *in, AstFn *fn, RValue **args, size_t nargs) {
     Env *env;
     RValue *result;
+    size_t nspare;
+    int reuse = 0;
 
     if (fn->kind == FN_BUILTIN)
         return fn->builtin.fn(in, fn->self ? fn->self : fn->builtin.self, args, nargs);
@@ -226,7 +504,15 @@ static RValue *call_fn(Interp *in, AstFn *fn, RValue **args, size_t nargs)
     in->depth++;
     Interp_FramePush(in, fn->name ? fn->name : "lambda");
 
-    env = Env_New(in, fn->env);
+    nspare = asdl_seq_LEN(fn->params) + (fn->self ? 2 : 0);
+    reuse = !fn->is_generator && fn_can_reuse_env(fn);
+    if (reuse) {
+        /* 지역 변수 바인딩까지 미리 잡아 두어야 호출마다 할당이 늘지 않는다. */
+        nspare += (size_t)fn_env_bind_sites(fn) + 2;
+        env = Env_AcquireCall(in, fn->env, nspare);
+    }
+    else
+        env = Env_NewCall(in, fn->env, nspare);
     if (fn->self) {
         Env_Define(in, env, "self", fn->self);
         Env_Define(in, env, "super",
@@ -234,12 +520,16 @@ static RValue *call_fn(Interp *in, AstFn *fn, RValue **args, size_t nargs)
     }
     if (!bind_params(in, fn, env, args, nargs)) {
         in->depth--;
+        if (reuse)
+            Env_ReleaseCall(in, env);
         return NULL;
     }
 
     if (fn->kind == FN_LAMBDA) {
         result = eval(in, fn->body_expr, env);
         in->depth--;
+        if (reuse)
+            Env_ReleaseCall(in, env);
         if (in->sig != SIG_THROW)
             Interp_FramePop(in);
         return result;
@@ -258,12 +548,16 @@ static RValue *call_fn(Interp *in, AstFn *fn, RValue **args, size_t nargs)
         in->sig = SIG_OK;
         in->ret = NULL;
         in->depth--;
+        if (reuse)
+            Env_ReleaseCall(in, env);
         Interp_FramePop(in);
         return ret;
     }
     if (in->sig == SIG_BREAK || in->sig == SIG_CONTINUE) {
         in->sig = SIG_OK;
         in->depth--;
+        if (reuse)
+            Env_ReleaseCall(in, env);
         Interp_FramePop(in);
         RT_Throw(in, "RuntimeError", "'break' and 'continue' are only allowed inside loops");
         return NULL;
@@ -271,16 +565,19 @@ static RValue *call_fn(Interp *in, AstFn *fn, RValue **args, size_t nargs)
     if (in->sig == SIG_THROW) {
         /* 예외가 풀려 나가는 동안에는 프레임을 남겨 트레이스백에 쓴다. */
         in->depth--;
+        if (reuse)
+            Env_ReleaseCall(in, env);
         return NULL;
     }
     in->ret = NULL;
     in->depth--;
+    if (reuse)
+        Env_ReleaseCall(in, env);
     Interp_FramePop(in);
     return null_value(in);
 }
 
-static int fn_accepts(Interp *in, AstFn *fn, RValue **args, size_t nargs)
-{
+static int fn_accepts(Interp *in, AstFn *fn, RValue **args, size_t nargs) {
     size_t i, nparams = asdl_seq_LEN(fn->params);
     if (nparams != nargs)
         return 0;
@@ -301,8 +598,7 @@ static int fn_accepts(Interp *in, AstFn *fn, RValue **args, size_t nargs)
     return 1;
 }
 
-static RValue *call_value(Interp *in, RValue *callee, RValue **args, size_t nargs)
-{
+static RValue *call_value(Interp *in, RValue *callee, RValue **args, size_t nargs) {
     if (!callee) {
         return RT_ThrowValue(in, "TypeError", "value is not callable");
     }
@@ -346,19 +642,28 @@ static RValue *call_value(Interp *in, RValue *callee, RValue **args, size_t narg
             : RValue_Str(in, AsterString_FromCStr(""));
         return RValue_Exception(in, callee->u.exc_name, message);
     }
+    case RV_VARIANT_CTOR: {
+        AstEnumType *et = callee->u.vc.type;
+        size_t index = callee->u.vc.index;
+        AstEnumMember *m = &et->members[index];
+        if (nargs != m->nparams) {
+            return RT_ThrowValue(in, "TypeError",
+                                 "variant '%s.%s' takes %zu argument(s) but %zu were given",
+                                 et->name, m->name, m->nparams, nargs);
+        }
+        return RValue_EnumPayload(in, et, m->name, index, args, nargs);
+    }
     default:
         return RT_ThrowValue(in, "TypeError", "value is not callable");
     }
 }
 
-RValue *Interp_CallValue(Interp *in, RValue *callee, RValue **args, size_t nargs)
-{
+RValue *Interp_CallValue(Interp *in, RValue *callee, RValue **args, size_t nargs) {
     return call_value(in, callee, args, nargs);
 }
 
 RValue *Interp_CallMethod(Interp *in, RValue *self, const char *name,
-                          RValue **args, size_t nargs)
-{
+                          RValue **args, size_t nargs) {
     RValue *fn;
     if (!RValue_HasMethod(in, self, name))
         return RT_ThrowValue(in, "AttributeError", "'%s' object has no method '%s'",
@@ -369,8 +674,7 @@ RValue *Interp_CallMethod(Interp *in, RValue *self, const char *name,
     return call_value(in, fn, args, nargs);
 }
 
-int RValue_HasMethod(Interp *in, const RValue *v, const char *name)
-{
+int RValue_HasMethod(Interp *in, const RValue *v, const char *name) {
     (void)in;
     if (!v)
         return 0;
@@ -386,8 +690,7 @@ static AstGenerator *g_current_gen;   /* 지금 실행 중인 제너레이터 (�
 #if defined(_WIN32)
 static void *g_main_fiber;
 
-static void *gen_context_current(void)
-{
+static void *gen_context_current(void) {
     if (g_current_gen && g_current_gen->ctx)
         return g_current_gen->ctx;
     if (!g_main_fiber)
@@ -395,14 +698,12 @@ static void *gen_context_current(void)
     return g_main_fiber;
 }
 
-static void gen_context_switch(void *save, void *target)
-{
+static void gen_context_switch(void *save, void *target) {
     (void)save;
     SwitchToFiber(target);
 }
 
-static void gen_context_release(AstGenerator *gen)
-{
+static void gen_context_release(AstGenerator *gen) {
     if (gen->ctx)
         DeleteFiber(gen->ctx);
     gen->ctx = NULL;
@@ -411,20 +712,17 @@ static void gen_context_release(AstGenerator *gen)
 static AstGenerator *g_starting_gen;  /* 새 컨텍스트가 시작할 제너레이터 */
 static ucontext_t g_main_ctx;
 
-static void *gen_context_current(void)
-{
+static void *gen_context_current(void) {
     if (g_current_gen && g_current_gen->ctx)
         return g_current_gen->ctx;
     return &g_main_ctx;
 }
 
-static void gen_context_switch(void *save, void *target)
-{
+static void gen_context_switch(void *save, void *target) {
     swapcontext((ucontext_t *)save, (ucontext_t *)target);
 }
 
-static void gen_context_release(AstGenerator *gen)
-{
+static void gen_context_release(AstGenerator *gen) {
     if (gen->ctx)
         free(gen->ctx);
     if (gen->stack)
@@ -435,15 +733,13 @@ static void gen_context_release(AstGenerator *gen)
 #endif
 
 /* 제너레이터 본문을 끝까지 실행하고 호출자에게 영원히 제어를 넘긴다. */
-static void gen_finish(AstGenerator *gen)
-{
+static void gen_finish(AstGenerator *gen) {
     gen->done = 1;
     for (;;)
         gen_context_switch(gen->ctx, gen->caller_ctx);
 }
 
-static void gen_body_run(AstGenerator *gen)
-{
+static void gen_body_run(AstGenerator *gen) {
     Interp *gin = gen->interp;
     Signal sig;
 
@@ -469,19 +765,16 @@ static void gen_body_run(AstGenerator *gen)
 }
 
 #if defined(_WIN32)
-static void __stdcall gen_fiber_proc(void *param)
-{
+static void __stdcall gen_fiber_proc(void *param) {
     gen_body_run((AstGenerator *)param);
 }
 #else
-static void gen_ucontext_proc(void)
-{
+static void gen_ucontext_proc(void) {
     gen_body_run(g_starting_gen);
 }
 #endif
 
-RValue *Generator_Next(Interp *in, AstGenerator *gen, int *ended)
-{
+RValue *Generator_Next(Interp *in, AstGenerator *gen, int *ended) {
     *ended = 0;
     if (!gen || gen->done) {
         *ended = 1;
@@ -553,8 +846,7 @@ RValue *Generator_Next(Interp *in, AstGenerator *gen, int *ended)
 
 /* ---- 연산 ---- */
 
-static int to_int_pair(Interp *in, RValue *l, RValue *r, int64_t *a, int64_t *b)
-{
+static int to_int_pair(Interp *in, RValue *l, RValue *r, int64_t *a, int64_t *b) {
     int ok;
     *a = RValue_AsInt(in, l, &ok);
     if (!ok)
@@ -563,8 +855,7 @@ static int to_int_pair(Interp *in, RValue *l, RValue *r, int64_t *a, int64_t *b)
     return ok;
 }
 
-static int64_t ipow(Interp *in, int64_t base, int64_t exp, int *ok)
-{
+static int64_t ipow(Interp *in, int64_t base, int64_t exp, int *ok) {
     int64_t result = 1;
     *ok = 1;
     while (exp > 0) {
@@ -586,30 +877,26 @@ static int64_t ipow(Interp *in, int64_t base, int64_t exp, int *ok)
     return result;
 }
 
-static RValue *int_overflow(Interp *in)
-{
+static RValue *int_overflow(Interp *in) {
     RT_Throw(in, "OverflowError", "integer arithmetic overflowed int range");
     return NULL;
 }
 
-static RValue *int_add(Interp *in, int64_t a, int64_t b)
-{
+static RValue *int_add(Interp *in, int64_t a, int64_t b) {
     int64_t r;
     if (__builtin_add_overflow(a, b, &r))
         return int_overflow(in);
     return RValue_Int(in, r);
 }
 
-static RValue *int_sub(Interp *in, int64_t a, int64_t b)
-{
+static RValue *int_sub(Interp *in, int64_t a, int64_t b) {
     int64_t r;
     if (__builtin_sub_overflow(a, b, &r))
         return int_overflow(in);
     return RValue_Int(in, r);
 }
 
-static RValue *int_mul(Interp *in, int64_t a, int64_t b)
-{
+static RValue *int_mul(Interp *in, int64_t a, int64_t b) {
     int64_t r;
     if (__builtin_mul_overflow(a, b, &r))
         return int_overflow(in);
@@ -617,8 +904,7 @@ static RValue *int_mul(Interp *in, int64_t a, int64_t b)
 }
 
 
-static int repeat_count(Interp *in, RValue *v, int64_t *out)
-{
+static int repeat_count(Interp *in, RValue *v, int64_t *out) {
     if (v && v->kind == RV_INT) {
         *out = v->u.i;
         return 1;
@@ -631,8 +917,7 @@ static int repeat_count(Interp *in, RValue *v, int64_t *out)
     return 0;
 }
 
-static RValue *seq_repeat(Interp *in, RValue *seq, int64_t times)
-{
+static RValue *seq_repeat(Interp *in, RValue *seq, int64_t times) {
     size_t n, total, i, k;
     size_t unit;
     RValue **src;
@@ -667,8 +952,7 @@ static RValue *seq_repeat(Interp *in, RValue *seq, int64_t times)
     }
 }
 
-static const char *binop_hook_name(operator_ty op)
-{
+static const char *binop_hook_name(operator_ty op) {
     switch (op) {
     case Add: return "__add__";
     case Sub: return "__sub__";
@@ -681,8 +965,7 @@ static const char *binop_hook_name(operator_ty op)
     return NULL;
 }
 
-static const char *binop_reflected_name(operator_ty op)
-{
+static const char *binop_reflected_name(operator_ty op) {
     switch (op) {
     case Add: return "__radd__";
     case Sub: return "__rsub__";
@@ -697,8 +980,7 @@ static const char *binop_reflected_name(operator_ty op)
 
 /* 객체 피연산자의 연산자 훅. 처리했으면 결과를, 아니면 NULL(신호 없음)을 준다. */
 static int binop_hook(Interp *in, operator_ty op, RValue *left, RValue *right,
-                      RValue **out)
-{
+                      RValue **out) {
     const char *name = binop_hook_name(op);
     const char *reflected = binop_reflected_name(op);
 
@@ -721,8 +1003,7 @@ static int binop_hook(Interp *in, operator_ty op, RValue *left, RValue *right,
     return 0;
 }
 
-static RValue *apply_binop(Interp *in, operator_ty op, RValue *left, RValue *right)
-{
+static RValue *apply_binop(Interp *in, operator_ty op, RValue *left, RValue *right) {
     int use_float = 0;
     int ok;
     RValue *hooked;
@@ -880,8 +1161,7 @@ static RValue *apply_binop(Interp *in, operator_ty op, RValue *left, RValue *rig
     }
 }
 
-static operator_ty assign_op_to_operator(assign_op_ty op)
-{
+static operator_ty assign_op_to_operator(assign_op_ty op) {
     switch (op) {
     case AssignAdd:
         return Add;
@@ -904,8 +1184,7 @@ static operator_ty assign_op_to_operator(assign_op_ty op)
 
 /* ---- 어트리뷰트 ---- */
 
-static RValue *get_attr(Interp *in, RValue *base, const char *name)
-{
+static RValue *get_attr(Interp *in, RValue *base, const char *name) {
     if (!base || base->kind == RV_NULL)
         return RT_ThrowValue(in, "NullPointerError", "accessed '%s' on a null value", name);
 
@@ -1009,6 +1288,17 @@ static RValue *get_attr(Interp *in, RValue *base, const char *name)
             return RValue_Str(in, AsterString_FromCStr(base->u.en.name));
         if (!strcmp(name, "ordinal"))
             return RValue_Int(in, (int64_t)base->u.en.index);
+        if (!strcmp(name, "variant"))
+            return RValue_Str(in, AsterString_FromCStr(base->u.en.name));
+        if (!strcmp(name, "arity"))
+            return RValue_Int(in, (int64_t)base->u.en.npayload);
+        if (!strcmp(name, "payload")) {
+            AsterList *list = List_New(in);
+            size_t i;
+            for (i = 0; i < base->u.en.npayload; i++)
+                List_Append(in, list, RValue_Copy(in, base->u.en.payload[i]));
+            return RValue_List(in, list);
+        }
         if (!strcmp(name, "value")) {
             AstEnumMember *m = &base->u.en.type->members[base->u.en.index];
             return m->value ? m->value : RValue_Int(in, (int64_t)base->u.en.index);
@@ -1017,8 +1307,11 @@ static RValue *get_attr(Interp *in, RValue *base, const char *name)
     case RV_ENUMTYPE: {
         size_t i;
         for (i = 0; i < base->u.etype->nmembers; i++) {
-            if (!strcmp(base->u.etype->members[i].name, name))
-                return RValue_Enum(in, base->u.etype, name, i);
+            if (strcmp(base->u.etype->members[i].name, name))
+                continue;
+            if (base->u.etype->members[i].nparams > 0)
+                return RValue_EnumCtor(in, base->u.etype, i);
+            return RValue_Enum(in, base->u.etype, name, i);
         }
         return RT_ThrowValue(in, "AttributeError", "enum '%s' has no member '%s'",
                              base->u.etype->name, name);
@@ -1036,17 +1329,19 @@ static RValue *get_attr(Interp *in, RValue *base, const char *name)
 
 /* ---- 타입 검사/캐스트 ---- */
 
-static int class_name_matches(AstClass *cls, const char *name)
-{
+static int class_name_matches(AstClass *cls, const char *name) {
     for (; cls; cls = cls->base) {
+        size_t i;
         if (!strcmp(cls->name, name))
             return 1;
+        for (i = 0; i < cls->ninterfaces; i++)
+            if (!strcmp(cls->interfaces[i], name))
+                return 1;
     }
     return 0;
 }
 
-static int value_is_type(Interp *in, RValue *v, typeref_ty ty)
-{
+static int value_is_type(Interp *in, RValue *v, typeref_ty ty) {
     (void)in;
     if (!v || !ty)
         return 0;
@@ -1076,7 +1371,8 @@ static int value_is_type(Interp *in, RValue *v, typeref_ty ty)
         }
         return value_is_type(in, v, ty->v.Pointer.base);
     case FunctionTy_kind:
-        return v->kind == RV_FUNC || v->kind == RV_BUILTIN || v->kind == RV_OVERLOAD;
+        return v->kind == RV_FUNC || v->kind == RV_BUILTIN || v->kind == RV_OVERLOAD ||
+               v->kind == RV_VARIANT_CTOR;
     case StructRef_kind:
         if (v->kind == RV_STRUCT) {
             AstStructType *t = v->u.stv->type;
@@ -1102,12 +1398,18 @@ static int value_is_type(Interp *in, RValue *v, typeref_ty ty)
             return value_is_type(in, *v->u.ptr.slot, ty);
         return 0;
     }
+    case UnionTy_kind: {
+        size_t i;
+        for (i = 0; i < (size_t)asdl_seq_LEN(ty->v.UnionTy.members); i++)
+            if (value_is_type(in, v, asdl_seq_GET(ty->v.UnionTy.members, i)))
+                return 1;
+        return 0;
+    }
     }
     return 0;
 }
 
-static RValue *do_cast(Interp *in, typeref_ty ty, RValue *value)
-{
+static RValue *do_cast(Interp *in, typeref_ty ty, RValue *value) {
     int ok;
 
     if (!ty)
@@ -1136,6 +1438,7 @@ static RValue *do_cast(Interp *in, typeref_ty ty, RValue *value)
     case StructRef_kind:
     case Named_kind:
     case FunctionTy_kind:
+    case UnionTy_kind:
         return value;
     }
     return value;
@@ -1143,8 +1446,7 @@ static RValue *do_cast(Interp *in, typeref_ty ty, RValue *value)
 
 /* ---- 초기화 ---- */
 
-static RValue *eval_initializer(Interp *in, Env *env, typeref_ty ty, initializer_ty init)
-{
+static RValue *eval_initializer(Interp *in, Env *env, typeref_ty ty, initializer_ty init) {
     if (!init || init->kind == NoInit_kind)
         return DefaultForType(in, env, ty);
     if (init->kind == ExprInit_kind)
@@ -1194,8 +1496,7 @@ static RValue *eval_initializer(Interp *in, Env *env, typeref_ty ty, initializer
 
 /* ---- 클래스/구조체 생성 ---- */
 
-static AstStructType *struct_type_from_typeref(Interp *in, Env *env, typeref_ty ty)
-{
+static AstStructType *struct_type_from_typeref(Interp *in, Env *env, typeref_ty ty) {
     (void)in;
     if (!ty)
         return NULL;
@@ -1209,8 +1510,7 @@ static AstStructType *struct_type_from_typeref(Interp *in, Env *env, typeref_ty 
     return NULL;
 }
 
-static void resolve_bases(Interp *in, AstClass *cls)
-{
+static void resolve_bases(Interp *in, AstClass *cls) {
     if (!cls->base_name || cls->base)
         return;
     {
@@ -1224,8 +1524,7 @@ static void resolve_bases(Interp *in, AstClass *cls)
     }
 }
 
-static void init_instance_fields(Interp *in, AstClass *cls, AstInstance *obj, Env *self_env)
-{
+static void init_instance_fields(Interp *in, AstClass *cls, AstInstance *obj, Env *self_env) {
     size_t i;
 
     if (cls->base)
@@ -1251,8 +1550,7 @@ static void init_instance_fields(Interp *in, AstClass *cls, AstInstance *obj, En
     }
 }
 
-static AstFn *find_ctor(AstClass *cls)
-{
+static AstFn *find_ctor(AstClass *cls) {
     for (; cls; cls = cls->base) {
         if (cls->ctor)
             return cls->ctor;
@@ -1260,8 +1558,7 @@ static AstFn *find_ctor(AstClass *cls)
     return NULL;
 }
 
-static RValue *instantiate_class(Interp *in, AstClass *cls, RValue **args, size_t nargs)
-{
+static RValue *instantiate_class(Interp *in, AstClass *cls, RValue **args, size_t nargs) {
     AstInstance *obj;
     Env *self_env;
     AstFn *ctor;
@@ -1291,8 +1588,7 @@ static RValue *instantiate_class(Interp *in, AstClass *cls, RValue **args, size_
     return self;
 }
 
-static StructCtorDesc *find_struct_ctor(AstStructType *type, size_t nargs)
-{
+static StructCtorDesc *find_struct_ctor(AstStructType *type, size_t nargs) {
     size_t i;
     for (i = 0; i < type->nctors; i++) {
         if (asdl_seq_LEN(type->ctors[i].params) == nargs)
@@ -1301,8 +1597,7 @@ static StructCtorDesc *find_struct_ctor(AstStructType *type, size_t nargs)
     return NULL;
 }
 
-static int bind_struct_params(Interp *in, asdl_seq *params, Env *env, RValue **args, size_t nargs)
-{
+static int bind_struct_params(Interp *in, asdl_seq *params, Env *env, RValue **args, size_t nargs) {
     size_t i;
     for (i = 0; i < nargs; i++) {
         param_ty p = asdl_seq_GET(params, i);
@@ -1311,8 +1606,7 @@ static int bind_struct_params(Interp *in, asdl_seq *params, Env *env, RValue **a
     return 1;
 }
 
-static RValue *instantiate_struct(Interp *in, AstStructType *type, RValue **args, size_t nargs)
-{
+static RValue *instantiate_struct(Interp *in, AstStructType *type, RValue **args, size_t nargs) {
     typeref_ty tref;
     RValue *base;
     StructCtorDesc *desc;
@@ -1365,8 +1659,7 @@ static RValue *instantiate_struct(Interp *in, AstStructType *type, RValue **args
 
 /* ---- 선언 ---- */
 
-static PropDesc *class_property_slot(AstClass *cls, const char *name)
-{
+static PropDesc *class_property_slot(AstClass *cls, const char *name) {
     size_t k;
     for (k = 0; k < cls->nprops; k++) {
         if (!strcmp(cls->props[k].name, name))
@@ -1375,8 +1668,7 @@ static PropDesc *class_property_slot(AstClass *cls, const char *name)
     return NULL;
 }
 
-static MethodDesc *find_method_slot(MethodDesc *methods, size_t count, const char *name)
-{
+static MethodDesc *find_method_slot(MethodDesc *methods, size_t count, const char *name) {
     size_t i;
     for (i = 0; i < count; i++) {
         if (!strcmp(methods[i].name, name))
@@ -1385,8 +1677,7 @@ static MethodDesc *find_method_slot(MethodDesc *methods, size_t count, const cha
     return NULL;
 }
 
-static AstClass *build_class(Interp *in, stmt_ty s, Env *env)
-{
+static AstClass *build_class(Interp *in, stmt_ty s, Env *env) {
     AstClass *cls = Arena_Alloc(in->arena, sizeof(AstClass));
     asdl_seq *members = s->v.ClassDef.members;
     size_t n = asdl_seq_LEN(members);
@@ -1399,6 +1690,18 @@ static AstClass *build_class(Interp *in, stmt_ty s, Env *env)
     cls->env = env;
     if (s->v.ClassDef.base)
         cls->base_name = typeref_name(s->v.ClassDef.base);
+    {
+        asdl_seq *ifaces = s->v.ClassDef.interfaces;
+        size_t ni = asdl_seq_LEN(ifaces);
+        if (ni) {
+            cls->interfaces = Arena_Alloc(in->arena, ni * sizeof(const char *));
+            cls->ninterfaces = ni;
+            for (i = 0; i < ni; i++) {
+                typeref_ty t = asdl_seq_GET(ifaces, i);
+                cls->interfaces[i] = t ? typeref_name(t) : "";
+            }
+        }
+    }
 
     /* Property/Getter/Setter가 같은 이름을 공유하므로 이름 기준으로 먼저 모은다. */
     prop_names = n ? Arena_Alloc(in->arena, n * sizeof(const char *)) : NULL;
@@ -1547,8 +1850,7 @@ static AstClass *build_class(Interp *in, stmt_ty s, Env *env)
     return cls;
 }
 
-static AstStructType *build_struct(Interp *in, stmt_ty s, Env *env)
-{
+static AstStructType *build_struct(Interp *in, stmt_ty s, Env *env) {
     AstStructType *type = Arena_Alloc(in->arena, sizeof(AstStructType));
     asdl_seq *members = s->v.StructDef.members;
     size_t n = asdl_seq_LEN(members);
@@ -1591,8 +1893,7 @@ static AstStructType *build_struct(Interp *in, stmt_ty s, Env *env)
 /* ---- FFI ---- */
 
 #if defined(_WIN32)
-static void *native_symbol(const char *name)
-{
+static void *native_symbol(const char *name) {
     static void *modules[4];
     static int loaded;
     void *sym;
@@ -1612,8 +1913,7 @@ static void *native_symbol(const char *name)
     return NULL;
 }
 #else
-static void *native_symbol(const char *name)
-{
+static void *native_symbol(const char *name) {
     return dlsym(RTLD_DEFAULT, name);
 }
 #endif
@@ -1623,25 +1923,21 @@ typedef union {
     double d;
 } FfiArg;
 
-void *Interp_NativeSymbol(const char *name)
-{
+void *Interp_NativeSymbol(const char *name) {
     return native_symbol(name);
 }
 
-static typeref_ty ffi_return_type(ret_ty ret)
-{
+static typeref_ty ffi_return_type(ret_ty ret) {
     if (ret && ret->kind == ValueRet_kind)
         return ret->v.ValueRet.ty;
     return NULL;
 }
 
-static int ffi_is_float(typeref_ty ty)
-{
+static int ffi_is_float(typeref_ty ty) {
     return ty && ty->kind == Primitive_kind && ty->v.Primitive.kind == FloatT;
 }
 
-static RValue *ffi_result(Interp *in, ret_ty ret, int64_t ir, double dr)
-{
+static RValue *ffi_result(Interp *in, ret_ty ret, int64_t ir, double dr) {
     typeref_ty ty = ffi_return_type(ret);
 
     if (ffi_is_float(ty))
@@ -1659,8 +1955,7 @@ static RValue *ffi_result(Interp *in, ret_ty ret, int64_t ir, double dr)
 
 /* all_double이면 모든 인자를 double로, 아니면 int64로 넘긴다.
    부동소수/정수가 섞인 시그니처는 지원하지 않는다 (호출부에서 거른다). */
-static RValue *ffi_invoke(Interp *in, AstFn *decl, void *sym, FfiArg *a, int all_double)
-{
+static RValue *ffi_invoke(Interp *in, AstFn *decl, void *sym, FfiArg *a, int all_double) {
     int ret_double = ffi_is_float(ffi_return_type(decl->ret));
     size_t n = asdl_seq_LEN(decl->params);
     int64_t ir = 0;
@@ -1744,8 +2039,7 @@ static RValue *ffi_invoke(Interp *in, AstFn *decl, void *sym, FfiArg *a, int all
 /* extern 선언에 구현이 있는지: 내장 함수나 네이티브 심볼 중 하나. */
 static RValue *bi_extern_call(Interp *in, RValue *self, RValue **args, size_t nargs);
 
-static int extern_has_impl(Env *env, const char *name)
-{
+static int extern_has_impl(Env *env, const char *name) {
     RValue **cell = Env_LookupCell(env, name);
     if (cell && *cell && (*cell)->kind == RV_BUILTIN &&
         (*cell)->u.builtin->fn != bi_extern_call)
@@ -1753,8 +2047,7 @@ static int extern_has_impl(Env *env, const char *name)
     return native_symbol(name) != NULL;
 }
 
-static RValue *bi_extern_call(Interp *in, RValue *self, RValue **args, size_t nargs)
-{
+static RValue *bi_extern_call(Interp *in, RValue *self, RValue **args, size_t nargs) {
     AstFn *decl = NULL;
     const char *name;
     FfiArg *argv;
@@ -1768,10 +2061,15 @@ static RValue *bi_extern_call(Interp *in, RValue *self, RValue **args, size_t na
         decl = self->u.fn;
     name = decl ? decl->name : "?";
 
-    cell = Env_LookupCell(in->globals, name);
-    if (cell && *cell && (*cell)->kind == RV_BUILTIN &&
-        (*cell)->u.builtin->fn != bi_extern_call)
-        return (*cell)->u.builtin->fn(in, (*cell)->u.builtin->self, args, nargs);
+    /* extern 선언은 C 심볼 바인딩이 우선이다. 같은 이름의 전역 내장 함수가
+       있더라도 네이티브 심볼이 존재하면 그쪽으로 호출한다. */
+    sym = native_symbol(name);
+    if (!sym) {
+        cell = Env_LookupCell(in->globals, name);
+        if (cell && *cell && (*cell)->kind == RV_BUILTIN &&
+            (*cell)->u.builtin->fn != bi_extern_call)
+            return (*cell)->u.builtin->fn(in, (*cell)->u.builtin->self, args, nargs);
+    }
 
     if (!decl)
         return RT_ThrowValue(in, "NotImplementedError",
@@ -1806,15 +2104,13 @@ static RValue *bi_extern_call(Interp *in, RValue *self, RValue **args, size_t na
         return RT_ThrowValue(in, "NotImplementedError",
                              "extern function '%s': cannot mix float and non-float arguments",
                              name);
-    sym = native_symbol(name);
     if (!sym)
         return RT_ThrowValue(in, "NotImplementedError",
                              "extern function '%s' has no native implementation", name);
     return ffi_invoke(in, decl, sym, argv, ndouble == n);
 }
 
-static Signal exec_decl(Interp *in, stmt_ty s, Env *env)
-{
+static Signal exec_decl(Interp *in, stmt_ty s, Env *env) {
     switch (s->kind) {
     case FunctionDef_kind:
         if (!Env_HasLocal(env, s->v.FunctionDef.name)) {
@@ -1903,6 +2199,8 @@ static Signal exec_decl(Interp *in, stmt_ty s, Env *env)
             for (i = 0; i < n; i++) {
                 enum_member_ty em = asdl_seq_GET(s->v.EnumDef.members, i);
                 et->members[i].name = em->name;
+                et->members[i].params = em->params;
+                et->members[i].nparams = asdl_seq_LEN(em->params);
                 if (em->value) {
                     et->members[i].value = eval(in, em->value, env);
                     if (in->sig != SIG_OK)
@@ -1920,8 +2218,7 @@ static Signal exec_decl(Interp *in, stmt_ty s, Env *env)
     }
 }
 
-static void predeclare_one(Interp *in, Env *env, stmt_ty s)
-{
+static void predeclare_one(Interp *in, Env *env, stmt_ty s) {
     switch (s->kind) {
     case FunctionDef_kind:
     case ClassDef_kind:
@@ -1939,8 +2236,7 @@ static void predeclare_one(Interp *in, Env *env, stmt_ty s)
     }
 }
 
-static void predeclare(Interp *in, Env *env, asdl_seq *body)
-{
+static void predeclare(Interp *in, Env *env, asdl_seq *body) {
     size_t i;
     in->predeclaring++;
     for (i = 0; i < asdl_seq_LEN(body); i++) {
@@ -1953,8 +2249,7 @@ static void predeclare(Interp *in, Env *env, asdl_seq *body)
 
 /* ---- 문장 ---- */
 
-static Signal exec_block(Interp *in, asdl_seq *body, Env *env)
-{
+static Signal exec_block(Interp *in, asdl_seq *body, Env *env) {
     size_t i;
     for (i = 0; i < asdl_seq_LEN(body); i++) {
         Signal sig = exec_stmt(in, asdl_seq_GET(body, i), env);
@@ -1964,8 +2259,7 @@ static Signal exec_block(Interp *in, asdl_seq *body, Env *env)
     return SIG_OK;
 }
 
-static int declared_type_known(typeref_ty ty)
-{
+static int declared_type_known(typeref_ty ty) {
     if (!ty)
         return 0;
     switch (ty->kind) {
@@ -1981,12 +2275,18 @@ static int declared_type_known(typeref_ty ty)
                strcmp(name, "dict") && strcmp(name, "set") && strcmp(name, "tuple") &&
                strcmp(name, "frozenset") && strcmp(name, "map");
     }
+    case UnionTy_kind: {
+        size_t i;
+        for (i = 0; i < (size_t)asdl_seq_LEN(ty->v.UnionTy.members); i++)
+            if (!declared_type_known(asdl_seq_GET(ty->v.UnionTy.members, i)))
+                return 0;
+        return 1;
+    }
     }
     return 0;
 }
 
-static int check_declared_value(Interp *in, typeref_ty ty, RValue *value)
-{
+static int check_declared_value(Interp *in, typeref_ty ty, RValue *value) {
     if (!declared_type_known(ty) || !value)
         return 1;
     if (ty->kind == Named_kind) {
@@ -2004,8 +2304,7 @@ static int check_declared_value(Interp *in, typeref_ty ty, RValue *value)
     return 1;
 }
 
-static Signal exec_var_decl(Interp *in, stmt_ty s, Env *env)
-{
+static Signal exec_var_decl(Interp *in, stmt_ty s, Env *env) {
     initializer_ty init = s->v.VarDecl.init;
     /* 람다 초기화에서 선언 타입은 람다의 반환 타입 표기다. 값은 람다 자체다. */
     int lambda_init = init && init->kind == ExprInit_kind &&
@@ -2022,8 +2321,7 @@ static Signal exec_var_decl(Interp *in, stmt_ty s, Env *env)
     return SIG_OK;
 }
 
-static Signal exec_destructure(Interp *in, stmt_ty s, Env *env)
-{
+static Signal exec_destructure(Interp *in, stmt_ty s, Env *env) {
     RValue *value = eval(in, s->v.Destructure.value, env);
     asdl_seq *names = s->v.Destructure.names;
     size_t n = asdl_seq_LEN(names);
@@ -2055,8 +2353,7 @@ static Signal exec_destructure(Interp *in, stmt_ty s, Env *env)
     return SIG_OK;
 }
 
-static Signal exec_assert(Interp *in, stmt_ty s, Env *env)
-{
+static Signal exec_assert(Interp *in, stmt_ty s, Env *env) {
     RValue *test = eval(in, s->v.Assert.test, env);
     if (in->sig != SIG_OK)
         return in->sig;
@@ -2086,8 +2383,7 @@ typedef struct {
 } Target;
 
 /* lvalue 체인/& 연산용: 필드를 복사하지 않고 실제 셀을 찾는다. */
-static int attr_target(Interp *in, RValue *base, const char *name, Target *out)
-{
+static int attr_target(Interp *in, RValue *base, const char *name, Target *out) {
     out->slot = NULL;
     out->prop = NULL;
     out->self = NULL;
@@ -2148,8 +2444,7 @@ static int attr_target(Interp *in, RValue *base, const char *name, Target *out)
 }
 
 /* 변수/필드/포인터 대상/프로퍼티를 복사 없이 평가한다. */
-static RValue *eval_ref(Interp *in, expr_ty e, Env *env)
-{
+static RValue *eval_ref(Interp *in, expr_ty e, Env *env) {
     switch (e->kind) {
     case Name_kind: {
         RValue **cell = Env_LookupCell(env, e->v.Name.id);
@@ -2202,8 +2497,7 @@ static RValue *eval_ref(Interp *in, expr_ty e, Env *env)
     }
 }
 
-static int resolve_target(Interp *in, expr_ty target, Env *env, Target *out)
-{
+static int resolve_target(Interp *in, expr_ty target, Env *env, Target *out) {
     out->slot = NULL;
     out->prop = NULL;
     out->self = NULL;
@@ -2276,15 +2570,13 @@ static int resolve_target(Interp *in, expr_ty target, Env *env, Target *out)
     }
 }
 
-static RValue *property_read(Interp *in, PropDesc *prop, RValue *self)
-{
+static RValue *property_read(Interp *in, PropDesc *prop, RValue *self) {
     if (!prop->getter)
         return RT_ThrowValue(in, "AttributeError", "property '%s' has no getter", prop->name);
     return call_fn(in, bind_method(in, prop->getter, self), NULL, 0);
 }
 
-static void property_write(Interp *in, PropDesc *prop, RValue *self, RValue *value)
-{
+static void property_write(Interp *in, PropDesc *prop, RValue *self, RValue *value) {
     RValue *args[1];
     if (!prop->setter) {
         RT_Throw(in, "AttributeError", "property '%s' has no setter", prop->name);
@@ -2294,15 +2586,13 @@ static void property_write(Interp *in, PropDesc *prop, RValue *self, RValue *val
     call_fn(in, bind_method(in, prop->setter, self), args, 1);
 }
 
-static int is_collection_value(const RValue *v)
-{
+static int is_collection_value(const RValue *v) {
     return v && (v->kind == RV_LIST || v->kind == RV_TUPLE ||
                  v->kind == RV_DICT || v->kind == RV_SET ||
                  v->kind == RV_FROZENSET);
 }
 
-static int eval_slice_index_bound(Interp *in, expr_ty e, Env *env, size_t fallback, int *out)
-{
+static int eval_slice_index_bound(Interp *in, expr_ty e, Env *env, size_t fallback, int *out) {
     RValue *v;
     int64_t n;
     if (!e) {
@@ -2328,8 +2618,7 @@ static int eval_slice_index_bound(Interp *in, expr_ty e, Env *env, size_t fallba
 }
 
 /* list[lo:hi] = 값들. step은 1만 지원한다. */
-static Signal exec_slice_assign(Interp *in, expr_ty target, RValue *value, Env *env)
-{
+static Signal exec_slice_assign(Interp *in, expr_ty target, RValue *value, Env *env) {
     RValue *container = eval_ref(in, target->v.Subscript.value, env);
     expr_ty slice = target->v.Subscript.index;
     int lo, hi;
@@ -2382,8 +2671,7 @@ static Signal exec_slice_assign(Interp *in, expr_ty target, RValue *value, Env *
     return SIG_OK;
 }
 
-static Signal exec_assign(Interp *in, stmt_ty s, Env *env)
-{
+static Signal exec_assign(Interp *in, stmt_ty s, Env *env) {
     expr_ty target = s->v.Assign.target;
     RValue *value = eval(in, s->v.Assign.value, env);
     Target tgt;
@@ -2436,7 +2724,9 @@ static Signal exec_assign(Interp *in, stmt_ty s, Env *env)
                 RT_Throw(in, "TypeError", "destructuring targets must be names");
                 return SIG_THROW;
             }
-            if (Env_IsConst(env, sub->v.Name.id)) {
+            int is_const = 0;
+            Env_LookupCellFlags(env, sub->v.Name.id, &is_const);
+            if (is_const) {
                 RT_Throw(in, "TypeError", "cannot assign to const variable '%s'",
                          sub->v.Name.id);
                 return SIG_THROW;
@@ -2446,21 +2736,32 @@ static Signal exec_assign(Interp *in, stmt_ty s, Env *env)
         return SIG_OK;
     }
 
-    if (target->kind == Name_kind && Env_IsConst(env, target->v.Name.id)) {
-        RT_Throw(in, "TypeError", "cannot assign to const variable '%s'",
-                 target->v.Name.id);
-        return SIG_THROW;
-    }
+    if (target->kind == Name_kind) {
+        int is_const = 0;
+        RValue **cell = Env_LookupCellFlags(env, target->v.Name.id, &is_const);
 
-    if (target->kind == Name_kind && !Env_LookupCell(env, target->v.Name.id)) {
-        /* 컬렉션에는 타입 이름이 없으므로 함수/람다처럼 첫 대입에서 정의한다. */
-        if (value->kind == RV_FUNC || value->kind == RV_BUILTIN ||
-            is_collection_value(value)) {
-            Env_Define(in, env, target->v.Name.id, RValue_Copy(in, value));
-            return SIG_OK;
+        if (is_const) {
+            RT_Throw(in, "TypeError", "cannot assign to const variable '%s'",
+                     target->v.Name.id);
+            return SIG_THROW;
         }
-        RT_Throw(in, "NameError", "name '%s' is not defined", target->v.Name.id);
-        return SIG_THROW;
+        if (!cell) {
+            /* 컬렉션에는 타입 이름이 없으므로 함수/람다처럼 첫 대입에서 정의한다. */
+            if (value->kind == RV_FUNC || value->kind == RV_BUILTIN ||
+                is_collection_value(value)) {
+                Env_Define(in, env, target->v.Name.id, RValue_Copy(in, value));
+                return SIG_OK;
+            }
+            RT_Throw(in, "NameError", "name '%s' is not defined", target->v.Name.id);
+            return SIG_THROW;
+        }
+        if (s->v.Assign.op != AssignEq) {
+            value = apply_binop(in, assign_op_to_operator(s->v.Assign.op), *cell, value);
+            if (in->sig != SIG_OK)
+                return in->sig;
+        }
+        *cell = RValue_Copy(in, value);
+        return SIG_OK;
     }
 
     if (!resolve_target(in, target, env, &tgt))
@@ -2503,8 +2804,7 @@ static Signal exec_assign(Interp *in, stmt_ty s, Env *env)
     return SIG_OK;
 }
 
-static Signal exec_if(Interp *in, stmt_ty s, Env *env)
-{
+static Signal exec_if(Interp *in, stmt_ty s, Env *env) {
     RValue *test = eval(in, s->v.If.test, env);
     if (in->sig != SIG_OK)
         return in->sig;
@@ -2513,16 +2813,53 @@ static Signal exec_if(Interp *in, stmt_ty s, Env *env)
     return exec_block(in, s->v.If.orelse, Env_New(in, env));
 }
 
-static Signal exec_while(Interp *in, stmt_ty s, Env *env)
-{
+static int stmt_declares_names(stmt_ty s) {
+    switch (s->kind) {
+    case VarDecl_kind:
+    case Destructure_kind:
+    case FunctionDef_kind:
+    case ClassDef_kind:
+    case StructDef_kind:
+    case InterfaceDef_kind:
+    case ExceptionDef_kind:
+    case EnumDef_kind:
+    case Import_kind:
+    case ImportFrom_kind:
+        return 1;
+    case Export_kind:
+        return stmt_declares_names(s->v.Export.body);
+    default:
+        return 0;
+    }
+}
+
+/* 본문이 자기 환경에 이름을 만들지 않으면, 반복마다 환경을 새로 만들 필요가 없다. */
+static int body_declares_names(asdl_seq *body) {
+    size_t i;
+    for (i = 0; i < asdl_seq_LEN(body); i++)
+        if (stmt_declares_names(asdl_seq_GET(body, i)))
+            return 1;
+    return 0;
+}
+
+static Signal exec_while(Interp *in, stmt_ty s, Env *env) {
+    int fresh = body_declares_names(s->v.While.body);
+    int pooled = fresh && !body_escapes_env(s->v.While.body);
+    Env *body_env = fresh ? NULL : Env_New(in, env);
+
     for (;;) {
         RValue *test = eval(in, s->v.While.test, env);
         Signal sig;
+        Env *iter_env;
         if (in->sig != SIG_OK)
             return in->sig;
         if (!RValue_Truthy(test))
             break;
-        sig = exec_block(in, s->v.While.body, Env_New(in, env));
+        iter_env = fresh ? (pooled ? Env_AcquireBlock(in, env) : Env_New(in, env))
+                         : body_env;
+        sig = exec_block(in, s->v.While.body, iter_env);
+        if (pooled)
+            Env_ReleaseBlock(in, iter_env);
         if (sig == SIG_BREAK) {
             in->sig = SIG_OK;
             break;
@@ -2537,9 +2874,11 @@ static Signal exec_while(Interp *in, stmt_ty s, Env *env)
     return SIG_OK;
 }
 
-static Signal exec_for(Interp *in, stmt_ty s, Env *env)
-{
+static Signal exec_for(Interp *in, stmt_ty s, Env *env) {
     Env *loop_env = Env_New(in, env);
+    int fresh = body_declares_names(s->v.For.body);
+    int pooled = fresh && !body_escapes_env(s->v.For.body);
+    Env *body_env = fresh ? NULL : Env_New(in, loop_env);
 
     exec_stmt(in, s->v.For.init, loop_env);
     if (in->sig != SIG_OK)
@@ -2547,11 +2886,16 @@ static Signal exec_for(Interp *in, stmt_ty s, Env *env)
     for (;;) {
         RValue *test = eval(in, s->v.For.test, loop_env);
         Signal sig;
+        Env *iter_env;
         if (in->sig != SIG_OK)
             return in->sig;
         if (!RValue_Truthy(test))
             break;
-        sig = exec_block(in, s->v.For.body, Env_New(in, loop_env));
+        iter_env = fresh ? (pooled ? Env_AcquireBlock(in, loop_env) : Env_New(in, loop_env))
+                         : body_env;
+        sig = exec_block(in, s->v.For.body, iter_env);
+        if (pooled)
+            Env_ReleaseBlock(in, iter_env);
         if (sig == SIG_BREAK) {
             in->sig = SIG_OK;
             break;
@@ -2566,9 +2910,11 @@ static Signal exec_for(Interp *in, stmt_ty s, Env *env)
     return SIG_OK;
 }
 
-static Signal exec_for_range(Interp *in, stmt_ty s, Env *env)
-{
+static Signal exec_for_range(Interp *in, stmt_ty s, Env *env) {
     Env *loop_env = Env_New(in, env);
+    Env *body_env;
+    int fresh;
+    int pooled;
     RValue *start = eval(in, s->v.ForRange.iter->start, env);
     RValue *stop;
     RValue *step_value;
@@ -2607,10 +2953,18 @@ static Signal exec_for_range(Interp *in, stmt_ty s, Env *env)
 
     Env_Define(in, loop_env, s->v.ForRange.name, RValue_Int(in, from));
     cell = Env_LookupCell(loop_env, s->v.ForRange.name);
+    fresh = body_declares_names(s->v.ForRange.body);
+    pooled = fresh && !body_escapes_env(s->v.ForRange.body);
+    body_env = fresh ? NULL : Env_New(in, loop_env);
     for (i = from; step > 0 ? i < to : i > to; i += step) {
         Signal sig;
+        Env *iter_env;
         *cell = RValue_Int(in, i);
-        sig = exec_block(in, s->v.ForRange.body, Env_New(in, loop_env));
+        iter_env = fresh ? (pooled ? Env_AcquireBlock(in, loop_env) : Env_New(in, loop_env))
+                         : body_env;
+        sig = exec_block(in, s->v.ForRange.body, iter_env);
+        if (pooled)
+            Env_ReleaseBlock(in, iter_env);
         if (sig == SIG_BREAK) {
             in->sig = SIG_OK;
             break;
@@ -2625,9 +2979,11 @@ static Signal exec_for_range(Interp *in, stmt_ty s, Env *env)
     return SIG_OK;
 }
 
-static Signal exec_for_in(Interp *in, stmt_ty s, Env *env)
-{
+static Signal exec_for_in(Interp *in, stmt_ty s, Env *env) {
     Env *loop_env = Env_New(in, env);
+    Env *body_env;
+    int fresh;
+    int pooled;
     RValue *iterable = eval(in, s->v.ForIn.iter, env);
     IterCursor cur;
     RValue **cell;
@@ -2639,10 +2995,14 @@ static Signal exec_for_in(Interp *in, stmt_ty s, Env *env)
 
     Env_Define(in, loop_env, s->v.ForIn.name, null_value(in));
     cell = Env_LookupCell(loop_env, s->v.ForIn.name);
+    fresh = body_declares_names(s->v.ForIn.body);
+    pooled = fresh && !body_escapes_env(s->v.ForIn.body);
+    body_env = fresh ? NULL : Env_New(in, loop_env);
     for (;;) {
         int ended = 0, ok = 1;
         RValue *item = Iter_Next(in, &cur, &ended, &ok);
         Signal sig;
+        Env *iter_env;
         if (!ok)
             return in->sig;
         if (ended)
@@ -2650,7 +3010,11 @@ static Signal exec_for_in(Interp *in, stmt_ty s, Env *env)
         if (!check_declared_value(in, s->v.ForIn.ty, item))
             return in->sig;
         *cell = item;
-        sig = exec_block(in, s->v.ForIn.body, Env_New(in, loop_env));
+        iter_env = fresh ? (pooled ? Env_AcquireBlock(in, loop_env) : Env_New(in, loop_env))
+                         : body_env;
+        sig = exec_block(in, s->v.ForIn.body, iter_env);
+        if (pooled)
+            Env_ReleaseBlock(in, iter_env);
         if (sig == SIG_BREAK) {
             in->sig = SIG_OK;
             break;
@@ -2665,8 +3029,7 @@ static Signal exec_for_in(Interp *in, stmt_ty s, Env *env)
     return SIG_OK;
 }
 
-static Signal exec_try(Interp *in, stmt_ty s, Env *env)
-{
+static Signal exec_try(Interp *in, stmt_ty s, Env *env) {
     size_t saved_frames = in->nframes;
     Signal sig = exec_block(in, s->v.Try.body, Env_New(in, env));
 
@@ -2705,8 +3068,7 @@ static Signal exec_try(Interp *in, stmt_ty s, Env *env)
     return sig;
 }
 
-static Signal exec_return(Interp *in, stmt_ty s, Env *env)
-{
+static Signal exec_return(Interp *in, stmt_ty s, Env *env) {
     if (s->v.Return.value)
         in->ret = eval(in, s->v.Return.value, env);
     else
@@ -2717,8 +3079,7 @@ static Signal exec_return(Interp *in, stmt_ty s, Env *env)
     return SIG_RETURN;
 }
 
-static Signal exec_throw(Interp *in, stmt_ty s, Env *env)
-{
+static Signal exec_throw(Interp *in, stmt_ty s, Env *env) {
     RValue *value = eval(in, s->v.Throw.value, env);
     RValue *exc;
 
@@ -2734,8 +3095,7 @@ static Signal exec_throw(Interp *in, stmt_ty s, Env *env)
 
 /* ---- 모듈 로더 ---- */
 
-static char *read_source_file(const char *path, size_t *size)
-{
+static char *read_source_file(const char *path, size_t *size) {
     FILE *f = fopen(path, "rb");
     size_t cap = 4096, len = 0, n;
     char *buf;
@@ -2775,8 +3135,7 @@ static char *read_source_file(const char *path, size_t *size)
     return buf;
 }
 
-static char *module_name_from_path(Interp *in, asdl_seq *path)
-{
+static char *module_name_from_path(Interp *in, asdl_seq *path) {
     size_t total = 1, i, o = 0;
     char *name;
 
@@ -2797,14 +3156,12 @@ static char *module_name_from_path(Interp *in, asdl_seq *path)
     return name;
 }
 
-static int resolve_module_file(Interp *in, const char *name, char *out, size_t cap)
-{
+static int resolve_module_file(Interp *in, const char *name, char *out, size_t cap) {
     return Aster_ResolveModuleFile(in->base_dir, in->stdlib_dir, in->module_dirs,
                                    in->nmodule_dirs, name, out, cap);
 }
 
-static AstModule *module_cache_find(Interp *in, const char *name)
-{
+static AstModule *module_cache_find(Interp *in, const char *name) {
     size_t i;
     for (i = 0; i < in->nmodules; i++) {
         if (!strcmp(in->modules[i]->name, name))
@@ -2813,8 +3170,7 @@ static AstModule *module_cache_find(Interp *in, const char *name)
     return NULL;
 }
 
-static void module_cache_add(Interp *in, AstModule *module)
-{
+static void module_cache_add(Interp *in, AstModule *module) {
     if (in->nmodules == in->cap_modules) {
         size_t cap = in->cap_modules ? in->cap_modules * 2 : 8;
         AstModule **grown = realloc(in->modules, cap * sizeof(AstModule *));
@@ -2826,8 +3182,7 @@ static void module_cache_add(Interp *in, AstModule *module)
     in->modules[in->nmodules++] = module;
 }
 
-static const char *exported_stmt_name(stmt_ty s)
-{
+static const char *exported_stmt_name(stmt_ty s) {
     switch (s->kind) {
     case FunctionDef_kind:
         return s->v.FunctionDef.name;
@@ -2850,8 +3205,7 @@ static const char *exported_stmt_name(stmt_ty s)
     }
 }
 
-static void collect_module_exports(Interp *in, AstModule *module, asdl_seq *body)
-{
+static void collect_module_exports(Interp *in, AstModule *module, asdl_seq *body) {
     size_t i;
     for (i = 0; i < asdl_seq_LEN(body); i++) {
         stmt_ty s = asdl_seq_GET(body, i);
@@ -2863,8 +3217,7 @@ static void collect_module_exports(Interp *in, AstModule *module, asdl_seq *body
     }
 }
 
-static AstModule *load_module(Interp *in, asdl_seq *path)
-{
+static AstModule *load_module(Interp *in, asdl_seq *path) {
     char *name = module_name_from_path(in, path);
     AstModule *module = module_cache_find(in, name);
     AstModule *builtin = Module_Builtin(in, name);
@@ -2917,8 +3270,7 @@ static AstModule *load_module(Interp *in, asdl_seq *path)
     return module;
 }
 
-static void import_public_names(Interp *in, Env *env, AstModule *module)
-{
+static void import_public_names(Interp *in, Env *env, AstModule *module) {
     size_t i;
     if (module->nexports > 0) {
         for (i = 0; i < module->nexports; i++) {
@@ -2937,8 +3289,7 @@ static void import_public_names(Interp *in, Env *env, AstModule *module)
     }
 }
 
-static Signal exec_import(Interp *in, stmt_ty s, Env *env)
-{
+static Signal exec_import(Interp *in, stmt_ty s, Env *env) {
     AstModule *module = load_module(in, s->v.Import.path);
     const char *bind_name;
 
@@ -2949,14 +3300,21 @@ static Signal exec_import(Interp *in, stmt_ty s, Env *env)
         size_t n = asdl_seq_LEN(s->v.Import.path);
         bind_name = asdl_seq_GET(s->v.Import.path, n - 1);
     }
+    if (!s->v.Import.wildcard) {
+        /* Java 스타일: import a.b.C; 는 모듈의 C 선언을 직접 가져온다. */
+        RValue *decl = Module_GetExported(in, module, bind_name);
+        if (decl) {
+            Env_Define(in, env, bind_name, RValue_Copy(in, decl));
+            return SIG_OK;
+        }
+    }
     Env_Define(in, env, bind_name, RValue_Module(in, module));
     if (s->v.Import.wildcard)
         import_public_names(in, env, module);
     return SIG_OK;
 }
 
-static Signal exec_import_from(Interp *in, stmt_ty s, Env *env)
-{
+static Signal exec_import_from(Interp *in, stmt_ty s, Env *env) {
     AstModule *module = load_module(in, s->v.ImportFrom.module);
 
     if (!module)
@@ -2978,11 +3336,274 @@ static Signal exec_import_from(Interp *in, stmt_ty s, Env *env)
     return SIG_OK;
 }
 
-static Signal exec_stmt(Interp *in, stmt_ty s, Env *env)
-{
+static int match_pattern(Interp *in, match_pattern_ty pat, RValue *value,
+                         Env *env, int *ok) {
+    *ok = 1;
+    switch (pat->kind) {
+    case PBind_kind:
+        if (strcmp(pat->v.PBind.name, "_"))
+            Env_Define(in, env, pat->v.PBind.name, RValue_Copy(in, value));
+        return 1;
+    case PLiteral_kind: {
+        RValue *lit = eval(in, pat->v.PLiteral.value, env);
+        if (in->sig != SIG_OK) {
+            *ok = 0;
+            return 0;
+        }
+        return RValue_Equal(lit, value);
+    }
+    case PVariant_kind: {
+        RValue *ctor = eval(in, pat->v.PVariant.path, env);
+        AstEnumType *etype;
+        size_t index, i;
+        asdl_seq *items = pat->v.PVariant.items;
+        size_t nitems = asdl_seq_LEN(items);
+        if (in->sig != SIG_OK) {
+            *ok = 0;
+            return 0;
+        }
+        if (ctor->kind == RV_ENUM) {
+            etype = ctor->u.en.type;
+            index = ctor->u.en.index;
+        }
+        else if (ctor->kind == RV_VARIANT_CTOR) {
+            etype = ctor->u.vc.type;
+            index = ctor->u.vc.index;
+        }
+        else {
+            RT_Throw(in, "TypeError", "case pattern must name an enum variant");
+            *ok = 0;
+            return 0;
+        }
+        if (value->kind != RV_ENUM || value->u.en.type != etype ||
+            value->u.en.index != index || value->u.en.npayload != nitems)
+            return 0;
+        for (i = 0; i < nitems; i++) {
+            int sub_ok = 1;
+            if (!match_pattern(in, asdl_seq_GET(items, i), value->u.en.payload[i],
+                               env, &sub_ok))
+                return 0;
+            if (!sub_ok) {
+                *ok = 0;
+                return 0;
+            }
+        }
+        return 1;
+    }
+    }
+    *ok = 0;
+    return 0;
+}
+
+static Signal exec_switch(Interp *in, stmt_ty s, Env *env) {
+    RValue *subject = eval(in, s->v.Switch.subject, env);
+    asdl_seq *cases;
+    size_t i;
+    if (in->sig != SIG_OK)
+        return in->sig;
+    cases = s->v.Switch.cases;
+    for (i = 0; i < asdl_seq_LEN(cases); i++) {
+        match_case_ty mc = asdl_seq_GET(cases, i);
+        Env *case_env = Env_New(in, env);
+        int ok = 1;
+        if (match_pattern(in, mc->pattern, subject, case_env, &ok))
+            return exec_block(in, mc->body, case_env);
+        if (!ok)
+            return in->sig;
+    }
+    return SIG_OK;
+}
+
+/* ------------------------------------------------------------ 디버거 */
+
+static const char *debug_stmt_name(stmt_ty s) {
+    switch (s->kind) {
+    case FunctionDef_kind: return "fn";
+    case ClassDef_kind: return "class";
+    case InterfaceDef_kind: return "interface";
+    case StructDef_kind: return "struct";
+    case VarDecl_kind: return "var";
+    case EnumDef_kind: return "enum";
+    case Destructure_kind: return "unpack";
+    case Assert_kind: return "assert";
+    case Assign_kind: return "assign";
+    case If_kind: return "if";
+    case While_kind: return "while";
+    case For_kind: return "for";
+    case ForRange_kind: return "for-range";
+    case ForIn_kind: return "for-in";
+    case Switch_kind: return "switch";
+    case Try_kind: return "try";
+    case Yield_kind: return "yield";
+    case Return_kind: return "return";
+    case Throw_kind: return "throw";
+    case Break_kind: return "break";
+    case Continue_kind: return "continue";
+    case Import_kind: return "import";
+    case ImportFrom_kind: return "from-import";
+    case Export_kind: return "export";
+    case ExceptionDef_kind: return "exception";
+    case ExprStmt_kind: return "expr";
+    }
+    return "stmt";
+}
+
+static int debug_has_break(Interp *in, int line) {
+    size_t i;
+    for (i = 0; i < in->ndebug_breaks; i++)
+        if (in->debug_breaks[i] == line)
+            return 1;
+    return 0;
+}
+
+static void debug_add_break(Interp *in, int line) {
+    if (in->ndebug_breaks == in->cap_debug_breaks) {
+        size_t want = in->cap_debug_breaks ? in->cap_debug_breaks * 2 : 8;
+        int *grown = realloc(in->debug_breaks, want * sizeof *grown);
+        if (!grown)
+            return;
+        in->debug_breaks = grown;
+        in->cap_debug_breaks = want;
+    }
+    in->debug_breaks[in->ndebug_breaks++] = line;
+}
+
+static char *debug_trim(char *s) {
+    char *end;
+    while (*s == ' ' || *s == '\t' || *s == '\r' || *s == '\n')
+        s++;
+    end = s + strlen(s);
+    while (end > s && (end[-1] == '\r' || end[-1] == '\n' ||
+                       end[-1] == ' ' || end[-1] == '\t'))
+        *--end = 0;
+    return s;
+}
+
+static void debug_print_value(Interp *in, expr_ty e, Env *env) {
+    Signal saved_sig = in->sig;
+    RValue *saved_exc = in->exc;
+    int saved_debug = in->debug;
+    RValue *value;
+
+    in->sig = SIG_OK;
+    in->debug = 0;              /* 식 평가 중에는 다시 멈추지 않는다 */
+    value = eval(in, e, env);
+    if (in->sig != SIG_OK) {
+        RValue *exc = in->exc;
+        if (exc && exc->kind == RV_EXC) {
+            fprintf(stderr, "%s: ", exc->u.exc->name);
+            RValue_Print(stderr, exc->u.exc->message, 0);
+            fputc('\n', stderr);
+        }
+        else {
+            fputs("error\n", stderr);
+        }
+    }
+    else {
+        RValue_Print(stderr, value, 1);
+        fputc('\n', stderr);
+    }
+    in->debug = saved_debug;
+    in->sig = saved_sig;
+    in->exc = saved_exc;
+}
+
+static void debug_tick(Interp *in, stmt_ty s, Env *env) {
+    char line[512];
+
+    if (!in->debug)
+        return;
+    if (!in->debug_step && !debug_has_break(in, s->lineno))
+        return;
+    in->debug_step = 0;
+
+    for (;;) {
+        char *cmd;
+        fprintf(stderr, "[%s:%d] %s\n",
+                in->debug_file ? in->debug_file : "<program>",
+                s->lineno, debug_stmt_name(s));
+        fputs("(dbg) ", stderr);
+        fflush(stderr);
+        if (!fgets(line, sizeof line, stdin)) {
+            in->debug = 0;
+            fputc('\n', stderr);
+            return;
+        }
+        cmd = debug_trim(line);
+        if (cmd[0] == 's' && (cmd[1] == 0 || strcmp(cmd, "step") == 0)) {
+            in->debug_step = 1;
+            return;
+        }
+        if (cmd[0] == 'c' && (cmd[1] == 0 || strcmp(cmd, "continue") == 0)) {
+            return;
+        }
+        if (cmd[0] == 'q' && (cmd[1] == 0 || strcmp(cmd, "quit") == 0)) {
+            fflush(stdout);
+            exit(0);
+        }
+        if ((cmd[0] == 'p' || cmd[0] == 'b') &&
+            (cmd[1] == ' ' || cmd[1] == '\t')) {
+            char *arg = debug_trim(cmd + 1);
+            if (cmd[0] == 'b') {
+                int target = atoi(arg);
+                if (target > 0) {
+                    debug_add_break(in, target);
+                    fprintf(stderr, "breakpoint at line %d\n", target);
+                }
+                else {
+                    size_t i;
+                    fputs("breakpoints:", stderr);
+                    for (i = 0; i < in->ndebug_breaks; i++)
+                        fprintf(stderr, " %d", in->debug_breaks[i]);
+                    fputc('\n', stderr);
+                }
+            }
+            else {
+                AsterError err;
+                expr_ty e = Aster_ParseExpression(arg, strlen(arg),
+                                                  in->arena, &err);
+                if (!e)
+                    fprintf(stderr, "error: %s\n", err.message);
+                else
+                    debug_print_value(in, e, env);
+            }
+            continue;
+        }
+        if (cmd[0] == 'h' || cmd[0] == '?') {
+            fputs("  s, step        execute one statement\n"
+                  "  c, continue    run until a breakpoint\n"
+                  "  p EXPR         evaluate and print EXPR\n"
+                  "  EXPR           print EXPR\n"
+                  "  b LINE         add a breakpoint\n"
+                  "  b              list breakpoints\n"
+                  "  q, quit        stop the program\n",
+                  stderr);
+            continue;
+        }
+        if (cmd[0]) {
+            AsterError err;
+            expr_ty e = Aster_ParseExpression(cmd, strlen(cmd), in->arena, &err);
+            if (!e) {
+                fprintf(stderr, "error: %s\n", err.message);
+            }
+            else {
+                debug_print_value(in, e, env);
+            }
+            continue;
+        }
+        /* 빈 줄은 한 문장 진행으로 본다. */
+        in->debug_step = 1;
+        return;
+    }
+}
+
+static Signal exec_stmt(Interp *in, stmt_ty s, Env *env) {
     in->line = s->lineno;
     if (in->nframes > 0)
         in->frames[in->nframes - 1].line = s->lineno;
+
+    if (in->debug)
+        debug_tick(in, s, env);
 
     switch (s->kind) {
     case FunctionDef_kind:
@@ -3010,6 +3631,8 @@ static Signal exec_stmt(Interp *in, stmt_ty s, Env *env)
         return exec_for_range(in, s, env);
     case ForIn_kind:
         return exec_for_in(in, s, env);
+    case Switch_kind:
+        return exec_switch(in, s, env);
     case Try_kind:
         return exec_try(in, s, env);
     case Return_kind:
@@ -3040,33 +3663,39 @@ static Signal exec_stmt(Interp *in, stmt_ty s, Env *env)
         return exec_import_from(in, s, env);
     case Export_kind:
         return exec_stmt(in, s->v.Export.body, env);
-    case ExprStmt_kind:
-        eval(in, s->v.ExprStmt.value, env);
+    case ExprStmt_kind: {
+        RValue *value = eval(in, s->v.ExprStmt.value, env);
+        if (in->repl && in->sig == SIG_OK && value && value->kind != RV_NULL) {
+            RValue_Print(stdout, value, 1);
+            fputc('\n', stdout);
+            fflush(stdout);
+        }
         return in->sig;
+    }
     }
     return SIG_OK;
 }
 
 /* ---- 식 ---- */
 
-static RValue *eval_args(Interp *in, asdl_seq *args, Env *env, RValue ***out, size_t *nout)
-{
+/* 인자가 적으면 호출자 스택의 버퍼를 쓴다 (호출이 끝나기 전에는 유효하다). */
+static int eval_args(Interp *in, asdl_seq *args, Env *env,
+                     RValue **small, size_t smallcap, RValue ***out, size_t *nout) {
     size_t n = asdl_seq_LEN(args);
-    RValue **values = n ? Arena_Alloc(in->arena, n * sizeof(RValue *)) : NULL;
+    RValue **values = n <= smallcap ? small : Arena_Alloc(in->arena, n * sizeof(RValue *));
     size_t i;
 
     for (i = 0; i < n; i++) {
         values[i] = eval(in, asdl_seq_GET(args, i), env);
         if (in->sig != SIG_OK)
-            return NULL;
+            return 0;
     }
     *out = values;
     *nout = n;
-    return RValue_Null(in);
+    return 1;
 }
 
-static RValue *make_exception(Interp *in, RValue *value, const char *exc_type)
-{
+static RValue *make_exception(Interp *in, RValue *value, const char *exc_type) {
     if (exc_type) {
         AsterString *msg = RValue_ToString(in, value);
         return RValue_Exception(in, exc_type, RValue_Str(in, msg));
@@ -3084,9 +3713,9 @@ static RValue *make_exception(Interp *in, RValue *value, const char *exc_type)
     }
 }
 
-static RValue *eval_new(Interp *in, expr_ty e, Env *env)
-{
+static RValue *eval_new(Interp *in, expr_ty e, Env *env) {
     RValue **cell = Env_LookupCell(env, e->v.New.cls);
+    RValue *small[8];
     RValue **args;
     size_t nargs;
     RValue *type_value;
@@ -3094,7 +3723,7 @@ static RValue *eval_new(Interp *in, expr_ty e, Env *env)
     if (!cell || !*cell)
         return RT_ThrowValue(in, "NameError", "cannot find type '%s'", e->v.New.cls);
     type_value = *cell;
-    if (!eval_args(in, e->v.New.args, env, &args, &nargs))
+    if (!eval_args(in, e->v.New.args, env, small, 8, &args, &nargs))
         return NULL;
 
     if (type_value->kind == RV_CLASS)
@@ -3107,13 +3736,11 @@ static RValue *eval_new(Interp *in, expr_ty e, Env *env)
 
 /* ---- 컬렉션 ---- */
 
-static int is_setlike(const RValue *v)
-{
+static int is_setlike(const RValue *v) {
     return v && (v->kind == RV_SET || v->kind == RV_FROZENSET);
 }
 
-static int set_subset(const RValue *a, const RValue *b)
-{
+static int set_subset(const RValue *a, const RValue *b) {
     size_t i;
     for (i = 0; i < a->u.set->len; i++) {
         if (!Set_Has(b->u.set, a->u.set->items[i]))
@@ -3122,8 +3749,7 @@ static int set_subset(const RValue *a, const RValue *b)
     return 1;
 }
 
-static int eval_slice_bound(Interp *in, expr_ty e, Env *env, int *present, int64_t *out)
-{
+static int eval_slice_bound(Interp *in, expr_ty e, Env *env, int *present, int64_t *out) {
     RValue *v;
 
     if (!e) {
@@ -3142,8 +3768,7 @@ static int eval_slice_bound(Interp *in, expr_ty e, Env *env, int *present, int64
     return 1;
 }
 
-static int64_t clamp_slice(int64_t v, int64_t len, int64_t step)
-{
+static int64_t clamp_slice(int64_t v, int64_t len, int64_t step) {
     if (v < 0) {
         if (v < -len)
             return step > 0 ? 0 : -1;
@@ -3157,8 +3782,7 @@ static int64_t clamp_slice(int64_t v, int64_t len, int64_t step)
 }
 
 /* slice_expr는 Slice_kind 노드다. */
-static RValue *eval_slice(Interp *in, RValue *container, expr_ty slice_expr, Env *env)
-{
+static RValue *eval_slice(Interp *in, RValue *container, expr_ty slice_expr, Env *env) {
     int has_lower, has_upper, has_step;
     int64_t lower = 0, upper = 0, step = 1;
     int64_t len;
@@ -3257,8 +3881,7 @@ static RValue *eval_slice(Interp *in, RValue *container, expr_ty slice_expr, Env
     }
 }
 
-static RValue *eval(Interp *in, expr_ty e, Env *env)
-{
+static RValue *eval(Interp *in, expr_ty e, Env *env) {
     in->line = e->lineno;
 
     switch (e->kind) {
@@ -3737,6 +4360,7 @@ static RValue *eval(Interp *in, expr_ty e, Env *env)
         return RValue_Int(in, (int64_t)Type_SizeOf(in, env, e->v.SizeOf.ty));
     case Call_kind: {
         RValue *callee;
+        RValue *small[8];
         RValue **args;
         size_t nargs;
         if (e->v.Call.func->kind == OptionalAttribute_kind) {
@@ -3756,7 +4380,7 @@ static RValue *eval(Interp *in, expr_ty e, Env *env)
         }
         if (in->sig != SIG_OK)
             return NULL;
-        if (!eval_args(in, e->v.Call.args, env, &args, &nargs))
+        if (!eval_args(in, e->v.Call.args, env, small, 8, &args, &nargs))
             return NULL;
         return call_value(in, callee, args, nargs);
     }
@@ -3948,8 +4572,7 @@ static RValue *eval(Interp *in, expr_ty e, Env *env)
 
 /* ---- 진입점 ---- */
 
-int Interp_RunModule(Interp *in, mod_ty mod)
-{
+int Interp_RunModule(Interp *in, mod_ty mod) {
     predeclare(in, in->globals, mod->v.Module.body);
     if (in->sig != SIG_OK)
         return 1;

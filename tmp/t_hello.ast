@@ -1,0 +1,4 @@
+import System.stdout.*;
+fn main() -> void {
+    println("hi");
+}

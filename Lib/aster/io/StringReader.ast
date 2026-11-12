@@ -1,0 +1,29 @@
+/* aster.io.StringReader: 문자열을 읽는 Reader.
+   Aster 타입 검사기는 모듈을 넘어선 상속 멤버를 서브클래스 본문에서 찾지
+   못하므로, 여기서는 super 호출만으로 상태를 다룬다. */
+
+import aster.io.Reader;
+from aster.lang.String import StringBuilder;
+
+export class StringReader extends Reader {
+    constructor(str text) {
+        super(text);
+    }
+
+    /* 남은 문자열을 모두 읽어 돌려준다. */
+    public fn readToEnd() -> str {
+        StringBuilder sb = new StringBuilder();
+        while (true) {
+            int c = super.read();
+            if (c < 0) {
+                break;
+            }
+            sb.append(chr(c));
+        }
+        return sb.toString();
+    }
+
+    public fn close() -> void {
+        super.close();
+    }
+}

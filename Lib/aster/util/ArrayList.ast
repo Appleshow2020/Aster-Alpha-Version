@@ -1,0 +1,189 @@
+/* aster.util.ArrayList: Java ArrayList 스타일 동적 배열.
+
+   내부는 list<E> 하나이고, 인덱스 연산은 그대로 위임한다.
+   iterator()는 ListIteratorImpl을 돌려준다.
+   sort()는 자연 순서, sort(Comparator)는 비교자 순서로 제자리 정렬한다. */
+
+import aster.util.List;
+import aster.util.ListIterator;
+import aster.util.ListIteratorImpl;
+import aster.util.Comparator;
+
+export class ArrayList<E> implements List {
+    private list<E> items;
+    private int cursor;
+
+    constructor() {
+        self->items = [];
+        self->cursor = 0;
+    }
+
+    public fn size() -> int {
+        return len(self->items);
+    }
+
+    public fn isEmpty() -> bool {
+        return len(self->items) == 0;
+    }
+
+    public fn add(E value) -> bool {
+        self->items.append(value);
+        return true;
+    }
+
+    public fn add(int index, E value) -> void {
+        if (index < 0 or index > len(self->items)) {
+            throw "index out of range: " + str(index) as IndexError;
+        }
+        self->items.insert(index, value);
+    }
+
+    public fn get(int index) -> E {
+        if (index < 0 or index >= len(self->items)) {
+            throw "index out of range: " + str(index) as IndexError;
+        }
+        return self->items[index];
+    }
+
+    public fn set(int index, E value) -> E {
+        if (index < 0 or index >= len(self->items)) {
+            throw "index out of range: " + str(index) as IndexError;
+        }
+        E old = self->items[index];
+        self->items[index] = value;
+        return old;
+    }
+
+    /* 값 제거. 런타임 오버로드 선택이 타입 매개변수(E)를 구분하지 못하므로
+       remove(any)를 먼저 선언해 값 제거의 대표 구현으로 둔다. int 값은
+       아래 remove(int index)가 정확히 매칭되어 인덱스 제거로 간다.
+       따라서 `remove(any)` 안에서 int가 들어오면 인덱스로 해석한다. */
+    public fn remove(any value) -> bool {
+        if (typeName(value) == "int") {
+            int index = (int)value;
+            if (index < 0 or index >= len(self->items)) {
+                return false;
+            }
+            self->items.pop(index);
+            return true;
+        }
+        if (not (value in self->items)) {
+            return false;
+        }
+        self->items.remove(value);
+        return true;
+    }
+
+    public fn remove(int index) -> E {
+        if (index < 0 or index >= len(self->items)) {
+            throw "index out of range: " + str(index) as IndexError;
+        }
+        return self->items.pop(index);
+    }
+
+    public fn contains(E value) -> bool {
+        return value in self->items;
+    }
+
+    public fn indexOf(E value) -> int {
+        int i = 0;
+        while (i < len(self->items)) {
+            if (self->items[i] == value) {
+                return i;
+            }
+            i = i + 1;
+        }
+        return -1;
+    }
+
+    public fn lastIndexOf(E value) -> int {
+        int i = len(self->items) - 1;
+        while (i >= 0) {
+            if (self->items[i] == value) {
+                return i;
+            }
+            i = i - 1;
+        }
+        return -1;
+    }
+
+    public fn clear() -> void {
+        self->items.clear();
+        self->cursor = 0;
+    }
+
+    public fn addAll(list<E> values) -> bool {
+        int i = 0;
+        while (i < len(values)) {
+            self->items.append(values[i]);
+            i = i + 1;
+        }
+        return len(values) > 0;
+    }
+
+    public fn toArray() -> list<E> {
+        return self->items.copy();
+    }
+
+    public fn iterator() -> ListIterator {
+        return new ListIteratorImpl<E>(self->items);
+    }
+
+    public fn sort() -> void {
+        self->items.sort();
+    }
+
+    public fn sort(Comparator* cmp) -> void {
+        int i = 1;
+        while (i < len(self->items)) {
+            E key = self->items[i];
+            int j = i - 1;
+            while (j >= 0 and cmp.compare(self->items[j], key) > 0) {
+                self->items[j + 1] = self->items[j];
+                j = j - 1;
+            }
+            self->items[j + 1] = key;
+            i = i + 1;
+        }
+    }
+
+    /* [from, to) 구간을 담은 새 ArrayList. */
+    public fn subList(int start, int end) -> ArrayList<E> {
+        if (start < 0 or end > len(self->items) or start > end) {
+            throw "sublist range out of bounds" as IndexError;
+        }
+        ArrayList<E> part = new ArrayList<E>();
+        int i = start;
+        while (i < end) {
+            part.add(self->items[i]);
+            i = i + 1;
+        }
+        return part;
+    }
+
+    public fn __iter__() -> ArrayList<E> {
+        self->cursor = 0;
+        return self;
+    }
+
+    public fn __next__() -> E {
+        if (self->cursor >= len(self->items)) {
+            throw "done" as StopIteration;
+        }
+        E value = self->items[self->cursor];
+        self->cursor = self->cursor + 1;
+        return value;
+    }
+
+    public fn __len__() -> int {
+        return len(self->items);
+    }
+
+    public fn __str__() -> str {
+        return str(self->items);
+    }
+
+    public fn toString() -> str {
+        return str(self->items);
+    }
+}

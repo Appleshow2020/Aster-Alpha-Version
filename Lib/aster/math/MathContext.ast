@@ -1,0 +1,82 @@
+/* aster.math.MathContext: Java java.math.MathContext 스타일 값 객체.
+   정밀도(precision)와 반올림 모드(roundingMode)를 담는다.
+   Aster에서는 클래스 자신을 담는 static 필드를 만들 수 없으므로
+   decimal32/decimal64/decimal128/unlimited는 정적 팩터리로 제공한다. */
+
+import aster.math.RoundingMode;
+from aster.math.RoundingMode import roundingModeName;
+from aster.math.RoundingMode import roundingModeOrdinal;
+
+export class MathContext {
+    private int precision;
+    private RoundingMode roundingMode;
+
+    /* Aster는 생성자 오버로드를 지원하지 않으므로 한 개 인자 생성자만 두고,
+       (int, RoundingMode)는 of 정적 팩터리로 제공한다. */
+    constructor(int precision) {
+        if (precision < 0) {
+            throw "precision must not be negative" as ValueError;
+        }
+        self->precision = precision;
+        self->roundingMode = RoundingMode.HALF_UP;
+    }
+
+    private static fn _make(int precision, RoundingMode roundingMode) -> MathContext {
+        if (precision < 0) {
+            throw "precision must not be negative" as ValueError;
+        }
+        if (roundingMode == RoundingMode.UNNECESSARY and precision != 0) {
+            throw "UNNECESSARY rounding mode is only valid with zero precision" as ValueError;
+        }
+        MathContext result = new MathContext(precision);
+        result->roundingMode = roundingMode;
+        return result;
+    }
+
+    public static fn of(int precision, RoundingMode roundingMode) -> MathContext {
+        return MathContext._make(precision, roundingMode);
+    }
+
+    public fn getPrecision() -> int {
+        return self->precision;
+    }
+
+    public fn getRoundingMode() -> RoundingMode {
+        return self->roundingMode;
+    }
+
+    public fn toString() -> str {
+        return "precision=" + str(self->precision)
+            + " roundingMode=" + roundingModeName(self->roundingMode);
+    }
+
+    public fn equals(MathContext other) -> bool {
+        return self->precision == other->precision
+            and self->roundingMode == other->roundingMode;
+    }
+
+    public fn hashCode() -> int {
+        return (self->precision * 31 + roundingModeOrdinal(self->roundingMode)) % 1000000007;
+    }
+
+    public static fn decimal32() -> MathContext {
+        return MathContext._make(7, RoundingMode.HALF_EVEN);
+    }
+
+    public static fn decimal64() -> MathContext {
+        return MathContext._make(16, RoundingMode.HALF_EVEN);
+    }
+
+    public static fn decimal128() -> MathContext {
+        return MathContext._make(34, RoundingMode.HALF_EVEN);
+    }
+
+    /* Java의 MathContext.UNLIMITED와 같은 정밀도 0. */
+    public static fn unlimited() -> MathContext {
+        return MathContext._make(0, RoundingMode.HALF_UP);
+    }
+
+    public fn __str__() -> str {
+        return self->toString();
+    }
+}

@@ -1,0 +1,256 @@
+/* aster.util.stream.Stream: Java Stream을 흉내 낸 즉시(eager) 스트림.
+   모든 중간 연산은 새 Stream을 돌려주고, 원본 리스트는 바뀌지 않는다.
+   람다는 `fn(T) -> R` 값으로만 받는다(인터페이스 타입 대입 불가).
+   findFirst/findAny/reduce는 Java처럼 Optional<T>를 돌려준다. */
+
+import aster.util.stream.Collector;
+import aster.util.Optional;
+
+export class Stream<T> {
+    private list<T> items;
+
+    constructor(list<T> xs) {
+        list<T> copy = [];
+        for (T x in xs) {
+            copy.append(x);
+        }
+        self->items = copy;
+    }
+
+    /* ---------- 정적 팩토리 ---------- */
+
+    public static fn of(list<T> xs) -> Stream<T> {
+        return new Stream<T>(xs);
+    }
+
+    public static fn empty() -> Stream<T> {
+        list<T> none = [];
+        return new Stream<T>(none);
+    }
+
+    public static fn concat(Stream<T> first, Stream<T> second) -> Stream<T> {
+        list<T> out = [];
+        for (T x in first.toList()) {
+            out.append(x);
+        }
+        for (T x in second.toList()) {
+            out.append(x);
+        }
+        return new Stream<T>(out);
+    }
+
+    /* seed, next(seed), next(next(seed)), ... 를 limit개. */
+    public static fn iterate(T seed, fn(T) -> T stepper, int limit) -> Stream<T> {
+        list<T> out = [];
+        T cur = seed;
+        int i = 0;
+        while (i < limit and i >= 0) {
+            out.append(cur);
+            cur = stepper(cur);
+            i = i + 1;
+        }
+        return new Stream<T>(out);
+    }
+
+    /* supplier를 limit번 호출해 모은다. */
+    public static fn generate(fn() -> T supplier, int limit) -> Stream<T> {
+        list<T> out = [];
+        int i = 0;
+        while (i < limit and i >= 0) {
+            out.append(supplier());
+            i = i + 1;
+        }
+        return new Stream<T>(out);
+    }
+
+    /* ---------- 중간 연산 ---------- */
+
+    public fn filter(fn(T) -> bool predicate) -> Stream<T> {
+        list<T> out = [];
+        for (T x in self->items) {
+            if (predicate(x)) {
+                out.append(x);
+            }
+        }
+        return new Stream<T>(out);
+    }
+
+    public fn map(fn(any) -> any mapper) -> Stream<any> {
+        list<any> out = [];
+        for (T x in self->items) {
+            out.append(mapper(x));
+        }
+        return new Stream<any>(out);
+    }
+
+    public fn flatMap(fn(any) -> list<any> mapper) -> Stream<any> {
+        list<any> out = [];
+        for (T x in self->items) {
+            for (any y in mapper(x)) {
+                out.append(y);
+            }
+        }
+        return new Stream<any>(out);
+    }
+
+    public fn distinct() -> Stream<T> {
+        list<T> out = [];
+        for (T x in self->items) {
+            if (not (x in out)) {
+                out.append(x);
+            }
+        }
+        return new Stream<T>(out);
+    }
+
+    public fn sorted() -> Stream<T> {
+        list<T> out = self->toList();
+        out.sort();
+        return new Stream<T>(out);
+    }
+
+    public fn sorted(fn(T, T) -> int comparator) -> Stream<T> {
+        list<T> out = self->toList();
+        int i = 1;
+        while (i < len(out)) {
+            T current = out[i];
+            int j = i - 1;
+            while (j >= 0 and comparator(out[j], current) > 0) {
+                out[j + 1] = out[j];
+                j = j - 1;
+            }
+            out[j + 1] = current;
+            i = i + 1;
+        }
+        return new Stream<T>(out);
+    }
+
+    public fn peek(fn(T) -> void action) -> Stream<T> {
+        list<T> out = [];
+        for (T x in self->items) {
+            action(x);
+            out.append(x);
+        }
+        return new Stream<T>(out);
+    }
+
+    public fn limit(int max) -> Stream<T> {
+        list<T> out = [];
+        int i = 0;
+        while (i < len(self->items) and i < max) {
+            out.append(self->items[i]);
+            i = i + 1;
+        }
+        return new Stream<T>(out);
+    }
+
+    public fn skip(int n) -> Stream<T> {
+        list<T> out = [];
+        int i = 0;
+        while (i < len(self->items)) {
+            if (i >= n) {
+                out.append(self->items[i]);
+            }
+            i = i + 1;
+        }
+        return new Stream<T>(out);
+    }
+
+    /* ---------- 종단 연산 ---------- */
+
+    public fn forEach(fn(T) -> void action) -> void {
+        for (T x in self->items) {
+            action(x);
+        }
+    }
+
+    public fn count() -> int {
+        return len(self->items);
+    }
+
+    public fn anyMatch(fn(T) -> bool predicate) -> bool {
+        for (T x in self->items) {
+            if (predicate(x)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    public fn allMatch(fn(T) -> bool predicate) -> bool {
+        for (T x in self->items) {
+            if (not predicate(x)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    public fn noneMatch(fn(T) -> bool predicate) -> bool {
+        return not self->anyMatch(predicate);
+    }
+
+    public fn findFirst() -> Optional<T> {
+        if (len(self->items) == 0) {
+            return Optional.empty();
+        }
+        return Optional.of(self->items[0]);
+    }
+
+    public fn findAny() -> Optional<T> {
+        return self->findFirst();
+    }
+
+    public fn reduce(fn(T, T) -> T accumulator) -> Optional<T> {
+        if (len(self->items) == 0) {
+            return Optional.empty();
+        }
+        T acc = self->items[0];
+        int i = 1;
+        while (i < len(self->items)) {
+            acc = accumulator(acc, self->items[i]);
+            i = i + 1;
+        }
+        return Optional.of(acc);
+    }
+
+    public fn reduce(T identity, fn(T, T) -> T accumulator) -> T {
+        T acc = identity;
+        for (T x in self->items) {
+            acc = accumulator(acc, x);
+        }
+        return acc;
+    }
+
+    public fn toList() -> list<T> {
+        list<T> out = [];
+        for (T x in self->items) {
+            out.append(x);
+        }
+        return out;
+    }
+
+    public fn toSet() -> set<T> {
+        set<T> out = set();
+        for (T x in self->items) {
+            out.add(x);
+        }
+        return out;
+    }
+
+    public fn collect(Collector<any, any> collector) -> any {
+        list<any> boxed = [];
+        for (T x in self->items) {
+            boxed.append(x);
+        }
+        return collector.finish(boxed);
+    }
+
+    public fn __len__() -> int {
+        return len(self->items);
+    }
+
+    public fn __str__() -> str {
+        return "Stream" + str(self->items);
+    }
+}

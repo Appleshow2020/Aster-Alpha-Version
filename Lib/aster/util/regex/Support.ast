@@ -1,0 +1,64 @@
+/* Java 스타일 치환 문자열($1, ${name})을 Python re.sub 문법(\\1, \\g<name>)으로
+   바꾼다. Native 엔진 자체는 Python semantics를 그대로 유지한다. */
+
+fn isDigitChar(str ch) -> bool {
+    return "0123456789".find(ch) >= 0;
+}
+
+export fn javaReplacement(str template) -> str {
+    str out = "";
+    int i = 0;
+    int n = template.length();
+    while (i < n) {
+        str ch = template.charAt(i);
+        if (ch == "\\" and i + 1 < n) {
+            str nx = template.charAt(i + 1);
+            if (nx == "\\") {
+                out = out + "\\\\";
+            }
+            else if (nx == "$") {
+                out = out + "$";
+            }
+            else {
+                out = out + "\\" + nx;
+            }
+            i = i + 2;
+        }
+        else if (ch == "$" and i + 1 < n) {
+            str nx = template.charAt(i + 1);
+            if (nx == "{") {
+                int close = -1;
+                int k = i + 2;
+                while (k < n) {
+                    if (template.charAt(k) == "}") { close = k; break; }
+                    k = k + 1;
+                }
+                if (close < 0) {
+                    out = out + "$";
+                    i = i + 1;
+                }
+                else {
+                    out = out + "\\g<" + template.substring(i + 2, close) + ">";
+                    i = close + 1;
+                }
+            }
+            else if (isDigitChar(nx)) {
+                int j = i + 1;
+                while (j < n and isDigitChar(template.charAt(j))) {
+                    j = j + 1;
+                }
+                out = out + "\\g<" + template.substring(i + 1, j) + ">";
+                i = j;
+            }
+            else {
+                out = out + "$";
+                i = i + 1;
+            }
+        }
+        else {
+            out = out + ch;
+            i = i + 1;
+        }
+    }
+    return out;
+}

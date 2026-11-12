@@ -1,0 +1,13 @@
+enum Color {
+    Red,
+    Green,
+    Blue
+}
+
+fn name(Color c) -> str {
+    switch (c) {
+        case Color.Red { return "red"; }
+        case Color.Green { return "green"; }
+    }
+    return "?";
+}

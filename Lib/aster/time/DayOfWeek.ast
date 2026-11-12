@@ -1,0 +1,59 @@
+/* aster.time.DayOfWeek: ISO-8601 요일 (월요일 = 1, 일요일 = 7).
+   열거형에는 메서드를 둘 수 없으므로 값 변환은 컴패니언 함수로 제공한다. */
+
+enum DayOfWeek {
+    MONDAY,
+    TUESDAY,
+    WEDNESDAY,
+    THURSDAY,
+    FRIDAY,
+    SATURDAY,
+    SUNDAY
+}
+
+/* ISO-8601 값 (월요일 1 ~ 일요일 7). */
+fn dayOfWeekValue(DayOfWeek day) -> int {
+    return day.ordinal + 1;
+}
+
+/* 1..7 값을 요일로 바꾼다. */
+fn dayOfWeekOf(int value) -> DayOfWeek {
+    if (value < 1 or value > 7) {
+        throw ("Invalid value for DayOfWeek: " + str(value)) as ValueError;
+    }
+    if (value == 1) { return DayOfWeek.MONDAY; }
+    if (value == 2) { return DayOfWeek.TUESDAY; }
+    if (value == 3) { return DayOfWeek.WEDNESDAY; }
+    if (value == 4) { return DayOfWeek.THURSDAY; }
+    if (value == 5) { return DayOfWeek.FRIDAY; }
+    if (value == 6) { return DayOfWeek.SATURDAY; }
+    return DayOfWeek.SUNDAY;
+}
+
+/* days만큼 뒤의 요일 (음수 가능). */
+fn dayOfWeekPlus(DayOfWeek day, int days) -> DayOfWeek {
+    int value = (day.ordinal + days % 7) % 7;
+    if (value < 0) { value = value + 7; }
+    return dayOfWeekOf(value + 1);
+}
+
+/* days만큼 앞의 요일. */
+fn dayOfWeekMinus(DayOfWeek day, int days) -> DayOfWeek {
+    return dayOfWeekPlus(day, -days);
+}
+
+/* 영어 전체 이름 (Monday ... Sunday). */
+fn dayOfWeekFullName(DayOfWeek day) -> str {
+    if (day == DayOfWeek.MONDAY) { return "Monday"; }
+    if (day == DayOfWeek.TUESDAY) { return "Tuesday"; }
+    if (day == DayOfWeek.WEDNESDAY) { return "Wednesday"; }
+    if (day == DayOfWeek.THURSDAY) { return "Thursday"; }
+    if (day == DayOfWeek.FRIDAY) { return "Friday"; }
+    if (day == DayOfWeek.SATURDAY) { return "Saturday"; }
+    return "Sunday";
+}
+
+/* 영어 3글자 이름 (Mon ... Sun). */
+fn dayOfWeekShortName(DayOfWeek day) -> str {
+    return dayOfWeekFullName(day).substring(0, 3);
+}

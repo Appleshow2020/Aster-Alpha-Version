@@ -1,0 +1,197 @@
+/* aster.time.Period: 날짜 기반 기간 (년/월/일). Java java.time.Period와 같은 API. */
+
+import aster.time.DateTimeParseException;
+
+fn _isDigit(str ch) -> bool {
+    if (ch.length() == 0) { return false; }
+    return "0123456789".find(ch) >= 0;
+}
+
+fn _parseError(str text) -> void {
+    throw ("Text '" + text + "' cannot be parsed as a Period") as DateTimeParseException;
+}
+
+export class Period {
+    private int yearValue;
+    private int monthValue;
+    private int dayValue;
+
+    constructor(int years, int months, int days) {
+        self->yearValue = years;
+        self->monthValue = months;
+        self->dayValue = days;
+    }
+
+    public static fn of(int years, int months, int days) -> Period {
+        return new Period(years, months, days);
+    }
+
+    public static fn ofYears(int years) -> Period {
+        return new Period(years, 0, 0);
+    }
+
+    public static fn ofMonths(int months) -> Period {
+        return new Period(0, months, 0);
+    }
+
+    public static fn ofWeeks(int weeks) -> Period {
+        return new Period(0, 0, weeks * 7);
+    }
+
+    public static fn ofDays(int days) -> Period {
+        return new Period(0, 0, days);
+    }
+
+    public static fn ZERO() -> Period {
+        return new Period(0, 0, 0);
+    }
+
+    /* "P2Y3M4D", "P1W", "P-1Y2M" 같은 ISO-8601 기간 문자열. */
+    public static fn parse(str text) -> Period {
+        int n = text.length();
+        int i = 0;
+        int sign = 1;
+        if (n == 0) { _parseError(text); }
+        if (text.charAt(0) == "-") {
+            sign = -1;
+            i = 1;
+        }
+        else if (text.charAt(0) == "+") {
+            i = 1;
+        }
+        if (i >= n) { _parseError(text); }
+        if (text.charAt(i).lower() != "p") { _parseError(text); }
+        i = i + 1;
+        int years = 0;
+        int months = 0;
+        int days = 0;
+        bool any = false;
+        while (i < n) {
+            int partSign = 1;
+            if (text.charAt(i) == "-") {
+                partSign = -1;
+                i = i + 1;
+            }
+            else if (text.charAt(i) == "+") {
+                i = i + 1;
+            }
+            int start = i;
+            while (i < n and _isDigit(text.charAt(i))) { i = i + 1; }
+            if (start == i or i >= n) { _parseError(text); }
+            int value = text.substring(start, i).to_int() * partSign;
+            str unit = text.charAt(i).lower();
+            i = i + 1;
+            if (unit == "y") {
+                years = value;
+            }
+            else if (unit == "m") {
+                months = value;
+            }
+            else if (unit == "w") {
+                days = days + value * 7;
+            }
+            else if (unit == "d") {
+                days = days + value;
+            }
+            else {
+                _parseError(text);
+            }
+            any = true;
+        }
+        if (not any) { _parseError(text); }
+        return new Period(years * sign, months * sign, days * sign);
+    }
+
+    public fn getYears() -> int {
+        return self->yearValue;
+    }
+
+    public fn getMonths() -> int {
+        return self->monthValue;
+    }
+
+    public fn getDays() -> int {
+        return self->dayValue;
+    }
+
+    /* 전체 개월 수 (년 * 12 + 월). */
+    public fn toTotalMonths() -> int {
+        return self->yearValue * 12 + self->monthValue;
+    }
+
+    public fn isZero() -> bool {
+        return self->yearValue == 0 and self->monthValue == 0 and self->dayValue == 0;
+    }
+
+    public fn isNegative() -> bool {
+        return self->yearValue < 0 or self->monthValue < 0 or self->dayValue < 0;
+    }
+
+    public fn plus(Period other) -> Period {
+        return new Period(self->yearValue + other.yearValue,
+                          self->monthValue + other.monthValue,
+                          self->dayValue + other.dayValue);
+    }
+
+    public fn minus(Period other) -> Period {
+        return new Period(self->yearValue - other.yearValue,
+                          self->monthValue - other.monthValue,
+                          self->dayValue - other.dayValue);
+    }
+
+    public fn plusYears(int years) -> Period {
+        return new Period(self->yearValue + years, self->monthValue, self->dayValue);
+    }
+
+    public fn plusMonths(int months) -> Period {
+        return new Period(self->yearValue, self->monthValue + months, self->dayValue);
+    }
+
+    public fn plusDays(int days) -> Period {
+        return new Period(self->yearValue, self->monthValue, self->dayValue + days);
+    }
+
+    public fn minusYears(int years) -> Period {
+        return self->plusYears(-years);
+    }
+
+    public fn minusMonths(int months) -> Period {
+        return self->plusMonths(-months);
+    }
+
+    public fn minusDays(int days) -> Period {
+        return self->plusDays(-days);
+    }
+
+    public fn multipliedBy(int scalar) -> Period {
+        return new Period(self->yearValue * scalar, self->monthValue * scalar,
+                          self->dayValue * scalar);
+    }
+
+    public fn negated() -> Period {
+        return new Period(-self->yearValue, -self->monthValue, -self->dayValue);
+    }
+
+    public fn equals(Period other) -> bool {
+        return self->yearValue == other.yearValue
+            and self->monthValue == other.monthValue
+            and self->dayValue == other.dayValue;
+    }
+
+    public fn hashCode() -> int {
+        return (self->yearValue * 12 + self->monthValue) * 31 + self->dayValue;
+    }
+
+    public fn toString() -> str {
+        if (self->isZero()) { return "P0D"; }
+        str out = "P";
+        if (self->yearValue != 0) { out = out + str(self->yearValue) + "Y"; }
+        if (self->monthValue != 0) { out = out + str(self->monthValue) + "M"; }
+        if (self->dayValue != 0) { out = out + str(self->dayValue) + "D"; }
+        return out;
+    }
+
+    public fn __str__() -> str {
+        return self->toString();
+    }
+}

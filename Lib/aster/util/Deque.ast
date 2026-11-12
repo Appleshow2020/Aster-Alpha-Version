@@ -1,0 +1,200 @@
+/* aster.util.Deque: Java ArrayDeque 스타일 양방향 큐.
+   앞/뒤 두 개의 리스트를 스택처럼 쓰고, 한쪽이 비면 반대쪽을 뒤집어 옮긴다.
+   모든 연산은 분할 상환 O(1)이다. */
+
+export class Deque<T> {
+    private list<T> front;
+    private list<T> back;
+    private int count;
+
+    constructor() {
+        self->front = [];
+        self->back = [];
+        self->count = 0;
+    }
+
+    public fn addFirst(T value) -> void {
+        self->front.append(value);
+        self->count = self->count + 1;
+    }
+
+    public fn addLast(T value) -> void {
+        self->back.append(value);
+        self->count = self->count + 1;
+    }
+
+    public fn offerFirst(T value) -> bool {
+        self->front.append(value);
+        self->count = self->count + 1;
+        return true;
+    }
+
+    public fn offerLast(T value) -> bool {
+        self->back.append(value);
+        self->count = self->count + 1;
+        return true;
+    }
+
+    public fn push(T value) -> void {
+        self->addFirst(value);
+    }
+
+    public fn add(T value) -> void {
+        self->addLast(value);
+    }
+
+    public fn removeFirst() -> T {
+        if (self->count == 0) {
+            throw "Deque is empty" as NoSuchElementError;
+        }
+        if (len(self->front) == 0) {
+            self->back.reverse();
+            self->front = self->back;
+            self->back = [];
+        }
+        self->count = self->count - 1;
+        return self->front.pop();
+    }
+
+    public fn removeLast() -> T {
+        if (self->count == 0) {
+            throw "Deque is empty" as NoSuchElementError;
+        }
+        if (len(self->back) == 0) {
+            self->front.reverse();
+            self->back = self->front;
+            self->front = [];
+        }
+        self->count = self->count - 1;
+        return self->back.pop();
+    }
+
+    public fn pop() -> T {
+        return self->removeFirst();
+    }
+
+    public fn pollFirst() -> T? {
+        if (self->count == 0) {
+            return null;
+        }
+        return self->removeFirst();
+    }
+
+    public fn pollLast() -> T? {
+        if (self->count == 0) {
+            return null;
+        }
+        return self->removeLast();
+    }
+
+    public fn peekFirst() -> T? {
+        if (self->count == 0) {
+            return null;
+        }
+        if (len(self->front) == 0) {
+            self->back.reverse();
+            self->front = self->back;
+            self->back = [];
+        }
+        return self->front[len(self->front) - 1];
+    }
+
+    public fn peekLast() -> T? {
+        if (self->count == 0) {
+            return null;
+        }
+        if (len(self->back) == 0) {
+            self->front.reverse();
+            self->back = self->front;
+            self->front = [];
+        }
+        return self->back[len(self->back) - 1];
+    }
+
+    public fn getFirst() -> T {
+        if (self->count == 0) {
+            throw "Deque is empty" as NoSuchElementError;
+        }
+        return self->peekFirst() ?? self->removeFirst();
+    }
+
+    public fn getLast() -> T {
+        if (self->count == 0) {
+            throw "Deque is empty" as NoSuchElementError;
+        }
+        return self->peekLast() ?? self->removeLast();
+    }
+
+    public fn get(int index) -> T {
+        if (index < 0 or index >= self->count) {
+            throw "Deque index out of range" as IndexError;
+        }
+        if (index < len(self->front)) {
+            return self->front[len(self->front) - 1 - index];
+        }
+        return self->back[index - len(self->front)];
+    }
+
+    public fn set(int index, T value) -> void {
+        if (index < 0 or index >= self->count) {
+            throw "Deque index out of range" as IndexError;
+        }
+        if (index < len(self->front)) {
+            self->front[len(self->front) - 1 - index] = value;
+        }
+        else {
+            self->back[index - len(self->front)] = value;
+        }
+    }
+
+    public fn contains(T value) -> bool {
+        int i = 0;
+        while (i < len(self->front)) {
+            if (self->front[i] == value) { return true; }
+            i = i + 1;
+        }
+        i = 0;
+        while (i < len(self->back)) {
+            if (self->back[i] == value) { return true; }
+            i = i + 1;
+        }
+        return false;
+    }
+
+    public fn size() -> int {
+        return self->count;
+    }
+
+    public fn isEmpty() -> bool {
+        return self->count == 0;
+    }
+
+    public fn clear() -> void {
+        self->front = [];
+        self->back = [];
+        self->count = 0;
+    }
+
+    public fn toList() -> list<T> {
+        list<T> out = [];
+        int i = len(self->front) - 1;
+        while (i >= 0) {
+            out.append(self->front[i]);
+            i = i - 1;
+        }
+        int j = 0;
+        while (j < len(self->back)) {
+            out.append(self->back[j]);
+            j = j + 1;
+        }
+        return out;
+    }
+
+    public fn __len__() -> int {
+        return self->count;
+    }
+
+    public fn __str__() -> str {
+        return str(self->toList());
+    }
+}

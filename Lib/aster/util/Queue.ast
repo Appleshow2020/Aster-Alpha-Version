@@ -1,0 +1,7 @@
+/* aster.util.Queue: Java Queue 계약. 실패 시 예외를 던지지 않는 형태만 둔다. */
+
+export interface Queue {
+    fn offer(any value) -> bool;
+    fn poll() -> any;
+    fn peek() -> any;
+}

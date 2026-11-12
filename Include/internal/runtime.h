@@ -56,7 +56,8 @@ typedef enum {
     RV_ENUM,
     RV_ENUMTYPE,
     RV_OVERLOAD,
-    RV_GENERATOR
+    RV_GENERATOR,
+    RV_VARIANT_CTOR
 } RKind;
 
 typedef struct AsterList {
@@ -145,7 +146,14 @@ struct RValue {
         AstModule *module;
         AsterSuper *super;
         AstEnumType *etype;
-        struct { AstEnumType *type; const char *name; size_t index; } en;
+        struct {
+            AstEnumType *type;
+            const char *name;
+            size_t index;
+            RValue **payload;
+            size_t npayload;
+        } en;
+        struct { AstEnumType *type; size_t index; } vc;
         AstOverload *overload;
         AstGenerator *gen;
     } u;
@@ -154,13 +162,20 @@ struct RValue {
 struct Env {
     Env *parent;
     Binding *vars;
+    struct EnvIndex *idx;    /* 바인딩이 많아지면 지연 생성되는 해시 색인 */
+    Binding *spare;          /* 호출 환경에서 미리 잡아 둔 바인딩 (Env_NewCall) */
+    Binding *spare_base;     /* spare 블록의 시작 (재사용 시 되감기) */
+    uint32_t nspare;         /* spare에 남은 수 */
+    uint32_t spare_cap;      /* spare 블록의 전체 크기 */
+    uint32_t count;          /* vars에 연결된 바인딩 수 */
 };
 
 struct Binding {
     const char *name;
     RValue *cell;
-    int is_const;
     Binding *next;
+    uint32_t hash;           /* 이름 해시 (조회 시 strcmp 전에 거른다) */
+    int is_const;
 };
 
 typedef struct {
@@ -198,6 +213,8 @@ struct AstFn {
     AstClass *owner;         /* 메서드가 속한 클래스 (super 해석용) */
     int is_static;
     int is_generator;        /* 본문에 yield가 있다 */
+    int env_reuse;           /* 0=미검사, 1=호출 환경 재사용 가능, -1=불가 */
+    int env_bind_sites;      /* 0=미검사, 그 외=함수 환경에 직접 정의되는 바인딩 수+1 */
     AstBuiltin builtin;      /* FN_BUILTIN */
 };
 
@@ -218,6 +235,8 @@ struct AstOverload {
 typedef struct {
     const char *name;
     RValue *value;
+    asdl_seq *params;        /* enum payload 매개변수 (param_ty). 없으면 NULL */
+    size_t nparams;
 } AstEnumMember;
 
 struct AstEnumType {
@@ -257,6 +276,8 @@ struct AstClass {
     size_t nprops;
     AstFn *ctor;
     Env *env;
+    const char **interfaces;  /* implements 한 인터페이스 이름 */
+    size_t ninterfaces;
 };
 
 struct AstInstance {
@@ -335,10 +356,24 @@ struct Interp {
     int predeclaring;        /* 선언 수집 단계 (오버로드 병합 허용) */
     int depth;               /* 호출 깊이 (재귀 제한) */
     int recursion_limit;     /* 허용할 최대 호출 깊이 (System으로 설정) */
-    AstModule *builtin_modules[8]; /* C가 직접 제공하는 모듈 (System 등) */
+    AstModule *builtin_modules[16]; /* C가 직접 제공하는 모듈 (System 등) */
     size_t nbuiltin_modules;
+    void **regex_objs;       /* 컴파일된 정규식 (id로 참조) */
+    size_t nregex_objs, cap_regex_objs;
+    void **regex_matches;    /* 정규식 매치 결과 (id로 참조) */
+    size_t nregex_matches, cap_regex_matches;
     AstFrame *frames;        /* 호출 스택 (Arena 할당, 두 배씩 확장) */
     size_t nframes, cap_frames;
+    int repl;                /* REPL 모드: 식 문장의 값을 출력한다 */
+    int debug;               /* --debug: 문장마다 멈춘다 */
+    int debug_step;          /* 다음 문장에서 멈춘다 */
+    const char *debug_file;  /* 디버거가 표시할 파일 이름 */
+    int *debug_breaks;       /* 줄 번호 브레이크포인트 */
+    size_t ndebug_breaks, cap_debug_breaks;
+    Env *free_envs;          /* 반납된 호출 환경 (parent 필드로 연결) */
+    size_t nfree_envs;
+    Env *free_block_envs;    /* 반납된 블록 환경 (반복문 본문) */
+    size_t nfree_block_envs;
 };
 
 void Interp_FrameAppend(Interp *in, const char *name, int line);
@@ -373,6 +408,9 @@ RValue *RValue_FrozenSet(Interp *in, AsterSet *set);
 RValue *RValue_Module(Interp *in, AstModule *module);
 RValue *RValue_Super(Interp *in, AstClass *owner, RValue *self);
 RValue *RValue_Enum(Interp *in, AstEnumType *type, const char *name, size_t index);
+RValue *RValue_EnumPayload(Interp *in, AstEnumType *type, const char *name, size_t index,
+                           RValue **args, size_t nargs);
+RValue *RValue_EnumCtor(Interp *in, AstEnumType *type, size_t index);
 RValue *RValue_EnumType(Interp *in, AstEnumType *type);
 RValue *RValue_Overload(Interp *in, AstOverload *overload);
 
@@ -441,12 +479,23 @@ AsterString *RString_Concat(Interp *in, AsterString *a, AsterString *b);
 /* ---- 환경 ---- */
 
 Env *Env_New(Interp *in, Env *parent);
+/* 호출 환경: Env와 매개변수 바인딩을 한 덩어리로 할당한다. */
+Env *Env_NewCall(Interp *in, Env *parent, size_t nspare);
+Env *Env_AcquireCall(Interp *in, Env *parent, size_t nspare); /* 반납된 환경 재사용 */
+void Env_ReleaseCall(Interp *in, Env *env);                   /* 참조가 남지 않을 때만 호출 */
+/* 블록 환경(반복문 본문): 바인딩 슬롯을 조금 미리 잡아 재사용한다. */
+Env *Env_AcquireBlock(Interp *in, Env *parent);
+void Env_ReleaseBlock(Interp *in, Env *env);
 RValue **Env_LookupCell(Env *env, const char *name);
+/* 셀과 const 여부를 한 번의 탐색으로 함께 돌려준다 (없으면 NULL). */
+RValue **Env_LookupCellFlags(Env *env, const char *name, int *is_const);
 void Env_Define(Interp *in, Env *env, const char *name, RValue *value);
 void Env_DefineConst(Interp *in, Env *env, const char *name, RValue *value);
 int Env_IsConst(Env *env, const char *name);
 int Env_Assign(Env *env, const char *name, RValue *value);
 int Env_HasLocal(Env *env, const char *name);
+/* 이 환경에 있는 이름의 바인딩을 모두 지운다 (REPL 재정의용). */
+void Env_RemoveLocal(Interp *in, Env *env, const char *name);
 
 /* ---- 타입/객체 ---- */
 
@@ -484,6 +533,7 @@ AstBuiltin *Collection_Method(Interp *in, RValue *self, const char *name);
 AstBuiltin *String_Method(Interp *in, RValue *self, const char *name);
 AstModule *Module_New(Interp *in, const char *name, const char *path);
 AstModule *Module_Builtin(Interp *in, const char *name);   /* 없으면 NULL */
+AstModule *Module_RegisterBuiltin(Interp *in, const char *name); /* C 제공 모듈 등록 */
 void Module_AddExport(AstModule *module, Interp *in, const char *name);
 RValue *Module_GetExported(Interp *in, AstModule *module, const char *name);
 

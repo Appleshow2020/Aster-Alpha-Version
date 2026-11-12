@@ -1,0 +1,6 @@
+/* aster.util.function.DoubleSupplier: Java DoubleSupplier shape.
+   Aster has no `double`, so `float` (64-bit) plays that role. */
+
+export interface DoubleSupplier {
+    fn getAsDouble() -> float;
+}

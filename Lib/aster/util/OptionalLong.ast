@@ -1,0 +1,55 @@
+/* aster.util.OptionalLong: int(64비트) 전용 Optional. */
+
+export class OptionalLong {
+    private int value;
+    private bool present;
+
+    constructor() {
+        self->value = 0;
+        self->present = false;
+    }
+
+    public static fn empty() -> OptionalLong {
+        return new OptionalLong();
+    }
+
+    public static fn of(int value) -> OptionalLong {
+        OptionalLong opt = new OptionalLong();
+        opt.value = value;
+        opt.present = true;
+        return opt;
+    }
+
+    public fn getAsLong() -> int {
+        if (not self->present) {
+            throw "no value present" as NoSuchElementError;
+        }
+        return self->value;
+    }
+
+    public fn isPresent() -> bool {
+        return self->present;
+    }
+
+    public fn isEmpty() -> bool {
+        return not self->present;
+    }
+
+    public fn orElse(int other) -> int {
+        if (self->present) {
+            return self->value;
+        }
+        return other;
+    }
+
+    public fn toString() -> str {
+        if (not self->present) {
+            return "OptionalLong.empty";
+        }
+        return "OptionalLong[" + str(self->value) + "]";
+    }
+
+    public fn __str__() -> str {
+        return self->toString();
+    }
+}

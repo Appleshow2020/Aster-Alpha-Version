@@ -1,0 +1,10 @@
+/* aster.lang.CharSequence: read-only view over a sequence of code points.
+   Aster strings hold Unicode code points, so indices are code-point based. */
+
+export interface CharSequence {
+    fn length() -> int;
+    fn charAt(int index) -> str;
+    fn substring(int start) -> str;
+    fn substring(int start, int end) -> str;
+    fn toString() -> str;
+}

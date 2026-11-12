@@ -1,0 +1,5 @@
+/* aster.util.function.Consumer: Java Consumer<T> shape. */
+
+export interface Consumer {
+    fn accept(any value) -> void;
+}

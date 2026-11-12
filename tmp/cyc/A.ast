@@ -1,0 +1,6 @@
+import B;
+
+export class A {
+    public fn f() -> str { return "A"; }
+    public static fn make() -> A { return new B(); }
+}

@@ -1,0 +1,2 @@
+import System.stdout.*;
+println(sum(range(1..5)));

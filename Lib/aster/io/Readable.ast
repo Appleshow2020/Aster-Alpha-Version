@@ -1,0 +1,7 @@
+/* aster.io.Readable: Java Readable을 코드포인트 하나 읽기로 단순화한 계약.
+   (Aster의 런타임 오버로드 선택이 list<int> 인자를 int 오버로드로 잡는
+   문제가 있어 `read(list<int>)` 형태는 두지 않는다.) */
+
+export interface Readable {
+    fn read() -> int;
+}

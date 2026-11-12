@@ -1,0 +1,5 @@
+/* aster.util.function.IntPredicate: Java IntPredicate shape. */
+
+export interface IntPredicate {
+    fn test(int value) -> bool;
+}

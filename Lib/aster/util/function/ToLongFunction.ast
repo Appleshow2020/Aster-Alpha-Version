@@ -1,0 +1,5 @@
+/* aster.util.function.ToLongFunction: Java ToLongFunction<T> shape. */
+
+export interface ToLongFunction {
+    fn applyAsLong(any value) -> int;
+}

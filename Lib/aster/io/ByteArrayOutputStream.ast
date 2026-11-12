@@ -1,0 +1,46 @@
+/* aster.io.ByteArrayOutputStream: 바이트를 list<int>에 모으는 출력 스트림. */
+
+import aster.io.Codec;
+
+export class ByteArrayOutputStream {
+    private list<int> buf;
+
+    constructor() {
+        self->buf = [];
+    }
+
+    public fn write(int b) -> void {
+        self->buf.append(Codec.byteValue(b));
+    }
+
+    /* Java 11의 writeBytes(byte[])에 해당. list<int> 인자는 같은 이름의
+       write(int) 오버로드로 잘못 선택되므로 이름을 분리했다. */
+    public fn writeBytes(list<int> bytes) -> void {
+        for (int b in bytes) {
+            self->buf.append(Codec.byteValue(b));
+        }
+    }
+
+    public fn toByteArray() -> list<int> {
+        list<int> out = [];
+        for (int b in self->buf) {
+            out.append(b);
+        }
+        return out;
+    }
+
+    public fn toString() -> str {
+        return Codec.decodeUtf8(self->buf);
+    }
+
+    public fn size() -> int {
+        return len(self->buf);
+    }
+
+    public fn reset() -> void {
+        self->buf = [];
+    }
+
+    public fn close() -> void {
+    }
+}

@@ -1,0 +1,11 @@
+/* aster.util.LinkedHashSet: 삽입 순서를 유지하는 HashSet.
+
+   내부 set이 이미 삽입 순서를 유지하므로 HashSet을 그대로 상속한다. */
+
+import aster.util.HashSet;
+
+export class LinkedHashSet<E> extends HashSet<E> {
+    constructor() {
+        super();
+    }
+}

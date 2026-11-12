@@ -1,0 +1,44 @@
+import System.stdout.*;
+
+enum Shape {
+    Circle(float r),
+    Rect(float w, float h),
+    Empty
+}
+
+fn describe(Shape s) -> str {
+    switch (s) {
+        case Shape.Circle(0.0) {
+            return "point circle";
+        }
+        case Shape.Circle(r) {
+            return "circle " + str(r);
+        }
+        case Shape.Rect(w, h) {
+            if (w == h) {
+                return "square " + str(w);
+            }
+            return "rect " + str(w) + "x" + str(h);
+        }
+        case Shape.Empty {
+            return "empty";
+        }
+    }
+}
+
+println(describe(Shape.Circle(0.0)));
+println(describe(Shape.Circle(2.5)));
+println(describe(Shape.Rect(3.0, 3.0)));
+println(describe(Shape.Rect(2.0, 5.0)));
+println(describe(Shape.Empty));
+
+fn grade(int score) -> str {
+    switch (score) {
+        case 100 { return "perfect"; }
+        case 0 { return "zero"; }
+        default { return "other"; }
+    }
+}
+println(grade(100));
+println(grade(0));
+println(grade(55));

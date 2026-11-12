@@ -1,0 +1,175 @@
+/* aster.lang.Float: Java-style subset for single-precision wrappers.
+   Aster keeps floating point values in C doubles, so values are stored
+   without narrowing; the constants reflect 32-bit float ranges. */
+
+import aster.lang.Object;
+
+fn _floatInf() -> float {
+    float v = 1.0;
+    int i = 0;
+    while (i < 400) {
+        v = v * 10.0;
+        i = i + 1;
+    }
+    return v;
+}
+
+fn _floatNaN() -> float {
+    float inf = _floatInf();
+    return inf - inf;
+}
+
+fn _floatMin() -> float {
+    float v = 1.0;
+    int i = 0;
+    while (i < 149) {
+        v = v / 2.0;
+        i = i + 1;
+    }
+    return v;
+}
+
+fn _floatIsInf(float v) -> bool {
+    if (v > 0.0 and v / 2.0 == v) { return true; }
+    if (v < 0.0 and v / 2.0 == v) { return true; }
+    return false;
+}
+
+fn _floatString(float v) -> str {
+    if (v != v) {
+        return "NaN";
+    }
+    if (_floatIsInf(v)) {
+        if (v > 0.0) {
+            return "Infinity";
+        }
+        return "-Infinity";
+    }
+    return str(v);
+}
+
+fn _floatHash(float v) -> int {
+    if (v != v) {
+        return 0;
+    }
+    if (v == 0.0) {
+        return 0;
+    }
+    if (v >= -2147483648.0 and v <= 2147483647.0) {
+        return (int) v;
+    }
+    if (v > 0.0) {
+        return 1;
+    }
+    return -1;
+}
+
+export class Float extends Object {
+    public static float MAX_VALUE = 340282346638528860000000000000000000000.0;
+    public static float MIN_VALUE = _floatMin();
+    public static float NaN = _floatNaN();
+    public static float POSITIVE_INFINITY = _floatInf();
+    public static float NEGATIVE_INFINITY = 0.0 - _floatInf();
+
+    private float fv;
+
+    constructor(float v) {
+        self->fv = v;
+    }
+
+    public static fn parseFloat(str s) -> float {
+        str t = s.trim();
+        str lower = t.lower();
+        if (lower == "nan" or lower == "+nan" or lower == "-nan") {
+            return Float.NaN;
+        }
+        if (lower == "infinity" or lower == "+infinity" or lower == "inf" or lower == "+inf") {
+            return Float.POSITIVE_INFINITY;
+        }
+        if (lower == "-infinity" or lower == "-inf") {
+            return Float.NEGATIVE_INFINITY;
+        }
+        return t.to_float();
+    }
+
+    public static fn isNaN(float v) -> bool {
+        return v != v;
+    }
+
+    public static fn isInfinite(float v) -> bool {
+        return _floatIsInf(v);
+    }
+
+    public static fn compare(float a, float b) -> int {
+        if (a < b) {
+            return -1;
+        }
+        if (a > b) {
+            return 1;
+        }
+        if (a == b) {
+            return 0;
+        }
+        if (a != a) {
+            if (b != b) {
+                return 0;
+            }
+            return 1;
+        }
+        return -1;
+    }
+
+    public static fn toString(float v) -> str {
+        return _floatString(v);
+    }
+
+    public static fn valueOf(float v) -> Float {
+        return new Float(v);
+    }
+
+    public static fn valueOf(str s) -> Float {
+        return new Float(Float.parseFloat(s));
+    }
+
+    public fn floatValue() -> float {
+        return self->fv;
+    }
+
+    public fn doubleValue() -> float {
+        return self->fv;
+    }
+
+    public fn intValue() -> int {
+        return (int) self->fv;
+    }
+
+    public fn isNaN() -> bool {
+        return self->fv != self->fv;
+    }
+
+    public fn equals(Object? o) -> bool {
+        if (not o) {
+            return false;
+        }
+        if (typeName(o) != "Float") {
+            return false;
+        }
+        Float other = (Float) o;
+        if (self->isNaN()) {
+            return other->isNaN();
+        }
+        return self->fv == other->floatValue();
+    }
+
+    public fn hashCode() -> int {
+        return _floatHash(self->fv);
+    }
+
+    public fn toString() -> str {
+        return _floatString(self->fv);
+    }
+
+    public fn __str__() -> str {
+        return _floatString(self->fv);
+    }
+}

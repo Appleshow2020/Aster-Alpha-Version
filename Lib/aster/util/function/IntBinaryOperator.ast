@@ -1,0 +1,5 @@
+/* aster.util.function.IntBinaryOperator: Java IntBinaryOperator shape. */
+
+export interface IntBinaryOperator {
+    fn applyAsInt(int first, int second) -> int;
+}

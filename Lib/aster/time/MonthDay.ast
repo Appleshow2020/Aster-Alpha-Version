@@ -1,0 +1,138 @@
+/* aster.time.MonthDay: 월+일 (--MM-dd). */
+
+import aster.time.Month;
+from aster.time.Month import monthOf;
+from aster.time.Month import monthLength;
+from aster.time.Month import monthValue;
+import aster.time.LocalDate;
+import aster.time.DateTimeParseException;
+
+fn _mdParseError(str text) -> void {
+    throw ("Text '" + text + "' cannot be parsed as a MonthDay") as DateTimeParseException;
+}
+
+fn _mdIsDigits(str text) -> bool {
+    if (text.length() == 0) { return false; }
+    int i = 0;
+    while (i < text.length()) {
+        if ("0123456789".find(text.charAt(i)) < 0) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
+export class MonthDay {
+    private int monthNumber;
+    private int dayNumber;
+
+    constructor(int month, int day) {
+        if (month < 1 or month > 12) {
+            throw ("Invalid value for MonthOfYear: " + str(month)) as ValueError;
+        }
+        if (day < 1 or day > monthLength(monthOf(month), true)) {
+            throw ("Invalid value for DayOfMonth: " + str(day)) as ValueError;
+        }
+        self->monthNumber = month;
+        self->dayNumber = day;
+    }
+
+    public static fn now() -> MonthDay {
+        LocalDate today = LocalDate.now();
+        return new MonthDay(today.getMonthValue(), today.getDayOfMonth());
+    }
+
+    /* Month 오버로드를 먼저 둔다. 인터프리터의 오버로드 폴백이
+       첫 번째 동일 인자 수 정의를 고르기 때문에 enum 인자 호출이
+       int 오버로드로 잘못 디스패치되는 것을 막는다. */
+    public static fn of(Month month, int day) -> MonthDay {
+        return new MonthDay(monthValue(month), day);
+    }
+
+    public static fn of(int month, int day) -> MonthDay {
+        return new MonthDay(month, day);
+    }
+
+    public static fn parse(str text) -> MonthDay {
+        str body = text;
+        if (body.startswith("--")) {
+            body = body.substring(2, body.length());
+        }
+        if (body.length() != 5 or body.charAt(2) != "-") { _mdParseError(text); }
+        str ms = body.substring(0, 2);
+        str ds = body.substring(3, 5);
+        if (not _mdIsDigits(ms) or not _mdIsDigits(ds)) { _mdParseError(text); }
+        return new MonthDay(ms.to_int(), ds.to_int());
+    }
+
+    public fn getMonthValue() -> int {
+        return self->monthNumber;
+    }
+
+    public fn getMonth() -> Month {
+        return monthOf(self->monthNumber);
+    }
+
+    public fn getDayOfMonth() -> int {
+        return self->dayNumber;
+    }
+
+    public fn isValidYear(int year) -> bool {
+        return self->dayNumber <= monthLength(monthOf(self->monthNumber),
+                                              LocalDate.isLeapYear(year));
+    }
+
+    public fn withMonth(int month) -> MonthDay {
+        int day = self->dayNumber;
+        int limit = monthLength(monthOf(month), true);
+        if (day > limit) { day = limit; }
+        return new MonthDay(month, day);
+    }
+
+    public fn withDayOfMonth(int day) -> MonthDay {
+        return new MonthDay(self->monthNumber, day);
+    }
+
+    public fn atYear(int year) -> LocalDate {
+        if (not self->isValidYear(year)) {
+            throw ("Invalid value for Year: " + str(year)) as ValueError;
+        }
+        return LocalDate.of(year, self->monthNumber, self->dayNumber);
+    }
+
+    public fn isBefore(MonthDay other) -> bool {
+        return self->compareTo(other) < 0;
+    }
+
+    public fn isAfter(MonthDay other) -> bool {
+        return self->compareTo(other) > 0;
+    }
+
+    public fn compareTo(MonthDay other) -> int {
+        int left = self->monthNumber * 100 + self->dayNumber;
+        int right = other.monthNumber * 100 + other.dayNumber;
+        if (left < right) { return -1; }
+        if (left > right) { return 1; }
+        return 0;
+    }
+
+    public fn equals(MonthDay other) -> bool {
+        return self->monthNumber == other.monthNumber
+            and self->dayNumber == other.dayNumber;
+    }
+
+    public fn hashCode() -> int {
+        return self->monthNumber * 100 + self->dayNumber;
+    }
+
+    public fn toString() -> str {
+        str ms = str(self->monthNumber);
+        if (self->monthNumber < 10) { ms = "0" + ms; }
+        str ds = str(self->dayNumber);
+        if (self->dayNumber < 10) { ds = "0" + ds; }
+        return "--" + ms + "-" + ds;
+    }
+
+    public fn __str__() -> str {
+        return self->toString();
+    }
+}

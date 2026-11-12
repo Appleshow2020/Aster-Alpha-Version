@@ -1,0 +1,11 @@
+/* aster.util.Iterator: Java Iterator 계약.
+
+   Aster 인터페이스는 타입 매개변수를 가질 수 없으므로 원소 타입은 any로
+   둔다. 구현체는 구체 타입을 돌려줘도 된다(타입 인자는 지워진다).
+   remove()는 마지막으로 next()가 돌려준 원소를 지운다. */
+
+export interface Iterator {
+    fn hasNext() -> bool;
+    fn next() -> any;
+    fn remove() -> void;
+}

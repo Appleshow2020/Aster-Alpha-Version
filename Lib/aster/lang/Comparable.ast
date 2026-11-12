@@ -1,0 +1,8 @@
+/* aster.lang.Comparable: ordering contract.
+   The Aster parser does not accept type parameters on interfaces, so this is
+   the Java "raw Comparable" adaptation: implementations compare an untyped other value,
+   normally casting after a typeName check. */
+
+export interface Comparable {
+    fn compareTo(any other) -> int;
+}

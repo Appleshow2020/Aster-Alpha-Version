@@ -1,0 +1,132 @@
+/* aster.lang.Character: wraps a one-code-point Aster string.
+   Unicode classification is ASCII-oriented, matching the string helpers. */
+
+import aster.lang.Object;
+
+const str _CHAR_LOWER = "abcdefghijklmnopqrstuvwxyz";
+
+fn _charCodeValue(str c) -> int {
+    if (c.length() != 1) {
+        return -1;
+    }
+    int d = "0123456789".find(c);
+    if (d >= 0) {
+        return d;
+    }
+    int letter = _CHAR_LOWER.find(c.lower());
+    if (letter >= 0) {
+        return letter + 10;
+    }
+    return -1;
+}
+
+export class Character extends Object {
+    public static int MIN_VALUE = 0;
+    public static int MAX_VALUE = 1114111;
+
+    private str ch;
+
+    constructor(str c) {
+        if (c.length() != 1) {
+            throw "character must be exactly one code point" as ValueError;
+        }
+        self->ch = c;
+    }
+
+    public static fn isDigit(str c) -> bool {
+        if (c.length() != 1) {
+            return false;
+        }
+        return c.isdigit();
+    }
+
+    public static fn isLetter(str c) -> bool {
+        if (c.length() != 1) {
+            return false;
+        }
+        return c.isalpha();
+    }
+
+    public static fn isLetterOrDigit(str c) -> bool {
+        return Character.isLetter(c) or Character.isDigit(c);
+    }
+
+    public static fn isWhitespace(str c) -> bool {
+        if (c.length() != 1) {
+            return false;
+        }
+        return c.isspace();
+    }
+
+    public static fn isUpperCase(str c) -> bool {
+        if (c.length() != 1) {
+            return false;
+        }
+        str up = c.upper();
+        str low = c.lower();
+        return c == up and c != low;
+    }
+
+    public static fn isLowerCase(str c) -> bool {
+        if (c.length() != 1) {
+            return false;
+        }
+        str up = c.upper();
+        str low = c.lower();
+        return c == low and c != up;
+    }
+
+    public static fn toUpperCase(str c) -> str {
+        return c.upper();
+    }
+
+    public static fn toLowerCase(str c) -> str {
+        return c.lower();
+    }
+
+    public static fn getNumericValue(str c) -> int {
+        return _charCodeValue(c);
+    }
+
+    public static fn compare(str a, str b) -> int {
+        int diff = ord(a) - ord(b);
+        if (diff < 0) {
+            return -1;
+        }
+        if (diff > 0) {
+            return 1;
+        }
+        return 0;
+    }
+
+    public static fn valueOf(str c) -> Character {
+        return new Character(c);
+    }
+
+    public fn charValue() -> str {
+        return self->ch;
+    }
+
+    public fn equals(Object? o) -> bool {
+        if (not o) {
+            return false;
+        }
+        if (typeName(o) != "Character") {
+            return false;
+        }
+        Character other = (Character) o;
+        return self->ch == other->charValue();
+    }
+
+    public fn hashCode() -> int {
+        return ord(self->ch);
+    }
+
+    public fn toString() -> str {
+        return self->ch;
+    }
+
+    public fn __str__() -> str {
+        return self->ch;
+    }
+}

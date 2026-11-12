@@ -1,0 +1,37 @@
+/* aster.lang.Number: base class for the numeric wrapper types.
+   Aster stores all integers as 64-bit int, so intValue and longValue
+   share the same backing field. */
+
+import aster.lang.Object;
+
+export class Number extends Object {
+    protected int i;
+
+    constructor(int v) {
+        self->i = v;
+    }
+
+    public fn intValue() -> int {
+        return self->i;
+    }
+
+    public fn longValue() -> int {
+        return self->i;
+    }
+
+    public fn floatValue() -> float {
+        return (float) self->i;
+    }
+
+    public fn doubleValue() -> float {
+        return (float) self->i;
+    }
+
+    public fn toString() -> str {
+        return str(self->i);
+    }
+
+    public fn __str__() -> str {
+        return str(self->i);
+    }
+}

@@ -1,0 +1,5 @@
+/* aster.util.function.ToDoubleFunction: Java ToDoubleFunction<T> shape. */
+
+export interface ToDoubleFunction {
+    fn applyAsDouble(any value) -> float;
+}

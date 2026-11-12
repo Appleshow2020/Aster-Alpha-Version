@@ -1,0 +1,91 @@
+import System.stdout.*;
+
+import aster.math.BigInteger;
+import aster.math.BigDecimal;
+import aster.math.RoundingMode;
+import aster.math.MathContext;
+from aster.math.RoundingMode import roundingModeName;
+from aster.math.RoundingMode import roundingModeOrdinal;
+from aster.math.RoundingMode import roundingModeFromName;
+
+/* --- BigInteger: 팩토리얼, 거듭제곱, 나눗셈, gcd, radix, 비트 --- */
+
+BigInteger factorial = BigInteger.one();
+int i = 1;
+while (i <= 30) {
+    factorial = factorial.multiply(new BigInteger(i));
+    i = i + 1;
+}
+println(factorial.toString());
+assert factorial.equals(new BigInteger("265252859812191058636308480000000"));
+
+println(new BigInteger(2).pow(100).toString());
+println(new BigInteger("123456789012345678901234567890")
+    .divide(new BigInteger("9876543210")).toString());
+println(new BigInteger("123456789012345678901234567890")
+    .remainder(new BigInteger("1000000007")).toString());
+list<BigInteger> qr = new BigInteger("100").divideAndRemainder(new BigInteger("7"));
+println(qr[0].toString() + " r " + qr[1].toString());
+
+println(new BigInteger(48).gcd(new BigInteger(18)).toString());
+println(new BigInteger(17).subtract(new BigInteger(42)).toString());
+println(new BigInteger(-42).abs().toString());
+println(new BigInteger(-42).signum());
+println(new BigInteger(-42).compareTo(new BigInteger("-41")));
+
+println(new BigInteger("255").toString(16));
+println(new BigInteger("255").toString(2));
+println(BigInteger.fromRadix("deadbeef", 16).toString());
+println(BigInteger.fromRadix("zz", 36).toString());
+
+println(new BigInteger(-8).shiftRight(1).toString());
+println(new BigInteger(5).setBit(3).toString());
+println(new BigInteger(13).clearBit(2).toString());
+println(new BigInteger(5).flipBit(0).toString());
+println(new BigInteger(-1).testBit(7));
+println(new BigInteger(97).isProbablePrime(10));
+println(new BigInteger(100).isProbablePrime(10));
+println(BigInteger.valueOf(42).longValue());
+println(BigInteger.ZERO.toString() + BigInteger.ONE.toString() + BigInteger.TEN.toString());
+assert BigInteger.valueOf(10).mod(new BigInteger(3)).equals(BigInteger.one());
+
+/* --- BigDecimal: 덧셈, 곱셈, 나눗셈, setScale, toString --- */
+
+BigDecimal a = new BigDecimal("123.45");
+BigDecimal b = new BigDecimal("-0.0067");
+println(a.add(b).toString());
+println(a.multiply(b).toString());
+println(new BigDecimal("1").divide(new BigDecimal("8")).toString());
+println(new BigDecimal("10.00").divide(new BigDecimal("4")).toString());
+println(new BigDecimal("1").divide(new BigDecimal("3"), 5, RoundingMode.HALF_UP).toString());
+println(new BigDecimal("2.5").setScale(0, RoundingMode.HALF_EVEN).toString());
+println(new BigDecimal("3.5").setScale(0, RoundingMode.HALF_EVEN).toString());
+println(new BigDecimal("-2.5").setScale(0, RoundingMode.CEILING).toString());
+println(new BigDecimal("-2.5").setScale(0, RoundingMode.FLOOR).toString());
+println(new BigDecimal("-2.1").setScale(0, RoundingMode.UP).toString());
+println(new BigDecimal("2.9").setScale(0, RoundingMode.DOWN).toString());
+println(new BigDecimal("1.5").pow(3).toString());
+println(new BigDecimal("1.2300").stripTrailingZeros().toString());
+println(new BigDecimal("123.45").movePointLeft(2).toString());
+println(new BigDecimal("0.000123").movePointRight(3).toString());
+println(new BigDecimal("9223372036854775807.9").toString());
+println(new BigDecimal("12.340").compareTo(new BigDecimal("12.34")));
+println(new BigDecimal("12.340").equals(new BigDecimal("12.34")));
+println(new BigDecimal("12.9").intValue());
+
+/* --- RoundingMode / MathContext --- */
+
+println(roundingModeName(RoundingMode.HALF_EVEN));
+println(roundingModeOrdinal(RoundingMode.FLOOR));
+println(roundingModeFromName("half_up") ?? RoundingMode.UP);
+MathContext mc = new MathContext(9);
+println(mc.getPrecision());
+println(mc.getRoundingMode() == RoundingMode.HALF_UP);
+println(mc.toString());
+MathContext d64 = MathContext.decimal64();
+println(d64.getPrecision());
+println(d64.getRoundingMode() == RoundingMode.HALF_EVEN);
+println(MathContext.unlimited().getPrecision());
+println(mc.equals(MathContext.of(9, RoundingMode.HALF_UP)));
+
+println("p4_math ok");

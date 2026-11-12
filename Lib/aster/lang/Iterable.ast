@@ -1,0 +1,10 @@
+/* aster.lang.Iterable: for-in이 인식하는 이터레이터 계약.
+
+   Aster의 interface는 제네릭 매개변수를 지원하지 않으므로 타입 인자 없이
+   선언한다. 구현체는 __iter__()/__next__() 훅을 제공하면 for-in으로 순회된다. */
+
+import aster.util.Iterator;
+
+export interface Iterable {
+    fn iterator() -> Iterator;
+}

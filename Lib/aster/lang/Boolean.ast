@@ -1,0 +1,79 @@
+/* aster.lang.Boolean: wrapper plus logical helpers. The static TRUE/FALSE
+   constants are plain bool values (adaptation: Aster has no boxed statics). */
+
+import aster.lang.Object;
+
+export class Boolean extends Object {
+    public static bool TRUE = true;
+    public static bool FALSE = false;
+
+    private bool bv;
+
+    constructor(bool v) {
+        self->bv = v;
+    }
+
+    public static fn parseBoolean(str s) -> bool {
+        return s.trim().lower() == "true";
+    }
+
+    public static fn valueOf(bool v) -> bool {
+        return v;
+    }
+
+    public static fn toString(bool v) -> str {
+        if (v) {
+            return "true";
+        }
+        return "false";
+    }
+
+    public static fn logicalAnd(bool a, bool b) -> bool {
+        return a and b;
+    }
+
+    public static fn logicalOr(bool a, bool b) -> bool {
+        return a or b;
+    }
+
+    public static fn logicalXor(bool a, bool b) -> bool {
+        if (a == b) {
+            return false;
+        }
+        return true;
+    }
+
+    public static fn logicalNot(bool a) -> bool {
+        return not a;
+    }
+
+    public fn booleanValue() -> bool {
+        return self->bv;
+    }
+
+    public fn equals(Object? o) -> bool {
+        if (not o) {
+            return false;
+        }
+        if (typeName(o) != "Boolean") {
+            return false;
+        }
+        Boolean other = (Boolean) o;
+        return self->bv == other->booleanValue();
+    }
+
+    public fn hashCode() -> int {
+        if (self->bv) {
+            return 1231;
+        }
+        return 1237;
+    }
+
+    public fn toString() -> str {
+        return Boolean.toString(self->bv);
+    }
+
+    public fn __str__() -> str {
+        return Boolean.toString(self->bv);
+    }
+}

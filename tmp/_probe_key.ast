@@ -1,0 +1,5 @@
+import System.stdout.*;
+a = ["bb", "a", "ccc"];
+a.sort((str s) -> int => s.length());
+println(a);
+println(sorted([5, 2, 9], (int x) -> int => -x));

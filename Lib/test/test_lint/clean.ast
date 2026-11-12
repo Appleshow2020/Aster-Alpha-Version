@@ -1,0 +1,11 @@
+import System.stdout.*;
+
+fn add(int a, int b) -> int {
+    return a + b;
+}
+
+fn main() -> int {
+    int total = add(1, 2);
+    println(total);
+    return 0;
+}

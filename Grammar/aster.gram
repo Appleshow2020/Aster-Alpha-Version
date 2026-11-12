@@ -18,6 +18,7 @@
 #   package import from as fn class extends implements interface new self
 #   public protected private internal
 #   if else while for break continue return yield throw try catch finally
+#   switch case default
 #   typedef struct and or not is in true false sizeof
 #   int float bool str null void super exception export
 # 소프트 키워드: constructor getter setter property
@@ -53,6 +54,7 @@ compound_stmt:
     | if_stmt
     | while_stmt
     | for_stmt
+    | switch_stmt
     | try_stmt
 
 # 일반 문장: 모두 ';'로 끝난다.
@@ -140,7 +142,10 @@ assign_op:
 # nullable은 맨 끝에만 온다: int?  int*?  (int?* 는 불가)  [명세 변경: 원래 프롬프트는 금지]
 # null?, null* 는 문법은 통과하고 typecheck에서 거부한다.
 # 함수 타입: fn(int, str) -> bool   (반환 없음은 'void')
-type: type_base pointer_suffix* ['?']
+# [union] '|'는 타입 위치에서만 쓴다: int | str, Point*? | null
+# 식 위치의 '|'는 파서가 거부한다 ('|>' 파이프만 허용).
+type: union_arm ('|' union_arm)*
+union_arm: type_base pointer_suffix* ['?']
 type_base:
     | primitive_type
     | 'struct' NAME                    # [Q2.1] struct Point p;
@@ -193,9 +198,10 @@ exception_def: 'exception' NAME ['extends' NAME] ';'
 
 # enum Color { RED, GREEN, BLUE }        값은 0부터의 순서
 # enum Color { RED = 1, GREEN = 4 }      명시값
-# 멤버는 Color.RED.name / .ordinal / .value 로 읽는다.
+# enum Shape { Circle(float r), Empty }  페이로드 변형. Shape.Circle(1.5)로 생성.
+# 멤버는 Color.RED.name / .ordinal / .value / .variant / .arity / .payload 로 읽는다.
 enum_def: 'enum' NAME '{' [enum_member (',' enum_member)* [',']] '}' [';']
-enum_member: NAME ['=' expression]
+enum_member: NAME ['(' [param (',' param)*] ')'] ['=' expression]
 
 # ===== 클래스 =====
 
@@ -285,6 +291,18 @@ c_for_stmt: 'for' '(' for_init ';' expression ';' for_step ')' block
 for_init: var_decl_core | assign_core
 # i++ / i-- 도 문장으로 쓸 수 있다.
 for_step: assign_core | expression
+
+switch_stmt: 'switch' '(' expression ')' '{' switch_case* '}'
+switch_case:
+    | 'case' pattern block
+    | 'default' block                                       # PBind("_")로 표현한다
+
+# case 패턴. fallthrough가 없으므로 각 case는 자기 block을 가진다.
+# 'default'는 마지막에 한 번만 올 수 있다.
+pattern:
+    | INT | FLOAT | STRING | 'true' | 'false' | 'null' | '-' (INT | FLOAT)
+    | NAME                                                  # 아무 값이나 받는 바인딩 (_는 와일드카드)
+    | NAME ('.' NAME)* ['(' [pattern (',' pattern)* [',']] ')']   # Shape.Circle(r), Shape.Empty
 
 try_stmt:
     | 'try' block catch_clause+ ['finally' block]

@@ -1,0 +1,5 @@
+/* aster.util.function.UnaryOperator: Java UnaryOperator<T> shape. */
+
+export interface UnaryOperator {
+    fn apply(any value) -> any;
+}

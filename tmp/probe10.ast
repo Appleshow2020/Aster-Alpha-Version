@@ -1,0 +1,11 @@
+import System.stdout.*;
+float magnitude = 1234.567;
+int a = int(magnitude);
+println(a, typeName(a));
+float fracPart = magnitude - float(a);
+int factor = 100;
+int frac = int(fracPart * float(factor) + 0.5);
+println(frac, typeName(frac));
+float v = 3.5;
+float scaled = v;
+println(scaled);

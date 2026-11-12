@@ -1,0 +1,189 @@
+/* aster.time.Instant: 유닉스 에포크 기준의 시간상의 한 점 (초 + 나노초). */
+
+import aster.time.LocalDate;
+import aster.time.LocalTime;
+import aster.time.DateTimeParseException;
+
+extern fn _aster_now_ms() -> int;
+
+const int INSTANT_NANOS_PER_SECOND = 1000000000;
+const int INSTANT_SECONDS_PER_DAY = 86400;
+
+fn _instantIsDigit(str ch) -> bool {
+    if (ch.length() == 0) { return false; }
+    return "0123456789".find(ch) >= 0;
+}
+
+fn _instantIsDigits(str text) -> bool {
+    if (text.length() == 0) { return false; }
+    int i = 0;
+    while (i < text.length()) {
+        if (not _instantIsDigit(text.charAt(i))) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
+fn _instantParseError(str text) -> void {
+    throw ("Text '" + text + "' cannot be parsed as an Instant") as DateTimeParseException;
+}
+
+/* "+01:00", "-0530", "+09" 같은 오프셋을 초로 바꾼다. */
+fn _offsetSeconds(str text) -> int {
+    if (text.length() < 3) { return 0 - 1000000; }
+    str sign = text.charAt(0);
+    if (sign != "+" and sign != "-") { return 1000000; }
+    str body = text.substring(1, text.length());
+    body = body.replace(":", "");
+    if (body.length() != 2 and body.length() != 4 and body.length() != 6) {
+        return 1000000;
+    }
+    if (not _instantIsDigits(body)) { return 1000000; }
+    int hour = body.substring(0, 2).to_int();
+    int minute = 0;
+    int second = 0;
+    if (body.length() >= 4) { minute = body.substring(2, 4).to_int(); }
+    if (body.length() == 6) { second = body.substring(4, 6).to_int(); }
+    if (hour > 18 or minute > 59 or second > 59) { return 1000000; }
+    int total = hour * 3600 + minute * 60 + second;
+    if (sign == "-") { return -total; }
+    return total;
+}
+
+export class Instant {
+    private int secondValue;
+    private int nanoValue;
+
+    constructor(int epochSecond, int nano) {
+        self->secondValue = epochSecond;
+        self->nanoValue = nano;
+    }
+
+    public static fn now() -> Instant {
+        int millis = _aster_now_ms();
+        return Instant.ofEpochSecond(millis / 1000, (millis % 1000) * 1000000);
+    }
+
+    public static fn ofEpochSecond(int epochSecond) -> Instant {
+        return new Instant(epochSecond, 0);
+    }
+
+    /* nanoAdjustment는 초 단위로 정규화된다 (Java와 같은 바닥 나눗셈). */
+    public static fn ofEpochSecond(int epochSecond, int nanoAdjustment) -> Instant {
+        int seconds = epochSecond + nanoAdjustment // INSTANT_NANOS_PER_SECOND;
+        int nanos = nanoAdjustment % INSTANT_NANOS_PER_SECOND;
+        return new Instant(seconds, nanos);
+    }
+
+    public static fn ofEpochMilli(int epochMilli) -> Instant {
+        return Instant.ofEpochSecond(epochMilli // 1000,
+                                     (epochMilli % 1000) * 1000000);
+    }
+
+    /* "2024-02-29T12:30:45Z" (오프셋 표기도 허용). */
+    public static fn parse(str text) -> Instant {
+        int t = text.find("T");
+        if (t < 0) { t = text.find("t"); }
+        if (t <= 0 or t >= text.length() - 1) { _instantParseError(text); }
+        str datePart = text.substring(0, t);
+        str rest = text.substring(t + 1, text.length());
+        int offset = 0;
+        if (rest.endswith("Z") or rest.endswith("z")) {
+            rest = rest.substring(0, rest.length() - 1);
+        }
+        else {
+            int marker = -1;
+            int k = 1;
+            while (k < rest.length()) {
+                str ch = rest.charAt(k);
+                if (ch == "+" or ch == "-") { marker = k; }
+                k = k + 1;
+            }
+            if (marker < 0) { _instantParseError(text); }
+            offset = _offsetSeconds(rest.substring(marker, rest.length()));
+            if (offset == 1000000 or offset == -1000000) { _instantParseError(text); }
+            rest = rest.substring(0, marker);
+        }
+        LocalDate date = LocalDate.parse(datePart);
+        LocalTime time = LocalTime.parse(rest);
+        int seconds = date.toEpochDay() * INSTANT_SECONDS_PER_DAY
+                    + time.toSecondOfDay() - offset;
+        return new Instant(seconds, time.getNano());
+    }
+
+    public fn getEpochSecond() -> int {
+        return self->secondValue;
+    }
+
+    public fn getNano() -> int {
+        return self->nanoValue;
+    }
+
+    public fn toEpochMilli() -> int {
+        return self->secondValue * 1000 + self->nanoValue / 1000000;
+    }
+
+    public fn plusSeconds(int seconds) -> Instant {
+        return new Instant(self->secondValue + seconds, self->nanoValue);
+    }
+
+    public fn plusMillis(int millis) -> Instant {
+        return Instant.ofEpochSecond(self->secondValue,
+                                     self->nanoValue + millis * 1000000);
+    }
+
+    public fn plusNanos(int nanos) -> Instant {
+        return Instant.ofEpochSecond(self->secondValue, self->nanoValue + nanos);
+    }
+
+    public fn minusSeconds(int seconds) -> Instant {
+        return self->plusSeconds(-seconds);
+    }
+
+    public fn minusMillis(int millis) -> Instant {
+        return self->plusMillis(-millis);
+    }
+
+    public fn minusNanos(int nanos) -> Instant {
+        return self->plusNanos(-nanos);
+    }
+
+    public fn isBefore(Instant other) -> bool {
+        return self->compareTo(other) < 0;
+    }
+
+    public fn isAfter(Instant other) -> bool {
+        return self->compareTo(other) > 0;
+    }
+
+    public fn compareTo(Instant other) -> int {
+        if (self->secondValue < other.secondValue) { return -1; }
+        if (self->secondValue > other.secondValue) { return 1; }
+        if (self->nanoValue < other.nanoValue) { return -1; }
+        if (self->nanoValue > other.nanoValue) { return 1; }
+        return 0;
+    }
+
+    public fn equals(Instant other) -> bool {
+        return self->secondValue == other.secondValue
+            and self->nanoValue == other.nanoValue;
+    }
+
+    public fn hashCode() -> int {
+        return self->secondValue * 31 + self->nanoValue;
+    }
+
+    /* ISO-8601 (UTC), 예: 1970-01-01T00:00:00Z */
+    public fn toString() -> str {
+        int days = self->secondValue // INSTANT_SECONDS_PER_DAY;
+        int secondOfDay = self->secondValue % INSTANT_SECONDS_PER_DAY;
+        LocalDate date = LocalDate.ofEpochDay(days);
+        LocalTime time = LocalTime.ofNanoOfDay(
+            secondOfDay * INSTANT_NANOS_PER_SECOND + self->nanoValue);
+        return date.toString() + "T" + time.toString() + "Z";
+    }
+
+    public fn __str__() -> str {
+        return self->toString();
+    }
+}

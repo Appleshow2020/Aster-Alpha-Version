@@ -1,0 +1,149 @@
+/* aster.util.UUID: 128비트 식별자 (Java UUID 스타일).
+
+   128비트를 32비트 워드 4개(w0..w3)로 나눠 담는다. Aster의 int는 부호 있는
+   64비트이고 비트 연산이 없으므로, 32비트 워드 단위로 산술 처리하면
+   오버플로 없이 버전/변형 비트를 세울 수 있다.
+
+   randomUUID()는 버전 4, 변형 10(RFC 4122)을 만든다.
+   fromString()은 8-4-4-4-12 형식을 그대로 받아들인다.
+   getMostSignificantBits()는 w0*2^32 + w1이며, w0의 최상위 비트가 서면
+   64비트 부호 범위를 넘으므로 그런 값은 표현할 수 없다(생성 값은 안전하다). */
+
+import aster.util.Random;
+import aster.util.Objects;
+
+const int WORD_BASE = 4294967296;   /* 2^32 */
+const int WORD_LIMIT = 1073741824;  /* 2^30 */
+const int WORD_SIGN = 2147483648;   /* 2^31 */
+const str HEX_DIGITS = "0123456789abcdef";
+
+fn wordHex(int value) -> str {
+    str text = "{:x}".format(value);
+    while (text.length() < 8) {
+        text = "0" + text;
+    }
+    return text;
+}
+
+export class UUID {
+    private int w0;
+    private int w1;
+    private int w2;
+    private int w3;
+
+    constructor(int w0, int w1, int w2, int w3) {
+        self->w0 = w0;
+        self->w1 = w1;
+        self->w2 = w2;
+        self->w3 = w3;
+    }
+
+    public static fn randomUUID() -> UUID {
+        Random rng = new Random();
+        int w0 = rng.nextInt();
+        int w1 = rng.nextInt();
+        int w2 = rng.nextInt();
+        int w3 = rng.nextInt();
+        /* version 4: w1의 12..15번 비트 */
+        w1 = (w1 // 65536) * 65536 + 16384 + (w1 % 4096);
+        /* variant 10: w2의 최상위 두 비트 */
+        w2 = w2 % WORD_LIMIT + WORD_SIGN;
+        return new UUID(w0, w1, w2, w3);
+    }
+
+    public static fn fromString(str text) -> UUID {
+        str clean = text.replace("-", "").lower();
+        if (clean.length() != 32) {
+            throw "invalid UUID string" as ValueError;
+        }
+        int i = 0;
+        while (i < 32) {
+            if (HEX_DIGITS.find(clean.charAt(i)) < 0) {
+                throw "invalid UUID string" as ValueError;
+            }
+            i = i + 1;
+        }
+        list<int> words = [];
+        int w = 0;
+        i = 0;
+        while (i < 32) {
+            w = w * 16 + HEX_DIGITS.find(clean.charAt(i));
+            if (i % 8 == 7) {
+                words.append(w);
+                w = 0;
+            }
+            i = i + 1;
+        }
+        return new UUID(words[0], words[1], words[2], words[3]);
+    }
+
+    public fn getMostSignificantBits() -> int {
+        if (self->w0 >= WORD_SIGN) {
+            throw "most significant bits do not fit signed 64-bit" as ValueError;
+        }
+        return self->w0 * WORD_BASE + self->w1;
+    }
+
+    public fn getLeastSignificantBits() -> int {
+        if (self->w2 >= WORD_SIGN) {
+            throw "least significant bits do not fit signed 64-bit" as ValueError;
+        }
+        return self->w2 * WORD_BASE + self->w3;
+    }
+
+    public fn toString() -> str {
+        str text = wordHex(self->w0) + wordHex(self->w1) + wordHex(self->w2)
+            + wordHex(self->w3);
+        return text.substring(0, 8) + "-" + text.substring(8, 12) + "-"
+            + text.substring(12, 16) + "-" + text.substring(16, 20) + "-"
+            + text.substring(20);
+    }
+
+    public fn equals(UUID* other) -> bool {
+        if (other is null) {
+            return false;
+        }
+        return self->w0 == other->w0 and self->w1 == other->w1
+            and self->w2 == other->w2 and self->w3 == other->w3;
+    }
+
+    public fn __eq__(UUID* other) -> bool {
+        return self->equals(other);
+    }
+
+    public fn hashCode() -> int {
+        int h = (self->w0 * 31 + self->w1) % 2147483647;
+        h = (h * 31 + self->w2) % 2147483647;
+        return (h * 31 + self->w3) % 2147483647;
+    }
+
+    private fn cmpWord(int a, int b) -> int {
+        if (a == b) {
+            return 0;
+        }
+        if (a < b) {
+            return -1;
+        }
+        return 1;
+    }
+
+    public fn compareTo(UUID* other) -> int {
+        int c = self->cmpWord(self->w0, other->w0);
+        if (c != 0) {
+            return c;
+        }
+        c = self->cmpWord(self->w1, other->w1);
+        if (c != 0) {
+            return c;
+        }
+        c = self->cmpWord(self->w2, other->w2);
+        if (c != 0) {
+            return c;
+        }
+        return self->cmpWord(self->w3, other->w3);
+    }
+
+    public fn __str__() -> str {
+        return self->toString();
+    }
+}

@@ -1,0 +1,2 @@
+import aster.io.File;
+println(File.separator());

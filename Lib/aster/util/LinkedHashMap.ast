@@ -1,0 +1,11 @@
+/* aster.util.LinkedHashMap: 삽입 순서를 유지하는 HashMap.
+
+   내부 dict가 이미 삽입 순서를 유지하므로 HashMap을 그대로 상속한다. */
+
+import aster.util.HashMap;
+
+export class LinkedHashMap<K, V> extends HashMap<K, V> {
+    constructor() {
+        super();
+    }
+}

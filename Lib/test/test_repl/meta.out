@@ -1,0 +1,3 @@
+  :help   show this help
+  :quit   leave the REPL (also Ctrl-D)
+  multi-line input continues until the block is complete

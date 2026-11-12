@@ -1,0 +1,17 @@
+import System.stdout.*;
+
+println(sum([1, 2, 3]));
+println(sum([1, 2], 10));
+println(sum([1.5, 2.5]));
+println(min([3, 1, 2]), max([3, 1, 2]));
+println(min(4, 9, 2), max(4, 9, 2));
+println(abs(-7), abs(2.5), abs(0));
+println(round(2.5), round(3.5), round(2.567, 2), round(1234, -2));
+println(all([true, 1, "x"]), all([true, 0]));
+println(any([false, 0, "y"]), any([false, 0]));
+println(zip([1, 2, 3], ["a", "b"]));
+println(enumerate(["x", "y"]));
+println(enumerate(["x", "y"], 10));
+println(sorted([3, 1, 2]));
+println(sorted(["bb", "a", "ccc"], (str s) -> int => s.length()));
+println(sum(range(1, 6)));

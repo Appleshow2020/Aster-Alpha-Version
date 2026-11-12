@@ -7,6 +7,7 @@ typedef struct Arena Arena;
 
 Arena *Arena_New(void);
 void *Arena_Alloc(Arena *a, size_t n);                  /* 0으로 채워서 돌려준다 */
+void *Arena_AllocNoZero(Arena *a, size_t n);            /* 호출자가 모든 필드를 채울 때 */
 char *Arena_Strndup(Arena *a, const char *s, size_t n);
 void Arena_Free(Arena *a);
 

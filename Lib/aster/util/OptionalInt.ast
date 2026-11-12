@@ -1,0 +1,56 @@
+/* aster.util.OptionalInt: int 전용 Optional. 생성자 오버로드가 없으므로
+   empty()/of(v) 정적 팩토리를 쓴다. */
+
+export class OptionalInt {
+    private int value;
+    private bool present;
+
+    constructor() {
+        self->value = 0;
+        self->present = false;
+    }
+
+    public static fn empty() -> OptionalInt {
+        return new OptionalInt();
+    }
+
+    public static fn of(int value) -> OptionalInt {
+        OptionalInt opt = new OptionalInt();
+        opt.value = value;
+        opt.present = true;
+        return opt;
+    }
+
+    public fn getAsInt() -> int {
+        if (not self->present) {
+            throw "no value present" as NoSuchElementError;
+        }
+        return self->value;
+    }
+
+    public fn isPresent() -> bool {
+        return self->present;
+    }
+
+    public fn isEmpty() -> bool {
+        return not self->present;
+    }
+
+    public fn orElse(int other) -> int {
+        if (self->present) {
+            return self->value;
+        }
+        return other;
+    }
+
+    public fn toString() -> str {
+        if (not self->present) {
+            return "OptionalInt.empty";
+        }
+        return "OptionalInt[" + str(self->value) + "]";
+    }
+
+    public fn __str__() -> str {
+        return self->toString();
+    }
+}

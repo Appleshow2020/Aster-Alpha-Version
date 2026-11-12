@@ -1,0 +1,5 @@
+/* aster.util.function.DoublePredicate: Java DoublePredicate shape. */
+
+export interface DoublePredicate {
+    fn test(float value) -> bool;
+}

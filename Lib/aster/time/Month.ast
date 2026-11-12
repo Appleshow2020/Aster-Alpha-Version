@@ -1,0 +1,97 @@
+/* aster.time.Month: 달 (1월 = 1, 12월 = 12).
+   열거형에는 메서드를 둘 수 없으므로 값 변환은 컴패니언 함수로 제공한다. */
+
+enum Month {
+    JANUARY,
+    FEBRUARY,
+    MARCH,
+    APRIL,
+    MAY,
+    JUNE,
+    JULY,
+    AUGUST,
+    SEPTEMBER,
+    OCTOBER,
+    NOVEMBER,
+    DECEMBER
+}
+
+/* 1..12 값. */
+fn monthValue(Month month) -> int {
+    return month.ordinal + 1;
+}
+
+/* 1..12 값을 달로 바꾼다. */
+fn monthOf(int value) -> Month {
+    if (value < 1 or value > 12) {
+        throw ("Invalid value for Month: " + str(value)) as ValueError;
+    }
+    if (value == 1) { return Month.JANUARY; }
+    if (value == 2) { return Month.FEBRUARY; }
+    if (value == 3) { return Month.MARCH; }
+    if (value == 4) { return Month.APRIL; }
+    if (value == 5) { return Month.MAY; }
+    if (value == 6) { return Month.JUNE; }
+    if (value == 7) { return Month.JULY; }
+    if (value == 8) { return Month.AUGUST; }
+    if (value == 9) { return Month.SEPTEMBER; }
+    if (value == 10) { return Month.OCTOBER; }
+    if (value == 11) { return Month.NOVEMBER; }
+    return Month.DECEMBER;
+}
+
+/* 그 달의 일수. leap은 윤년 여부다. */
+fn monthLength(Month month, bool leap) -> int {
+    int value = month.ordinal + 1;
+    if (value == 2) {
+        if (leap) { return 29; }
+        return 28;
+    }
+    if (value == 4 or value == 6 or value == 9 or value == 11) {
+        return 30;
+    }
+    return 31;
+}
+
+/* 그 달 1일의 연중 일 (1부터). Java Month.firstDayOfYear와 같다. */
+fn monthFirstDayOfYear(Month month, bool leap) -> int {
+    list<int> starts = [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334];
+    int day = starts[month.ordinal] + 1;
+    if (leap and month.ordinal >= 2) {
+        day = day + 1;
+    }
+    return day;
+}
+
+/* months만큼 뒤의 달 (음수 가능). */
+fn monthPlus(Month month, int months) -> Month {
+    int value = (month.ordinal + months % 12) % 12;
+    if (value < 0) { value = value + 12; }
+    return monthOf(value + 1);
+}
+
+/* months만큼 앞의 달. */
+fn monthMinus(Month month, int months) -> Month {
+    return monthPlus(month, -months);
+}
+
+/* 영어 전체 이름 (January ... December). */
+fn monthFullName(Month month) -> str {
+    if (month == Month.JANUARY) { return "January"; }
+    if (month == Month.FEBRUARY) { return "February"; }
+    if (month == Month.MARCH) { return "March"; }
+    if (month == Month.APRIL) { return "April"; }
+    if (month == Month.MAY) { return "May"; }
+    if (month == Month.JUNE) { return "June"; }
+    if (month == Month.JULY) { return "July"; }
+    if (month == Month.AUGUST) { return "August"; }
+    if (month == Month.SEPTEMBER) { return "September"; }
+    if (month == Month.OCTOBER) { return "October"; }
+    if (month == Month.NOVEMBER) { return "November"; }
+    return "December";
+}
+
+/* 영어 3글자 이름 (Jan ... Dec). */
+fn monthShortName(Month month) -> str {
+    return monthFullName(month).substring(0, 3);
+}

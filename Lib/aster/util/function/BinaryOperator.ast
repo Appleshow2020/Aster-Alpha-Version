@@ -1,0 +1,5 @@
+/* aster.util.function.BinaryOperator: Java BinaryOperator<T> shape. */
+
+export interface BinaryOperator {
+    fn apply(any first, any second) -> any;
+}

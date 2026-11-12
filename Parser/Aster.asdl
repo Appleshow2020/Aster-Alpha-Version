@@ -21,6 +21,7 @@ module Aster
           | StructDef(identifier tag, identifier? alias, struct_member* members)
           | VarDecl(typeref ty, identifier name, initializer init, int is_const)
           -- enum Color { RED, GREEN, BLUE }  (값은 선언 순서 ordinal)
+          -- enum Shape { Circle(float r), Rect(float w, float h), Empty }
           | EnumDef(identifier name, enum_member* members)
           -- 'var (a, b) = expr;' 또는 '(a, b) = expr;'
           | Destructure(identifier* names, expr value)
@@ -34,6 +35,8 @@ module Aster
           | ForRange(typeref ty, identifier name, range_expr iter, stmt* body)
           -- for (T x in expr) { ... }. iterable은 list/tuple/set/frozenset/dict/str.
           | ForIn(typeref ty, identifier name, expr iter, stmt* body)
+          -- switch (subject) { case PATTERN { ... } ... default { ... } }
+          | Switch(expr subject, match_case* cases)
           | Try(stmt* body, handler* handlers, stmt* finalbody)
           -- yield expr;  (제너레이터 함수 안에서만)
           | Yield(expr? value)
@@ -113,6 +116,8 @@ module Aster
              | StructRef(identifier tag)
              | Pointer(typeref base)
              | Nullable(typeref base)
+             -- 합집합 타입: int | str | null
+             | UnionTy(typeref* members)
              -- 함수 타입: fn(int, str) -> bool
              | FunctionTy(typeref* params, ret returns)
  
@@ -126,7 +131,16 @@ module Aster
      signature = (access? access, identifier name, param* params, ret returns)
      handler = (typeref ty, identifier name, stmt* body)
      range_expr = (expr start, expr stop, expr? step)
-     enum_member = (identifier name, expr? value)
+     enum_member = (identifier name, param* params, expr? value)
+ 
+     -- switch의 case 하나. pattern이 맞으면 body를 실행하고 끝난다 (fallthrough 없음).
+     match_case = (match_pattern pattern, stmt* body)
+     -- PLiteral: 1, "x", true, null 같은 리터럴 상수
+     -- PVariant: Shape.Circle(r) 처럼 타입.변형(하위 패턴...) 형태
+     -- PBind: 이름 하나로 아무 값이나 받는다 (_는 바인딩하지 않는 와일드카드)
+     match_pattern = PLiteral(expr value)
+                   | PVariant(expr path, match_pattern* items)
+                   | PBind(identifier name)
  
      initializer = NoInit
                  | ExprInit(expr value)

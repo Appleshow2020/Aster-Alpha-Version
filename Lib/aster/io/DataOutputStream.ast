@@ -1,0 +1,61 @@
+/* aster.io.DataOutputStream: 기본 타입을 big-endian 바이트로 인코딩한다.
+   Aster에는 비트 연산이 없으므로 Codec의 나눗셈/나머지 헬퍼를 쓴다.
+   writeDouble은 Java와 달리 소수 6자리 고정 소수점(1e6 배율)으로 저장한다. */
+
+import aster.io.ByteArrayOutputStream;
+import aster.io.Codec;
+
+export class DataOutputStream {
+    private ByteArrayOutputStream out;
+
+    constructor(ByteArrayOutputStream target) {
+        self->out = target;
+    }
+
+    public fn writeInt(int value) -> void {
+        self->out.writeBytes(Codec.toBytesBE(value, 4));
+    }
+
+    public fn writeLong(int value) -> void {
+        self->out.writeBytes(Codec.toBytesBE(value, 8));
+    }
+
+    public fn writeByte(int value) -> void {
+        self->out.write(Codec.byteValue(value));
+    }
+
+    public fn writeBoolean(bool value) -> void {
+        if (value) {
+            self->out.write(1);
+        }
+        else {
+            self->out.write(0);
+        }
+    }
+
+    public fn writeDouble(float value) -> void {
+        int scaled = (int)(value * 1000000.0);
+        self->writeLong(scaled);
+    }
+
+    public fn writeUTF(str value) -> void {
+        list<int> bytes = Codec.encodeUtf8(value);
+        self->out.writeBytes(Codec.toBytesBE(len(bytes), 2));
+        self->out.writeBytes(bytes);
+    }
+
+    public fn size() -> int {
+        return self->out.size();
+    }
+
+    public fn toByteArray() -> list<int> {
+        return self->out.toByteArray();
+    }
+
+    public fn flush() -> void {
+    }
+
+    public fn close() -> void {
+        self->out.close();
+    }
+}

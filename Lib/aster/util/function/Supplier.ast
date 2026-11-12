@@ -1,0 +1,5 @@
+/* aster.util.function.Supplier: Java Supplier<T> shape. */
+
+export interface Supplier {
+    fn get() -> any;
+}

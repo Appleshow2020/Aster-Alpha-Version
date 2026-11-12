@@ -1,0 +1,5 @@
+/* aster.util.function.BiConsumer: Java BiConsumer<T, U> shape. */
+
+export interface BiConsumer {
+    fn accept(any first, any second) -> void;
+}

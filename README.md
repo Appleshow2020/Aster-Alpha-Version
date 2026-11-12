@@ -29,7 +29,8 @@ make
 make check
 ```
 
-프론트엔드(토큰/AST)와 실행 테스트를 모두 돌립니다.
+프론트엔드(토큰/AST), 실행 테스트, REPL, 도구(포매터/린터/디버거) 테스트를 모두
+돌립니다. Python은 `make check`와 `make regen`에서만 쓰입니다.
 
 ## 설치
 
@@ -75,6 +76,10 @@ aster hello.ast
 ```sh
 aster - < program.ast
 ```
+
+파일 없이 실행하면 대화형 REPL이 열립니다(`:help`, `:quit`). 그 밖에 `--check`,
+`--ast`, `--tokens`, `--format`, `--lint`, `--debug` 같은 옵션은
+[Doc/language.md](Doc/language.md) 1절을 봅니다.
 
 ## 문제 해결
 

@@ -1,0 +1,168 @@
+/* aster.time.YearMonth: 연도+월 (yyyy-MM). */
+
+import aster.time.Month;
+from aster.time.Month import monthOf;
+from aster.time.Month import monthLength;
+from aster.time.Month import monthValue;
+import aster.time.LocalDate;
+import aster.time.DateTimeParseException;
+
+fn _ymParseError(str text) -> void {
+    throw ("Text '" + text + "' cannot be parsed as a YearMonth") as DateTimeParseException;
+}
+
+fn _ymIsDigits(str text) -> bool {
+    if (text.length() == 0) { return false; }
+    int i = 0;
+    while (i < text.length()) {
+        if ("0123456789".find(text.charAt(i)) < 0) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
+export class YearMonth {
+    private int yearValue;
+    private int monthNumber;
+
+    constructor(int year, int month) {
+        if (year < 1 or year > 9999) {
+            throw ("Invalid value for Year: " + str(year)) as ValueError;
+        }
+        if (month < 1 or month > 12) {
+            throw ("Invalid value for MonthOfYear: " + str(month)) as ValueError;
+        }
+        self->yearValue = year;
+        self->monthNumber = month;
+    }
+
+    public static fn now() -> YearMonth {
+        LocalDate today = LocalDate.now();
+        return new YearMonth(today.getYear(), today.getMonthValue());
+    }
+
+    /* enum 오버로드를 먼저 선언해야 인터프리터 폴백이 올바르게 동작한다. */
+    public static fn of(int year, Month month) -> YearMonth {
+        return new YearMonth(year, monthValue(month));
+    }
+
+    public static fn of(int year, int month) -> YearMonth {
+        return new YearMonth(year, month);
+    }
+
+    public static fn parse(str text) -> YearMonth {
+        if (text.length() != 7) { _ymParseError(text); }
+        if (text.charAt(4) != "-") { _ymParseError(text); }
+        str ys = text.substring(0, 4);
+        str ms = text.substring(5, 7);
+        if (not _ymIsDigits(ys) or not _ymIsDigits(ms)) { _ymParseError(text); }
+        return new YearMonth(ys.to_int(), ms.to_int());
+    }
+
+    public fn getYear() -> int {
+        return self->yearValue;
+    }
+
+    public fn getMonthValue() -> int {
+        return self->monthNumber;
+    }
+
+    public fn getMonth() -> Month {
+        return monthOf(self->monthNumber);
+    }
+
+    public fn isLeapYear() -> bool {
+        return LocalDate.isLeapYear(self->yearValue);
+    }
+
+    public fn lengthOfMonth() -> int {
+        return monthLength(monthOf(self->monthNumber), self->isLeapYear());
+    }
+
+    public fn lengthOfYear() -> int {
+        if (self->isLeapYear()) { return 366; }
+        return 365;
+    }
+
+    public fn isValidDay(int dayOfMonth) -> bool {
+        return dayOfMonth >= 1 and dayOfMonth <= self->lengthOfMonth();
+    }
+
+    public fn plusMonths(int months) -> YearMonth {
+        int total = self->yearValue * 12 + (self->monthNumber - 1) + months;
+        int year = total // 12;
+        int month = total % 12 + 1;
+        return new YearMonth(year, month);
+    }
+
+    public fn plusYears(int years) -> YearMonth {
+        return new YearMonth(self->yearValue + years, self->monthNumber);
+    }
+
+    public fn minusMonths(int months) -> YearMonth {
+        return self->plusMonths(-months);
+    }
+
+    public fn minusYears(int years) -> YearMonth {
+        return self->plusYears(-years);
+    }
+
+    public fn withYear(int year) -> YearMonth {
+        return new YearMonth(year, self->monthNumber);
+    }
+
+    public fn withMonth(int month) -> YearMonth {
+        return new YearMonth(self->yearValue, month);
+    }
+
+    public fn atDay(int dayOfMonth) -> LocalDate {
+        return LocalDate.of(self->yearValue, self->monthNumber, dayOfMonth);
+    }
+
+    public fn atEndOfMonth() -> LocalDate {
+        return LocalDate.of(self->yearValue, self->monthNumber, self->lengthOfMonth());
+    }
+
+    public fn isBefore(YearMonth other) -> bool {
+        return self->compareTo(other) < 0;
+    }
+
+    public fn isAfter(YearMonth other) -> bool {
+        return self->compareTo(other) > 0;
+    }
+
+    public fn compareTo(YearMonth other) -> int {
+        if (self->yearValue != other.yearValue) {
+            if (self->yearValue < other.yearValue) { return -1; }
+            return 1;
+        }
+        if (self->monthNumber != other.monthNumber) {
+            if (self->monthNumber < other.monthNumber) { return -1; }
+            return 1;
+        }
+        return 0;
+    }
+
+    public fn equals(YearMonth other) -> bool {
+        return self->yearValue == other.yearValue
+            and self->monthNumber == other.monthNumber;
+    }
+
+    public fn hashCode() -> int {
+        return self->yearValue * 12 + self->monthNumber;
+    }
+
+    public fn toString() -> str {
+        str ys = str(self->yearValue);
+        if (self->yearValue < 10) { ys = "000" + ys; }
+        else if (self->yearValue < 100) { ys = "00" + ys; }
+        else if (self->yearValue < 1000) { ys = "0" + ys; }
+        str ms = str(self->monthNumber);
+        if (self->monthNumber < 10) { ms = "0" + ms; }
+        return ys + "-" + ms;
+    }
+
+    public fn __str__() -> str {
+        return self->toString();
+    }
+}

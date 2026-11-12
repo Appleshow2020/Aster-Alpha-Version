@@ -1,0 +1,6 @@
+import System.stdout.*;
+
+str name = input("name: ");
+println("hello, " + name);
+int age = int(input());
+println(age + 1);

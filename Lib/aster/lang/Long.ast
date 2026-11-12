@@ -1,0 +1,273 @@
+/* aster.lang.Long: 64-bit integer wrapper. Aster's int is already 64-bit,
+   so this mirrors Integer with 64-bit constants and unsigned rendering. */
+
+import aster.lang.Object;
+import aster.lang.Number;
+
+const str _LONG_DIGITS = "0123456789abcdefghijklmnopqrstuvwxyz";
+
+fn _longDigitValue(str ch) -> int {
+    return _LONG_DIGITS.find(ch.lower());
+}
+
+fn _longLow(int value) -> int {
+    return value % 4294967296;
+}
+
+fn _longHigh(int value) -> int {
+    int low = value % 4294967296;
+    int high = (value - low) / 4294967296;
+    if (high < 0) {
+        high = high + 4294967296;
+    }
+    return high;
+}
+
+fn _longUnsignedString(int value, int radix) -> str {
+    int high = _longHigh(value);
+    int low = _longLow(value);
+    if (high == 0 and low == 0) {
+        return "0";
+    }
+    str out = "";
+    while (high != 0 or low != 0) {
+        int combined = (high % radix) * 4294967296 + low;
+        out = _LONG_DIGITS.charAt(combined % radix) + out;
+        high = high / radix;
+        low = combined / radix;
+    }
+    return out;
+}
+
+fn _longBits32(int u) -> int {
+    int count = 0;
+    while (u > 0) {
+        if (u % 2 != 0) {
+            count = count + 1;
+        }
+        u = u / 2;
+    }
+    return count;
+}
+
+fn _longHighest32(int u) -> int {
+    int p = 0;
+    int bit = 1;
+    while (bit <= u and bit <= 2147483648) {
+        p = bit;
+        bit = bit * 2;
+    }
+    return p;
+}
+
+fn _longLowest32(int u) -> int {
+    if (u == 0) {
+        return 0;
+    }
+    int p = 1;
+    while (u % 2 == 0) {
+        u = u / 2;
+        p = p * 2;
+    }
+    return p;
+}
+
+export class Long extends Number {
+    private int lval;
+
+    public static int MAX_VALUE = 9223372036854775807;
+    public static int MIN_VALUE = -9223372036854775807 - 1;
+    public static int SIZE = 64;
+    public static int BYTES = 8;
+
+    constructor(int v) {
+        super(v);
+        self->lval = v;
+    }
+
+    public static fn parseLong(str s) -> int {
+        return Long.parseLong(s, 10);
+    }
+
+    public static fn parseLong(str s, int radix) -> int {
+        if (radix < 2 or radix > 36) {
+            throw "radix out of range: " + str(radix) as ValueError;
+        }
+        if (s.length() == 0) {
+            throw "empty numeric string" as ValueError;
+        }
+        int pos = 0;
+        int sign = 1;
+        str first = s.charAt(0);
+        if (first == "-") {
+            sign = -1;
+            pos = 1;
+        }
+        else if (first == "+") {
+            pos = 1;
+        }
+        if (pos >= s.length()) {
+            throw "invalid integer: " + s as ValueError;
+        }
+        /* Accumulate the magnitude as two 32-bit words so that strings at
+           the int64 boundary can be validated without overflowing. */
+        int hi = 0;
+        int lo = 0;
+        while (pos < s.length()) {
+            int d = _longDigitValue(s.charAt(pos));
+            if (d < 0 or d >= radix) {
+                throw "invalid integer: " + s as ValueError;
+            }
+            int lowPart = lo * radix + d;
+            lo = lowPart % 4294967296;
+            int carry = lowPart / 4294967296;
+            int highPart = hi * radix + carry;
+            if (highPart >= 4294967296) {
+                throw "integer out of range: " + s as ValueError;
+            }
+            hi = highPart;
+            pos = pos + 1;
+        }
+        if (sign > 0) {
+            if (hi >= 2147483648) {
+                throw "integer out of range: " + s as ValueError;
+            }
+            return hi * 4294967296 + lo;
+        }
+        if (hi == 2147483648) {
+            if (lo == 0) {
+                return Long.MIN_VALUE;
+            }
+            throw "integer out of range: " + s as ValueError;
+        }
+        return 0 - (hi * 4294967296 + lo);
+    }
+
+    public static fn valueOf(int v) -> Long {
+        return new Long(v);
+    }
+
+    public static fn toString(int value) -> str {
+        return str(value);
+    }
+
+    public static fn toString(int value, int radix) -> str {
+        if (radix < 2 or radix > 36) {
+            throw "radix out of range: " + str(radix) as ValueError;
+        }
+        return _longUnsignedString(value, radix);
+    }
+
+    public static fn toHexString(int value) -> str {
+        return _longUnsignedString(value, 16);
+    }
+
+    public static fn toOctalString(int value) -> str {
+        return _longUnsignedString(value, 8);
+    }
+
+    public static fn toBinaryString(int value) -> str {
+        return _longUnsignedString(value, 2);
+    }
+
+    public static fn compare(int x, int y) -> int {
+        if (x < y) { return -1; }
+        if (x > y) { return 1; }
+        return 0;
+    }
+
+    public static fn compareUnsigned(int x, int y) -> int {
+        if (x < 0) {
+            if (y < 0) {
+                return Long.compare(x, y);
+            }
+            return 1;
+        }
+        if (y < 0) {
+            return -1;
+        }
+        return Long.compare(x, y);
+    }
+
+    public static fn signum(int value) -> int {
+        if (value < 0) { return -1; }
+        if (value > 0) { return 1; }
+        return 0;
+    }
+
+    public static fn max(int x, int y) -> int {
+        if (x >= y) { return x; }
+        return y;
+    }
+
+    public static fn min(int x, int y) -> int {
+        if (x <= y) { return x; }
+        return y;
+    }
+
+    public static fn sum(int x, int y) -> int {
+        return x + y;
+    }
+
+    public static fn bitCount(int value) -> int {
+        return _longBits32(_longHigh(value)) + _longBits32(_longLow(value));
+    }
+
+    public static fn highestOneBit(int value) -> int {
+        int high = _longHigh(value);
+        int low = _longLow(value);
+        if (high > 0) {
+            int hb = _longHighest32(high);
+            if (hb == 2147483648) {
+                return Long.MIN_VALUE;
+            }
+            return hb * 4294967296;
+        }
+        return _longHighest32(low);
+    }
+
+    public static fn lowestOneBit(int value) -> int {
+        int high = _longHigh(value);
+        int low = _longLow(value);
+        int lb = _longLowest32(low);
+        if (lb != 0) {
+            return lb;
+        }
+        int hb = _longLowest32(high);
+        if (hb == 2147483648) {
+            return Long.MIN_VALUE;
+        }
+        return hb * 4294967296;
+    }
+
+    public fn equals(Object? o) -> bool {
+        if (not o) {
+            return false;
+        }
+        if (typeName(o) != "Long") {
+            return false;
+        }
+        Long other = (Long) o;
+        return self->lval == other->lval;
+    }
+
+    public fn hashCode() -> int {
+        return self->lval;
+    }
+
+    public fn __eq__(Long other) -> bool {
+        return self->lval == other->lval;
+    }
+
+    public fn compareTo(Long other) -> int {
+        return Long.compare(self->lval, other->lval);
+    }
+
+    public fn toString() -> str {
+        return str(self->lval);
+    }
+
+    public fn __str__() -> str {
+        return str(self->lval);
+    }
+}

@@ -1,0 +1,306 @@
+import System.stdout.*;
+import System;
+import aster.io.Closeable;
+import aster.io.Flushable;
+import aster.io.Serializable;
+import aster.io.Readable;
+import aster.io.Codec;
+import aster.io.Reader;
+import aster.io.Writer;
+import aster.io.StringReader;
+import aster.io.BufferedReader;
+import aster.io.StringWriter;
+import aster.io.BufferedWriter;
+import aster.io.PrintWriter;
+import aster.io.ByteArrayInputStream;
+import aster.io.ByteArrayOutputStream;
+import aster.io.DataOutputStream;
+import aster.io.DataInputStream;
+import aster.util.function.Function;
+import aster.util.function.BiFunction;
+import aster.util.function.Consumer;
+import aster.util.function.BiConsumer;
+import aster.util.function.Supplier;
+import aster.util.function.Predicate;
+import aster.util.function.BiPredicate;
+import aster.util.function.UnaryOperator;
+import aster.util.function.BinaryOperator;
+import aster.util.function.IntFunction;
+import aster.util.function.IntPredicate;
+import aster.util.function.IntConsumer;
+import aster.util.function.IntSupplier;
+import aster.util.function.IntUnaryOperator;
+import aster.util.function.IntBinaryOperator;
+import aster.util.function.BooleanSupplier;
+import aster.util.function.DoubleSupplier;
+import aster.util.function.DoublePredicate;
+import aster.util.function.DoubleUnaryOperator;
+import aster.util.function.LongSupplier;
+import aster.util.function.LongPredicate;
+import aster.util.function.LongUnaryOperator;
+import aster.util.function.ToIntFunction;
+import aster.util.function.ToDoubleFunction;
+import aster.util.function.ToLongFunction;
+import aster.util.Optional;
+import aster.util.stream.Stream;
+import aster.util.stream.IntStream;
+import aster.util.stream.LongStream;
+import aster.util.stream.DoubleStream;
+import aster.util.stream.Collector;
+import aster.util.stream.Collectors;
+
+/* ===== function interfaces as implementable contracts ===== */
+
+class Doubler implements IntUnaryOperator {
+    public fn applyAsInt(int value) -> int {
+        return value * 2;
+    }
+}
+
+class Adder implements IntBinaryOperator {
+    public fn applyAsInt(int first, int second) -> int {
+        return first + second;
+    }
+}
+
+class Greeter implements Function {
+    public fn apply(any value) -> any {
+        return "hello " + str(value);
+    }
+}
+
+class Token implements Serializable {
+    public str name;
+    constructor(str name) {
+        self->name = name;
+    }
+}
+
+fn trace(int value) -> void {
+    println("trace " + str(value));
+}
+
+/* Aster type-checks interface implementation but cannot use an imported
+   interface as a value type, so the classes are exercised directly. */
+Doubler doubler = new Doubler();
+Adder adder = new Adder();
+Greeter greeter = new Greeter();
+println(doubler.applyAsInt(21));
+println(adder.applyAsInt(2, 3));
+println(greeter.apply("aster"));
+Token token = new Token("t1");
+println(token.name);
+
+/* ===== Reader family ===== */
+
+StringReader reader = new StringReader("hello\nworld");
+println(reader.read());
+println(reader.read(4));
+println(reader.ready());
+println(reader.readToEnd());
+println(reader.ready());
+println(reader.read());
+reader.close();
+
+StringReader readable = new StringReader("abc");
+list<int> drained = [];
+while (true) {
+    int cp = readable.read();
+    if (cp < 0) {
+        break;
+    }
+    drained.append(cp);
+}
+println(drained);
+
+BufferedReader buffered = new BufferedReader(new StringReader("alpha\nbeta\r\ngamma"));
+println(buffered.readLine());
+println(buffered.readLine());
+println(buffered.readLine());
+println(buffered.readLine());
+buffered.close();
+
+BufferedReader chars = new BufferedReader(new StringReader("xyz"));
+println(chars.read());
+println(chars.read());
+
+StringReader closer = new StringReader("z");
+closer.close();
+println("reader closed");
+
+/* ===== Writer family ===== */
+
+StringWriter sw = new StringWriter();
+sw.write("Hello");
+sw.append(", ").append("Aster");
+sw.write(33);
+println(sw.toString());
+println(sw.getBuffer().length());
+sw.flush();
+sw.close();
+
+StringWriter target = new StringWriter();
+BufferedWriter bufferedWriter = new BufferedWriter(target);
+bufferedWriter.write("line1");
+bufferedWriter.newLine();
+bufferedWriter.write("line2");
+bufferedWriter.flush();
+println(target.toString());
+bufferedWriter.write("line3");
+bufferedWriter.close();
+println(target.toString());
+
+StringWriter pwTarget = new StringWriter();
+PrintWriter pw = new PrintWriter(pwTarget);
+pw.print("x=");
+pw.println(42);
+pw.printf("{} + {} = {}", 2, 3, 5);
+pw.println();
+pw.format("{:.2f}", 3.14159);
+pw.println();
+pw.println();
+pw.flush();
+println(pwTarget.toString());
+println(pw.checkError());
+pw.close();
+
+str path = "tmp/p4_printwriter.txt";
+PrintWriter fileWriter = new PrintWriter(path);
+fileWriter.println("first line");
+fileWriter.println("second line");
+fileWriter.close();
+println(Files.readString(path));
+println(Files.exists(path));
+Files.delete(path);
+println(Files.exists(path));
+
+PrintWriter console = new PrintWriter(System.out);
+console.println("printwriter delegates to stdout");
+console.close();
+
+/* ===== byte array streams ===== */
+
+ByteArrayOutputStream bos = new ByteArrayOutputStream();
+bos.write(65);
+bos.write(66);
+bos.writeBytes([67, 68]);
+println(bos.size());
+println(bos.toString());
+println(bos.toByteArray());
+bos.reset();
+println(bos.size());
+
+ByteArrayInputStream bis = new ByteArrayInputStream([10, 20, 30, 40, 50]);
+println(bis.available());
+println(bis.read());
+println(bis.read(2));
+bis.mark();
+println(bis.read());
+bis.reset();
+println(bis.read());
+println(bis.skip(10));
+println(bis.available());
+println(bis.read());
+println(bis.read());
+
+ByteArrayOutputStream utfOut = new ByteArrayOutputStream();
+utfOut.writeBytes(Codec.encodeUtf8("Aster 한글"));
+println(utfOut.toString());
+println(len(Codec.encodeUtf8("A")));
+
+/* ===== data streams roundtrip ===== */
+
+ByteArrayOutputStream dataBytes = new ByteArrayOutputStream();
+DataOutputStream dos = new DataOutputStream(dataBytes);
+dos.writeInt(123456789);
+dos.writeInt(-42);
+dos.writeLong(9007199254740993);
+dos.writeBoolean(true);
+dos.writeByte(100);
+dos.writeDouble(2.5);
+dos.writeUTF("Aster 한글");
+println(dos.size());
+list<int> encoded = dos.toByteArray();
+println(encoded[0]);
+DataInputStream dis = new DataInputStream(encoded);
+println(dis.readInt());
+println(dis.readInt());
+println(dis.readLong());
+println(dis.readBoolean());
+println(dis.readByte());
+println(dis.readDouble());
+println(dis.readUTF());
+println(dis.available());
+
+/* ===== Stream ===== */
+
+Stream<int> stream = Stream.of([5, 3, 8, 1, 3]);
+println(stream.toList());
+println(stream.count());
+println(stream.filter(x -> bool => x % 2 == 1).toList());
+Stream<int> doubled = stream.map(x -> int => x * 2);
+println(doubled.toList());
+println(stream.sorted().toList());
+println(stream.sorted((int a, int b) -> int => b - a).toList());
+println(stream.distinct().toList());
+println(stream.reduce((int a, int b) -> int => a + b).get());
+println(stream.reduce(100, (int a, int b) -> int => a + b));
+println(stream.anyMatch(x -> bool => x > 7));
+println(stream.allMatch(x -> bool => x > 0));
+println(stream.noneMatch(x -> bool => x < 0));
+println(stream.findFirst().get());
+println(stream.limit(2).toList());
+println(stream.skip(3).toList());
+
+Stream<int> emptyStream = Stream.empty();
+println(emptyStream.count());
+println(emptyStream.findFirst().isPresent());
+println(emptyStream.reduce((int a, int b) -> int => a + b).isPresent());
+
+Stream<int> left = Stream.of([1, 2]);
+Stream<int> right = Stream.of([3]);
+println(Stream.concat(left, right).toList());
+println(Stream.iterate(1, x -> int => x * 2, 5).toList());
+println(Stream.generate(() -> int => 7, 3).toList());
+println(Stream.of([1, 2]).flatMap(x -> list<any> => [x, x * 10]).toList());
+Stream.of([1, 2]).peek(trace).toList();
+Stream.of([4, 5]).forEach(trace);
+
+/* ===== Collectors ===== */
+
+list<any> collected = stream.collect(Collectors.toList());
+println(collected);
+set<any> collectedSet = Stream.of([1, 2, 2]).collect(Collectors.toSet());
+println(len(collectedSet));
+println(Stream.of(["a", "b", "c"]).collect(Collectors.joining("-")));
+println(Stream.of([1, 2, 3, 4]).collect(Collectors.counting()));
+println(Stream.of([1, 2, 3]).collect(Collectors.mapping(x -> int => x * 2, Collectors.toList())));
+println(Stream.of([1, 2, 3]).collect(Collectors.summingInt(x -> int => x)));
+println(Stream.of([1.0, 2.0, 3.0]).collect(Collectors.averagingDouble(x -> float => x)));
+dict<any, list<any>> groups = Stream.of([1, 2, 3, 4, 5]).collect(Collectors.groupingBy(x -> str => str(x % 2)));
+println(groups);
+
+/* ===== primitive streams ===== */
+
+IntStream ints = IntStream.range(1, 6);
+println(ints.toList());
+println(ints.sum());
+println(ints.average());
+println(ints.min());
+println(ints.max());
+println(ints.count());
+println(IntStream.rangeClosed(1, 5).filter(x -> bool => x % 2 == 0).map(x -> int => x * 10).toList());
+println(IntStream.of([1, 2, 3]).sum());
+println(IntStream.range(0, 3).boxed().map(x -> int => x + 1).toList());
+IntStream.range(0, 3).forEach(trace);
+println(IntStream.of([]).min());
+
+println(LongStream.range(1, 4).sum());
+println(LongStream.of([5, 6]).max());
+println(LongStream.of([1, 2]).average());
+
+println(DoubleStream.of([1.5, 2.5]).sum());
+println(DoubleStream.of([1.5, 2.5]).average());
+println(DoubleStream.of([1.5, 2.5]).max());
+println(DoubleStream.of([1.5, 2.5]).map(x -> float => x * 2.0).toList());
+println("done");

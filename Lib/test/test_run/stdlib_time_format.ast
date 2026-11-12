@@ -1,0 +1,11 @@
+import System.stdout.*;
+import aster.time as time;
+
+/* 시간대에 관계없이 성립하는 성질만 확인한다. */
+println(time.formatTime(1700000000, "%Y") == "2023");
+println(time.formatMillis(1700000000000, "%Y") == "2023");
+println(time.isoDate(1700000000).length() == 10);
+println(time.isoDateTime(1700000000).length() == 19);
+println(time.isoDate(86400).length() == 10);
+println(time.formatNow("%Y").length() == 4);
+println(time.formatTime(1700000000, "%Y-%m").length() == 7);

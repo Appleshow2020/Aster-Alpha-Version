@@ -4,22 +4,37 @@
 #endif
 
 #include <errno.h>
+#include <math.h>
 #include <stdarg.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include "internal/runtime.h"
+#include "internal/regex.h"
 
 #if !defined(_WIN32)
 #include <unistd.h>
-#include <time.h>
 #include <sys/types.h>
+#include <sys/stat.h>
+#include <dirent.h>
+#else
+#include <sys/stat.h>
+#include <direct.h>
+#include <io.h>
+#endif
+
+#if !defined(S_ISREG)
+#define S_ISREG(m) (((m) & S_IFMT) == S_IFREG)
+#endif
+#if !defined(S_ISDIR)
+#define S_ISDIR(m) (((m) & S_IFMT) == S_IFDIR)
 #endif
 
 #define MAX_DEPTH 64
 
-static void *xrealloc(void *p, size_t n)
-{
+static void *xrealloc(void *p, size_t n) {
     void *q = realloc(p, n ? n : 1);
     if (!q) {
         fputs("out of memory\n", stderr);
@@ -30,84 +45,107 @@ static void *xrealloc(void *p, size_t n)
 
 /* ---- 값 생성 ---- */
 
-RValue *RValue_New(Interp *in, RKind kind)
-{
-    RValue *v = Arena_Alloc(in->arena, sizeof(RValue));
+/* 값은 만든 뒤에 절대 바뀌지 않으므로 자주 쓰는 값은 하나를 돌려쓴다. */
+#define SMALL_INT_MIN (-128)
+#define SMALL_INT_MAX 256
+
+static RValue small_int_cache[SMALL_INT_MAX - SMALL_INT_MIN + 1];
+static RValue bool_cache[2];
+static RValue null_cache;
+static int value_cache_ready;
+
+static void value_cache_init(void) {
+    int i;
+
+    if (value_cache_ready)
+        return;
+    value_cache_ready = 1;
+    null_cache.kind = RV_NULL;
+    bool_cache[0].kind = RV_BOOL;
+    bool_cache[0].u.b = 0;
+    bool_cache[1].kind = RV_BOOL;
+    bool_cache[1].u.b = 1;
+    for (i = SMALL_INT_MIN; i <= SMALL_INT_MAX; i++) {
+        RValue *v = &small_int_cache[i - SMALL_INT_MIN];
+        v->kind = RV_INT;
+        v->u.i = i;
+    }
+}
+
+RValue *RValue_New(Interp *in, RKind kind) {
+    RValue *v = Arena_AllocNoZero(in->arena, sizeof(RValue));
     v->kind = kind;
     return v;
 }
 
-RValue *RValue_Null(Interp *in)
-{
-    return RValue_New(in, RV_NULL);
+RValue *RValue_Null(Interp *in) {
+    (void)in;
+    value_cache_init();
+    return &null_cache;
 }
 
-RValue *RValue_Int(Interp *in, int64_t i)
-{
-    RValue *v = RValue_New(in, RV_INT);
+RValue *RValue_Int(Interp *in, int64_t i) {
+    RValue *v;
+
+    if (i >= SMALL_INT_MIN && i <= SMALL_INT_MAX) {
+        value_cache_init();
+        return &small_int_cache[i - SMALL_INT_MIN];
+    }
+    v = RValue_New(in, RV_INT);
     v->u.i = i;
     return v;
 }
 
-RValue *RValue_Float(Interp *in, double f)
-{
+RValue *RValue_Float(Interp *in, double f) {
     RValue *v = RValue_New(in, RV_FLOAT);
     v->u.f = f;
     return v;
 }
 
-RValue *RValue_Bool(Interp *in, int b)
-{
-    RValue *v = RValue_New(in, RV_BOOL);
-    v->u.b = b ? 1 : 0;
-    return v;
+RValue *RValue_Bool(Interp *in, int b) {
+    (void)in;
+    value_cache_init();
+    return &bool_cache[b ? 1 : 0];
 }
 
-RValue *RValue_Str(Interp *in, AsterString *s)
-{
+RValue *RValue_Str(Interp *in, AsterString *s) {
     RValue *v = RValue_New(in, RV_STR);
     v->u.s = s;
     return v;
 }
 
-RValue *RValue_Object(Interp *in, AstInstance *obj)
-{
+RValue *RValue_Object(Interp *in, AstInstance *obj) {
     RValue *v = RValue_New(in, RV_OBJECT);
     v->u.obj = obj;
     return v;
 }
 
-RValue *RValue_Struct(Interp *in, AstStructValue *stv)
-{
+RValue *RValue_Struct(Interp *in, AstStructValue *stv) {
     RValue *v = RValue_New(in, RV_STRUCT);
     v->u.stv = stv;
     return v;
 }
 
-RValue *RValue_Func(Interp *in, AstFn *fn)
-{
+RValue *RValue_Func(Interp *in, AstFn *fn) {
     RValue *v = RValue_New(in, RV_FUNC);
     v->u.fn = fn;
     return v;
 }
 
-RValue *RValue_Builtin(Interp *in, AstBuiltin *builtin)
-{
+RValue *RValue_Builtin(Interp *in, AstBuiltin *builtin) {
     RValue *v = RValue_New(in, RV_BUILTIN);
     v->u.builtin = builtin;
     return v;
 }
 
-RValue *RValue_Ptr(Interp *in, RValue **slot, typeref_ty ty)
-{
+RValue *RValue_Ptr(Interp *in, RValue **slot, typeref_ty ty) {
     RValue *v = RValue_New(in, RV_PTR);
     v->u.ptr.slot = slot;
     v->u.ptr.ty = ty;
     return v;
 }
 
-RValue *RValue_Exception(Interp *in, const char *name, RValue *message)
-{
+RValue *RValue_Exception(Interp *in, const char *name, RValue *message) {
     AstException *e = Arena_Alloc(in->arena, sizeof(AstException));
     RValue *v = RValue_New(in, RV_EXC);
     e->name = name;
@@ -116,71 +154,61 @@ RValue *RValue_Exception(Interp *in, const char *name, RValue *message)
     return v;
 }
 
-RValue *RValue_ExcClass(Interp *in, const char *name)
-{
+RValue *RValue_ExcClass(Interp *in, const char *name) {
     RValue *v = RValue_New(in, RV_EXC_CLASS);
     v->u.exc_name = name;
     return v;
 }
 
-RValue *RValue_Class(Interp *in, AstClass *cls)
-{
+RValue *RValue_Class(Interp *in, AstClass *cls) {
     RValue *v = RValue_New(in, RV_CLASS);
     v->u.cls = cls;
     return v;
 }
 
-RValue *RValue_StructType(Interp *in, AstStructType *type)
-{
+RValue *RValue_StructType(Interp *in, AstStructType *type) {
     RValue *v = RValue_New(in, RV_STRUCTTYPE);
     v->u.stype = type;
     return v;
 }
 
-RValue *RValue_List(Interp *in, AsterList *list)
-{
+RValue *RValue_List(Interp *in, AsterList *list) {
     RValue *v = RValue_New(in, RV_LIST);
     v->u.list = list;
     return v;
 }
 
-RValue *RValue_Tuple(Interp *in, AsterTuple *tuple)
-{
+RValue *RValue_Tuple(Interp *in, AsterTuple *tuple) {
     RValue *v = RValue_New(in, RV_TUPLE);
     v->u.tuple = tuple;
     return v;
 }
 
-RValue *RValue_Dict(Interp *in, AsterDict *dict)
-{
+RValue *RValue_Dict(Interp *in, AsterDict *dict) {
     RValue *v = RValue_New(in, RV_DICT);
     v->u.dict = dict;
     return v;
 }
 
-RValue *RValue_Set(Interp *in, AsterSet *set)
-{
+RValue *RValue_Set(Interp *in, AsterSet *set) {
     RValue *v = RValue_New(in, RV_SET);
     v->u.set = set;
     return v;
 }
 
-RValue *RValue_FrozenSet(Interp *in, AsterSet *set)
-{
+RValue *RValue_FrozenSet(Interp *in, AsterSet *set) {
     RValue *v = RValue_New(in, RV_FROZENSET);
     v->u.set = set;
     return v;
 }
 
-RValue *RValue_Module(Interp *in, AstModule *module)
-{
+RValue *RValue_Module(Interp *in, AstModule *module) {
     RValue *v = RValue_New(in, RV_MODULE);
     v->u.module = module;
     return v;
 }
 
-RValue *RValue_Super(Interp *in, AstClass *owner, RValue *self)
-{
+RValue *RValue_Super(Interp *in, AstClass *owner, RValue *self) {
     AsterSuper *s = Arena_Alloc(in->arena, sizeof(AsterSuper));
     RValue *v = RValue_New(in, RV_SUPER);
     s->owner = owner;
@@ -189,24 +217,44 @@ RValue *RValue_Super(Interp *in, AstClass *owner, RValue *self)
     return v;
 }
 
-RValue *RValue_Enum(Interp *in, AstEnumType *type, const char *name, size_t index)
-{
+RValue *RValue_Enum(Interp *in, AstEnumType *type, const char *name, size_t index) {
     RValue *v = RValue_New(in, RV_ENUM);
     v->u.en.type = type;
     v->u.en.name = name;
     v->u.en.index = index;
+    v->u.en.payload = NULL;
+    v->u.en.npayload = 0;
     return v;
 }
 
-RValue *RValue_EnumType(Interp *in, AstEnumType *type)
-{
+RValue *RValue_EnumPayload(Interp *in, AstEnumType *type, const char *name, size_t index,
+                           RValue **args, size_t nargs) {
+    RValue *v = RValue_Enum(in, type, name, index);
+    if (nargs) {
+        RValue **payload = Arena_Alloc(in->arena, nargs * sizeof(RValue *));
+        size_t i;
+        for (i = 0; i < nargs; i++)
+            payload[i] = RValue_Copy(in, args[i]);
+        v->u.en.payload = payload;
+        v->u.en.npayload = nargs;
+    }
+    return v;
+}
+
+RValue *RValue_EnumCtor(Interp *in, AstEnumType *type, size_t index) {
+    RValue *v = RValue_New(in, RV_VARIANT_CTOR);
+    v->u.vc.type = type;
+    v->u.vc.index = index;
+    return v;
+}
+
+RValue *RValue_EnumType(Interp *in, AstEnumType *type) {
     RValue *v = RValue_New(in, RV_ENUMTYPE);
     v->u.etype = type;
     return v;
 }
 
-RValue *RValue_Overload(Interp *in, AstOverload *overload)
-{
+RValue *RValue_Overload(Interp *in, AstOverload *overload) {
     RValue *v = RValue_New(in, RV_OVERLOAD);
     v->u.overload = overload;
     return v;
@@ -214,8 +262,7 @@ RValue *RValue_Overload(Interp *in, AstOverload *overload)
 
 /* ---- 호출 스택 (트레이스백) ---- */
 
-void Interp_FrameAppend(Interp *in, const char *name, int line)
-{
+void Interp_FrameAppend(Interp *in, const char *name, int line) {
     if (in->nframes == in->cap_frames) {
         size_t cap = in->cap_frames ? in->cap_frames * 2 : 16;
         AstFrame *grown = Arena_Alloc(in->arena, cap * sizeof(AstFrame));
@@ -229,25 +276,21 @@ void Interp_FrameAppend(Interp *in, const char *name, int line)
     in->nframes++;
 }
 
-void Interp_FramePush(Interp *in, const char *name)
-{
+void Interp_FramePush(Interp *in, const char *name) {
     Interp_FrameAppend(in, name, in->line);
 }
 
-void Interp_FramePop(Interp *in)
-{
+void Interp_FramePop(Interp *in) {
     if (in->nframes > 0)
         in->nframes--;
 }
 
-void Interp_FrameTruncate(Interp *in, size_t n)
-{
+void Interp_FrameTruncate(Interp *in, size_t n) {
     if (n < in->nframes)
         in->nframes = n;
 }
 
-void Interp_PrintTraceback(FILE *out, Interp *in)
-{
+void Interp_PrintTraceback(FILE *out, Interp *in) {
     size_t i;
 
     if (!in || in->nframes == 0)
@@ -259,8 +302,7 @@ void Interp_PrintTraceback(FILE *out, Interp *in)
     }
 }
 
-RValue *RValue_Generator(Interp *in, AstFn *fn, Env *body_env, RValue *self)
-{
+RValue *RValue_Generator(Interp *in, AstFn *fn, Env *body_env, RValue *self) {
     AstGenerator *gen = Arena_Alloc(in->arena, sizeof(AstGenerator));
     Interp *gin = Arena_Alloc(in->arena, sizeof(Interp));
     RValue *v = RValue_New(in, RV_GENERATOR);
@@ -296,13 +338,11 @@ RValue *RValue_Generator(Interp *in, AstFn *fn, Env *body_env, RValue *self)
 
 /* ---- 컬렉션 ---- */
 
-AsterList *List_New(Interp *in)
-{
+AsterList *List_New(Interp *in) {
     return Arena_Alloc(in->arena, sizeof(AsterList));
 }
 
-static void grow_items(Interp *in, RValue ***items, size_t *cap, size_t need)
-{
+static void grow_items(Interp *in, RValue ***items, size_t *cap, size_t need) {
     size_t ncap = *cap ? *cap : 8;
     while (ncap < need)
         ncap *= 2;
@@ -311,15 +351,13 @@ static void grow_items(Interp *in, RValue ***items, size_t *cap, size_t need)
     *cap = ncap;
 }
 
-void List_Append(Interp *in, AsterList *list, RValue *value)
-{
+void List_Append(Interp *in, AsterList *list, RValue *value) {
     if (list->len == list->cap)
         grow_items(in, &list->items, &list->cap, list->len + 1);
     list->items[list->len++] = value;
 }
 
-void List_Insert(Interp *in, AsterList *list, size_t index, RValue *value)
-{
+void List_Insert(Interp *in, AsterList *list, size_t index, RValue *value) {
     if (index > list->len)
         index = list->len;
     if (list->len == list->cap)
@@ -330,8 +368,7 @@ void List_Insert(Interp *in, AsterList *list, size_t index, RValue *value)
     list->len++;
 }
 
-void List_RemoveAt(AsterList *list, size_t index)
-{
+void List_RemoveAt(AsterList *list, size_t index) {
     if (index >= list->len)
         return;
     memmove(list->items + index, list->items + index + 1,
@@ -339,8 +376,7 @@ void List_RemoveAt(AsterList *list, size_t index)
     list->len--;
 }
 
-AsterTuple *Tuple_New(Interp *in, size_t len)
-{
+AsterTuple *Tuple_New(Interp *in, size_t len) {
     AsterTuple *tuple = Arena_Alloc(in->arena, sizeof(AsterTuple));
     tuple->len = len;
     if (len)
@@ -348,13 +384,11 @@ AsterTuple *Tuple_New(Interp *in, size_t len)
     return tuple;
 }
 
-AsterDict *Dict_New(Interp *in)
-{
+AsterDict *Dict_New(Interp *in) {
     return Arena_Alloc(in->arena, sizeof(AsterDict));
 }
 
-static void dict_alloc_index(AsterDict *dict, size_t cap)
-{
+static void dict_alloc_index(AsterDict *dict, size_t cap) {
     size_t i;
     dict->index = xrealloc(dict->index, cap * sizeof(long));
     memset(dict->index, 0, cap * sizeof(long));
@@ -367,8 +401,7 @@ static void dict_alloc_index(AsterDict *dict, size_t cap)
     }
 }
 
-long Dict_FindIndex(const AsterDict *dict, const RValue *key)
-{
+long Dict_FindIndex(const AsterDict *dict, const RValue *key) {
     uint64_t h;
     size_t pos, start;
 
@@ -396,14 +429,12 @@ long Dict_FindIndex(const AsterDict *dict, const RValue *key)
     }
 }
 
-RValue *Dict_Lookup(const AsterDict *dict, const RValue *key)
-{
+RValue *Dict_Lookup(const AsterDict *dict, const RValue *key) {
     long i = Dict_FindIndex(dict, key);
     return i < 0 ? NULL : dict->entries[i].value;
 }
 
-int Dict_Set(Interp *in, AsterDict *dict, RValue *key, RValue *value, int *ok)
-{
+int Dict_Set(Interp *in, AsterDict *dict, RValue *key, RValue *value, int *ok) {
     uint64_t h;
     size_t pos, start;
     long found;
@@ -451,8 +482,7 @@ int Dict_Set(Interp *in, AsterDict *dict, RValue *key, RValue *value, int *ok)
     return 1;
 }
 
-void Dict_RemoveAt(AsterDict *dict, size_t index)
-{
+void Dict_RemoveAt(AsterDict *dict, size_t index) {
     if (index >= dict->len)
         return;
     memmove(dict->entries + index, dict->entries + index + 1,
@@ -462,13 +492,11 @@ void Dict_RemoveAt(AsterDict *dict, size_t index)
         dict_alloc_index(dict, dict->icap);
 }
 
-AsterSet *Set_New(Interp *in)
-{
+AsterSet *Set_New(Interp *in) {
     return Arena_Alloc(in->arena, sizeof(AsterSet));
 }
 
-static void set_alloc_index(AsterSet *set, size_t cap)
-{
+static void set_alloc_index(AsterSet *set, size_t cap) {
     size_t i;
     set->index = xrealloc(set->index, cap * sizeof(long));
     memset(set->index, 0, cap * sizeof(long));
@@ -481,8 +509,7 @@ static void set_alloc_index(AsterSet *set, size_t cap)
     }
 }
 
-long Set_FindIndex(const AsterSet *set, const RValue *value)
-{
+long Set_FindIndex(const AsterSet *set, const RValue *value) {
     uint64_t h;
     size_t pos, start;
 
@@ -509,13 +536,11 @@ long Set_FindIndex(const AsterSet *set, const RValue *value)
     }
 }
 
-int Set_Has(const AsterSet *set, const RValue *value)
-{
+int Set_Has(const AsterSet *set, const RValue *value) {
     return Set_FindIndex(set, value) >= 0;
 }
 
-int Set_Add(Interp *in, AsterSet *set, RValue *value, int *ok)
-{
+int Set_Add(Interp *in, AsterSet *set, RValue *value, int *ok) {
     uint64_t h;
 
     if (ok)
@@ -551,8 +576,7 @@ int Set_Add(Interp *in, AsterSet *set, RValue *value, int *ok)
     return 1;
 }
 
-void Set_RemoveAt(AsterSet *set, size_t index)
-{
+void Set_RemoveAt(AsterSet *set, size_t index) {
     if (index >= set->len)
         return;
     memmove(set->items + index, set->items + index + 1,
@@ -564,22 +588,19 @@ void Set_RemoveAt(AsterSet *set, size_t index)
         set_alloc_index(set, set->icap);
 }
 
-void Dict_Clear(AsterDict *dict)
-{
+void Dict_Clear(AsterDict *dict) {
     dict->len = 0;
     if (dict->index && dict->icap)
         memset(dict->index, 0, dict->icap * sizeof(long));
 }
 
-void Set_Clear(AsterSet *set)
-{
+void Set_Clear(AsterSet *set) {
     set->len = 0;
     if (set->index && set->icap)
         memset(set->index, 0, set->icap * sizeof(long));
 }
 
-int RValue_Hashable(const RValue *v)
-{
+int RValue_Hashable(const RValue *v) {
     size_t i;
 
     if (!v)
@@ -607,6 +628,12 @@ int RValue_Hashable(const RValue *v)
                 return 0;
         }
         return 1;
+    case RV_ENUM:
+        for (i = 0; i < v->u.en.npayload; i++) {
+            if (!RValue_Hashable(v->u.en.payload[i]))
+                return 0;
+        }
+        return 1;
     default:
         return 1;
     }
@@ -614,14 +641,12 @@ int RValue_Hashable(const RValue *v)
 
 /* ---- 해시 ---- */
 
-static uint64_t hash_mix(uint64_t h, uint64_t x)
-{
+static uint64_t hash_mix(uint64_t h, uint64_t x) {
     h ^= x + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2);
     return h;
 }
 
-static uint64_t hash_bytes(const char *s, size_t n)
-{
+static uint64_t hash_bytes(const char *s, size_t n) {
     uint64_t h = 1469598103934665603ULL;
     size_t i;
     for (i = 0; i < n; i++) {
@@ -631,8 +656,7 @@ static uint64_t hash_bytes(const char *s, size_t n)
     return h;
 }
 
-static uint64_t hash_int(int64_t v)
-{
+static uint64_t hash_int(int64_t v) {
     uint64_t x = (uint64_t)v;
     x ^= x >> 33;
     x *= 0xff51afd7ed558ccdULL;
@@ -640,8 +664,7 @@ static uint64_t hash_int(int64_t v)
     return x;
 }
 
-uint64_t RValue_Hash(const RValue *v)
-{
+uint64_t RValue_Hash(const RValue *v) {
     size_t i;
 
     if (!v)
@@ -702,6 +725,9 @@ uint64_t RValue_Hash(const RValue *v)
                         (uint64_t)v->u.en.index);
     case RV_ENUMTYPE:
         return hash_int((int64_t)(uintptr_t)v->u.etype);
+    case RV_VARIANT_CTOR:
+        return hash_mix(hash_int((int64_t)(uintptr_t)v->u.vc.type),
+                        (uint64_t)v->u.vc.index);
     case RV_EXC:
         return hash_int((int64_t)(uintptr_t)v->u.exc);
     case RV_EXC_CLASS:
@@ -724,8 +750,7 @@ uint64_t RValue_Hash(const RValue *v)
     return 0;
 }
 
-const char *RValue_TypeName(const RValue *v)
-{
+const char *RValue_TypeName(const RValue *v) {
     if (!v)
         return "null";
     switch (v->kind) {
@@ -778,12 +803,13 @@ const char *RValue_TypeName(const RValue *v)
         return "function";
     case RV_GENERATOR:
         return "generator";
+    case RV_VARIANT_CTOR:
+        return "function";
     }
     return "object";
 }
 
-int64_t RValue_Length(Interp *in, const RValue *v, int *ok)
-{
+int64_t RValue_Length(Interp *in, const RValue *v, int *ok) {
     *ok = 1;
     if (!v) {
         *ok = 0;
@@ -826,8 +852,7 @@ int64_t RValue_Length(Interp *in, const RValue *v, int *ok)
     }
 }
 
-int RValue_Iterable(const RValue *v)
-{
+int RValue_Iterable(const RValue *v) {
     if (!v)
         return 0;
     switch (v->kind) {
@@ -846,8 +871,7 @@ int RValue_Iterable(const RValue *v)
     }
 }
 
-size_t RValue_IterLen(Interp *in, const RValue *v, int *ok)
-{
+size_t RValue_IterLen(Interp *in, const RValue *v, int *ok) {
     *ok = 1;
     if (!v)
         goto bad;
@@ -872,8 +896,7 @@ bad:
     return 0;
 }
 
-RValue *RValue_IterAt(Interp *in, const RValue *v, size_t index, int *ok)
-{
+RValue *RValue_IterAt(Interp *in, const RValue *v, size_t index, int *ok) {
     *ok = 1;
     switch (v->kind) {
     case RV_STR: {
@@ -900,8 +923,7 @@ RValue *RValue_IterAt(Interp *in, const RValue *v, size_t index, int *ok)
 
 /* ---- 순회 커서 ---- */
 
-int Iter_Begin(Interp *in, RValue *src, IterCursor *cur)
-{
+int Iter_Begin(Interp *in, RValue *src, IterCursor *cur) {
     memset(cur, 0, sizeof(*cur));
     cur->src = src;
     if (!src) {
@@ -953,8 +975,7 @@ int Iter_Begin(Interp *in, RValue *src, IterCursor *cur)
     }
 }
 
-RValue *Iter_Next(Interp *in, IterCursor *cur, int *ended, int *ok)
-{
+RValue *Iter_Next(Interp *in, IterCursor *cur, int *ended, int *ok) {
     *ended = 0;
     *ok = 1;
     switch (cur->mode) {
@@ -999,8 +1020,7 @@ RValue *Iter_Next(Interp *in, IterCursor *cur, int *ended, int *ok)
     return NULL;
 }
 
-RValue *RValue_Copy(Interp *in, RValue *v)
-{
+RValue *RValue_Copy(Interp *in, RValue *v) {
     AstStructValue *copy;
     size_t i;
 
@@ -1014,59 +1034,270 @@ RValue *RValue_Copy(Interp *in, RValue *v)
 
 /* ---- 환경 ---- */
 
-Env *Env_New(Interp *in, Env *parent)
-{
-    Env *env = Arena_Alloc(in->arena, sizeof(Env));
-    env->parent = parent;
-    return env;
+/* 바인딩이 이 수를 넘으면 이름 해시 색인을 만든다. */
+#define ENV_INDEX_MIN 16
+
+typedef struct EnvIndex {
+    Binding **slots;
+    size_t icap;             /* 2의 거듭제곱. 0이면 색인 미생성 */
+} EnvIndex;
+
+static uint32_t hash_name(const char *s) {
+    uint32_t h = 2166136261u;
+    while (*s) {
+        h ^= (unsigned char)*s++;
+        h *= 16777619u;
+    }
+    return h;
 }
 
-RValue **Env_LookupCell(Env *env, const char *name)
-{
-    for (; env; env = env->parent) {
+static int name_matches(const Binding *b, const char *name, uint32_t hash) {
+    return b->hash == hash && (b->name == name || strcmp(b->name, name) == 0);
+}
+
+static void env_index_insert(Env *env, Binding *b) {
+    EnvIndex *ix = env->idx;
+    size_t mask = ix->icap - 1;
+    size_t j = (size_t)b->hash & mask;
+    for (;;) {
+        Binding *slot = ix->slots[j];
+        if (!slot || name_matches(slot, b->name, b->hash)) {
+            ix->slots[j] = b;   /* 같은 이름이면 최신 바인딩으로 교체 */
+            return;
+        }
+        j = (j + 1) & mask;
+    }
+}
+
+static void env_index_build(Interp *in, Env *env, size_t cap) {
+    EnvIndex *ix = env->idx;
+    Binding *b;
+    ix->icap = cap;
+    ix->slots = Arena_Alloc(in->arena, cap * sizeof(Binding *));
+    /* vars는 최신이 앞이다. 앞에서부터 넣고 중복은 처음 것(최신)을 남긴다. */
+    for (b = env->vars; b; b = b->next) {
+        size_t mask = cap - 1;
+        size_t j = (size_t)b->hash & mask;
+        for (;;) {
+            Binding *slot = ix->slots[j];
+            if (!slot) {
+                ix->slots[j] = b;
+                break;
+            }
+            if (name_matches(slot, b->name, b->hash))
+                break;
+            j = (j + 1) & mask;
+        }
+    }
+}
+
+static void env_link(Interp *in, Env *env, Binding *b) {
+    b->next = env->vars;
+    env->vars = b;
+    env->count++;
+    if (env->idx && env->idx->icap) {
+        if ((size_t)env->count * 10 >= env->idx->icap * 7)
+            env_index_build(in, env, env->idx->icap * 2);
+        else
+            env_index_insert(env, b);
+    }
+    else if (env->count >= ENV_INDEX_MIN) {
+        if (!env->idx)
+            env->idx = Arena_Alloc(in->arena, sizeof(EnvIndex));
+        env_index_build(in, env, 2 * ENV_INDEX_MIN);
+    }
+}
+
+static Binding *env_find(Env *env, const char *name, uint32_t hash) {
+    if (env->idx && env->idx->icap) {
+        EnvIndex *ix = env->idx;
+        size_t mask = ix->icap - 1;
+        size_t j = (size_t)hash & mask;
+        for (;;) {
+            Binding *b = ix->slots[j];
+            if (!b)
+                return NULL;
+            if (name_matches(b, name, hash))
+                return b;
+            j = (j + 1) & mask;
+        }
+    }
+    {
         Binding *b;
         for (b = env->vars; b; b = b->next) {
-            if (!strcmp(b->name, name))
-                return &b->cell;
+            if (name_matches(b, name, hash))
+                return b;
         }
     }
     return NULL;
 }
 
-void Env_Define(Interp *in, Env *env, const char *name, RValue *value)
-{
-    Binding *b = Arena_Alloc(in->arena, sizeof(Binding));
-    b->name = name;
-    b->cell = value;
-    b->is_const = 0;
-    b->next = env->vars;
-    env->vars = b;
+Env *Env_New(Interp *in, Env *parent) {
+    Env *env = Arena_AllocNoZero(in->arena, sizeof(Env));
+    env->parent = parent;
+    env->vars = NULL;
+    env->idx = NULL;
+    env->spare = NULL;
+    env->spare_base = NULL;
+    env->nspare = 0;
+    env->spare_cap = 0;
+    env->count = 0;
+    return env;
 }
 
-void Env_DefineConst(Interp *in, Env *env, const char *name, RValue *value)
-{
-    Binding *b = Arena_Alloc(in->arena, sizeof(Binding));
-    b->name = name;
-    b->cell = value;
-    b->is_const = 1;
-    b->next = env->vars;
-    env->vars = b;
+Env *Env_NewCall(Interp *in, Env *parent, size_t nspare) {
+    char *p = Arena_AllocNoZero(in->arena, sizeof(Env) + nspare * sizeof(Binding));
+    Env *env = (Env *)p;
+    env->parent = parent;
+    env->vars = NULL;
+    env->idx = NULL;
+    env->spare = nspare ? (Binding *)(void *)(p + sizeof(Env)) : NULL;
+    env->spare_base = env->spare;
+    env->nspare = (uint32_t)nspare;
+    env->spare_cap = (uint32_t)nspare;
+    env->count = 0;
+    return env;
 }
 
-int Env_IsConst(Env *env, const char *name)
-{
+/* 반복문 본문 환경: 흔한 지역 선언 몇 개를 미리 담을 슬롯을 함께 잡는다. */
+#define ENV_BLOCK_SPARE 8
+
+static Env *env_new_block(Interp *in, Env *parent) {
+    char *p = Arena_AllocNoZero(in->arena, sizeof(Env) + ENV_BLOCK_SPARE * sizeof(Binding));
+    Env *env = (Env *)p;
+    env->parent = parent;
+    env->vars = NULL;
+    env->idx = NULL;
+    env->spare = (Binding *)(void *)(p + sizeof(Env));
+    env->spare_base = env->spare;
+    env->nspare = ENV_BLOCK_SPARE;
+    env->spare_cap = ENV_BLOCK_SPARE;
+    env->count = 0;
+    return env;
+}
+
+Env *Env_AcquireBlock(Interp *in, Env *parent) {
+    Env *env = in->free_block_envs;
+    if (!env)
+        return env_new_block(in, parent);
+    in->free_block_envs = env->parent;
+    in->nfree_block_envs--;
+    env->parent = parent;
+    env->vars = NULL;
+    env->count = 0;
+    env->spare = env->spare_base;
+    env->nspare = env->spare_cap;
+    return env;
+}
+
+void Env_ReleaseBlock(Interp *in, Env *env) {
+    if (env->idx && env->idx->icap)
+        memset(env->idx->slots, 0, env->idx->icap * sizeof(Binding *));
+    env->vars = NULL;
+    env->spare = env->spare_base;
+    env->nspare = 0;
+    env->count = 0;
+    env->parent = in->free_block_envs;
+    in->free_block_envs = env;
+    in->nfree_block_envs++;
+}
+
+Env *Env_AcquireCall(Interp *in, Env *parent, size_t nspare) {
+    Env **link = &in->free_envs;
+    Env *env;
+    /* 슬롯이 충분한 환경만 꺼낸다. 부족한 환경을 쓰면 호출마다 할당이 생긴다. */
+    while (*link && (*link)->spare_cap < nspare)
+        link = &(*link)->parent;
+    env = *link;
+    if (!env)
+        return Env_NewCall(in, parent, nspare);
+    *link = env->parent;
+    in->nfree_envs--;
+    env->parent = parent;
+    env->vars = NULL;
+    env->spare = env->spare_base;
+    env->nspare = (uint32_t)nspare;
+    env->count = 0;
+    return env;
+}
+
+void Env_ReleaseCall(Interp *in, Env *env) {
+    /* 남은 바인딩 슬롯은 다음 호출이 덮어쓰므로 색인만 비운다. */
+    if (env->idx && env->idx->icap)
+        memset(env->idx->slots, 0, env->idx->icap * sizeof(Binding *));
+    env->vars = NULL;
+    env->spare = env->spare_base;
+    env->nspare = 0;
+    env->count = 0;
+    env->parent = in->free_envs;
+    in->free_envs = env;
+    in->nfree_envs++;
+}
+
+RValue **Env_LookupCell(Env *env, const char *name) {
+    int is_const;
+    return Env_LookupCellFlags(env, name, &is_const);
+}
+
+RValue **Env_LookupCellFlags(Env *env, const char *name, int *is_const) {
+    uint32_t hash = hash_name(name);
     for (; env; env = env->parent) {
-        Binding *b;
-        for (b = env->vars; b; b = b->next) {
-            if (!strcmp(b->name, name))
-                return b->is_const;
+        Binding *b = env_find(env, name, hash);
+        if (b) {
+            if (is_const)
+                *is_const = b->is_const;
+            return &b->cell;
         }
+    }
+    if (is_const)
+        *is_const = 0;
+    return NULL;
+}
+
+static Binding *env_binding_alloc(Interp *in, Env *env) {
+    if (env->nspare) {
+        env->nspare--;
+        return env->spare++;
+    }
+    return Arena_AllocNoZero(in->arena, sizeof(Binding));
+}
+
+static void env_define(Interp *in, Env *env, const char *name, RValue *value, int is_const) {
+    uint32_t hash = hash_name(name);
+    Binding *b = env_find(env, name, hash);
+    if (b) {
+        /* 같은 스코프에서 다시 선언되면(루프 본문 등) 바인딩을 새로 만들지 않는다. */
+        b->cell = value;
+        b->is_const = is_const;
+        return;
+    }
+    b = env_binding_alloc(in, env);
+    b->name = name;
+    b->hash = hash;
+    b->cell = value;
+    b->is_const = is_const;
+    env_link(in, env, b);
+}
+
+void Env_Define(Interp *in, Env *env, const char *name, RValue *value) {
+    env_define(in, env, name, value, 0);
+}
+
+void Env_DefineConst(Interp *in, Env *env, const char *name, RValue *value) {
+    env_define(in, env, name, value, 1);
+}
+
+int Env_IsConst(Env *env, const char *name) {
+    uint32_t hash = hash_name(name);
+    for (; env; env = env->parent) {
+        Binding *b = env_find(env, name, hash);
+        if (b)
+            return b->is_const;
     }
     return 0;
 }
 
-int Env_Assign(Env *env, const char *name, RValue *value)
-{
+int Env_Assign(Env *env, const char *name, RValue *value) {
     RValue **cell = Env_LookupCell(env, name);
     if (!cell)
         return 0;
@@ -1074,20 +1305,34 @@ int Env_Assign(Env *env, const char *name, RValue *value)
     return 1;
 }
 
-int Env_HasLocal(Env *env, const char *name)
-{
-    Binding *b;
-    for (b = env->vars; b; b = b->next) {
-        if (!strcmp(b->name, name))
-            return 1;
+int Env_HasLocal(Env *env, const char *name) {
+    return env_find(env, name, hash_name(name)) != NULL;
+}
+
+void Env_RemoveLocal(Interp *in, Env *env, const char *name) {
+    uint32_t hash = hash_name(name);
+    Binding **link = &env->vars;
+    size_t removed = 0;
+
+    while (*link) {
+        Binding *b = *link;
+        if (name_matches(b, name, hash)) {
+            *link = b->next;
+            removed++;
+            if (env->count)
+                env->count--;
+        }
+        else {
+            link = &b->next;
+        }
     }
-    return 0;
+    if (removed && env->idx && env->idx->icap)
+        env_index_build(in, env, env->idx->icap);
 }
 
 /* ---- 클래스/인스턴스 ---- */
 
-size_t Class_FieldCount(AstClass *cls)
-{
+size_t Class_FieldCount(AstClass *cls) {
     size_t i, n = cls->base ? Class_FieldCount(cls->base) : 0;
     for (i = 0; i < cls->nfields; i++)
         if (!cls->fields[i].is_static)
@@ -1095,8 +1340,7 @@ size_t Class_FieldCount(AstClass *cls)
     return n;
 }
 
-static void fill_fields(Interp *in, AstClass *cls, InstField *fields, size_t *index)
-{
+static void fill_fields(Interp *in, AstClass *cls, InstField *fields, size_t *index) {
     size_t i;
 
     if (cls->base)
@@ -1110,8 +1354,7 @@ static void fill_fields(Interp *in, AstClass *cls, InstField *fields, size_t *in
     }
 }
 
-AstInstance *Instance_New(Interp *in, AstClass *cls)
-{
+AstInstance *Instance_New(Interp *in, AstClass *cls) {
     AstInstance *obj = Arena_Alloc(in->arena, sizeof(AstInstance));
     size_t index = 0;
 
@@ -1122,8 +1365,7 @@ AstInstance *Instance_New(Interp *in, AstClass *cls)
     return obj;
 }
 
-InstField *Instance_FindField(AstInstance *obj, const char *name)
-{
+InstField *Instance_FindField(AstInstance *obj, const char *name) {
     size_t i;
     for (i = 0; i < obj->nfields; i++) {
         if (!strcmp(obj->fields[i].name, name))
@@ -1132,8 +1374,7 @@ InstField *Instance_FindField(AstInstance *obj, const char *name)
     return NULL;
 }
 
-AstClass *Class_FindBase(AstClass *cls, const char *name)
-{
+AstClass *Class_FindBase(AstClass *cls, const char *name) {
     for (; cls; cls = cls->base) {
         if (!strcmp(cls->name, name))
             return cls;
@@ -1141,8 +1382,7 @@ AstClass *Class_FindBase(AstClass *cls, const char *name)
     return NULL;
 }
 
-MethodDesc *Class_FindMethod(AstClass *cls, const char *name)
-{
+MethodDesc *Class_FindMethod(AstClass *cls, const char *name) {
     size_t i;
     for (; cls; cls = cls->base) {
         for (i = 0; i < cls->nmethods; i++) {
@@ -1153,8 +1393,7 @@ MethodDesc *Class_FindMethod(AstClass *cls, const char *name)
     return NULL;
 }
 
-PropDesc *Class_FindProperty(AstClass *cls, const char *name)
-{
+PropDesc *Class_FindProperty(AstClass *cls, const char *name) {
     size_t i;
     for (; cls; cls = cls->base) {
         for (i = 0; i < cls->nprops; i++) {
@@ -1167,8 +1406,7 @@ PropDesc *Class_FindProperty(AstClass *cls, const char *name)
 
 /* ---- 구조체 ---- */
 
-AstStructType *Struct_FindType(Env *env, const char *name)
-{
+AstStructType *Struct_FindType(Env *env, const char *name) {
     for (; env; env = env->parent) {
         Binding *b;
         for (b = env->vars; b; b = b->next) {
@@ -1179,8 +1417,7 @@ AstStructType *Struct_FindType(Env *env, const char *name)
     return NULL;
 }
 
-int StructValue_FieldIndex(AstStructType *type, const char *name)
-{
+int StructValue_FieldIndex(AstStructType *type, const char *name) {
     size_t i;
     for (i = 0; i < type->nfields; i++) {
         if (!strcmp(type->fields[i].name, name))
@@ -1191,8 +1428,7 @@ int StructValue_FieldIndex(AstStructType *type, const char *name)
 
 static RValue *default_for_type_depth(Interp *in, Env *env, typeref_ty ty, int depth);
 
-AstStructValue *StructValue_New(Interp *in, AstStructType *type)
-{
+AstStructValue *StructValue_New(Interp *in, AstStructType *type) {
     AstStructValue *stv = Arena_Alloc(in->arena, sizeof(AstStructValue));
     stv->type = type;
     stv->cells = type->nfields ? Arena_Alloc(in->arena, type->nfields * sizeof(RValue *)) : NULL;
@@ -1203,8 +1439,7 @@ AstStructValue *StructValue_New(Interp *in, AstStructType *type)
 
 static RValue *default_for_type_depth(Interp *in, Env *env, typeref_ty ty, int depth);
 
-static RValue *struct_default(Interp *in, Env *env, AstStructType *type, int depth)
-{
+static RValue *struct_default(Interp *in, Env *env, AstStructType *type, int depth) {
     AstStructValue *stv;
     size_t i;
 
@@ -1218,8 +1453,7 @@ static RValue *struct_default(Interp *in, Env *env, AstStructType *type, int dep
     return RValue_Struct(in, stv);
 }
 
-static RValue *default_for_type_depth(Interp *in, Env *env, typeref_ty ty, int depth)
-{
+static RValue *default_for_type_depth(Interp *in, Env *env, typeref_ty ty, int depth) {
     if (!ty)
         return RValue_Null(in);
     if (depth > MAX_DEPTH) {
@@ -1246,6 +1480,12 @@ static RValue *default_for_type_depth(Interp *in, Env *env, typeref_ty ty, int d
     case Nullable_kind:
     case FunctionTy_kind:
         return RValue_Null(in);
+    case UnionTy_kind: {
+        asdl_seq *members = ty->v.UnionTy.members;
+        if (!members || asdl_seq_LEN(members) == 0)
+            return RValue_Null(in);
+        return default_for_type_depth(in, env, asdl_seq_GET(members, 0), depth + 1);
+    }
     case StructRef_kind: {
         AstStructType *type = Struct_FindType(env, ty->v.StructRef.tag);
         if (!type) {
@@ -1278,20 +1518,17 @@ static RValue *default_for_type_depth(Interp *in, Env *env, typeref_ty ty, int d
     return RValue_Null(in);
 }
 
-RValue *DefaultForType(Interp *in, Env *env, typeref_ty ty)
-{
+RValue *DefaultForType(Interp *in, Env *env, typeref_ty ty) {
     return default_for_type_depth(in, env, ty, 0);
 }
 
-static size_t align_up(size_t n, size_t align)
-{
+static size_t align_up(size_t n, size_t align) {
     return align ? (n + align - 1) / align * align : n;
 }
 
 static size_t type_size_depth(Interp *in, Env *env, typeref_ty ty, int depth);
 
-static size_t struct_size_depth(Interp *in, Env *env, AstStructType *type, int depth)
-{
+static size_t struct_size_depth(Interp *in, Env *env, AstStructType *type, int depth) {
     size_t offset = 0;
     size_t align = 1;
     size_t i;
@@ -1314,8 +1551,7 @@ static size_t struct_size_depth(Interp *in, Env *env, AstStructType *type, int d
     return align_up(offset, align);
 }
 
-static size_t type_size_depth(Interp *in, Env *env, typeref_ty ty, int depth)
-{
+static size_t type_size_depth(Interp *in, Env *env, typeref_ty ty, int depth) {
     if (!ty)
         return 8;
     if (depth > MAX_DEPTH) {
@@ -1337,6 +1573,7 @@ static size_t type_size_depth(Interp *in, Env *env, typeref_ty ty, int depth)
         return 8;
     case Pointer_kind:
     case FunctionTy_kind:
+    case UnionTy_kind:
         return 8;
     case Nullable_kind:
         if (ty->v.Nullable.base && ty->v.Nullable.base->kind == Primitive_kind &&
@@ -1357,13 +1594,11 @@ static size_t type_size_depth(Interp *in, Env *env, typeref_ty ty, int depth)
     return 8;
 }
 
-size_t Type_SizeOf(Interp *in, Env *env, typeref_ty ty)
-{
+size_t Type_SizeOf(Interp *in, Env *env, typeref_ty ty) {
     return type_size_depth(in, env, ty, 0);
 }
 
-int Type_IsNullable(typeref_ty ty)
-{
+int Type_IsNullable(typeref_ty ty) {
     if (!ty)
         return 1;
     switch (ty->kind) {
@@ -1373,6 +1608,14 @@ int Type_IsNullable(typeref_ty ty)
     case Named_kind:
     case FunctionTy_kind:
         return 1;
+    case UnionTy_kind: {
+        size_t i;
+        asdl_seq *members = ty->v.UnionTy.members;
+        for (i = 0; i < (size_t)asdl_seq_LEN(members); i++)
+            if (Type_IsNullable(asdl_seq_GET(members, i)))
+                return 1;
+        return 0;
+    }
     case StructRef_kind:
         return 0;
     case Primitive_kind:
@@ -1383,13 +1626,11 @@ int Type_IsNullable(typeref_ty ty)
 
 /* ---- 값 연산 ---- */
 
-int RValue_IsNumber(const RValue *v)
-{
+int RValue_IsNumber(const RValue *v) {
     return v && (v->kind == RV_INT || v->kind == RV_FLOAT || v->kind == RV_BOOL);
 }
 
-int RValue_Truthy(const RValue *v)
-{
+int RValue_Truthy(const RValue *v) {
     if (!v)
         return 0;
     switch (v->kind) {
@@ -1419,13 +1660,11 @@ int RValue_Truthy(const RValue *v)
     }
 }
 
-static int string_equal(AsterString *a, AsterString *b)
-{
+static int string_equal(AsterString *a, AsterString *b) {
     return a->length == b->length && memcmp(a->data, b->data, a->length) == 0;
 }
 
-static int seq_equal(RValue **a, size_t na, RValue **b, size_t nb)
-{
+static int seq_equal(RValue **a, size_t na, RValue **b, size_t nb) {
     size_t i;
     if (na != nb)
         return 0;
@@ -1436,8 +1675,7 @@ static int seq_equal(RValue **a, size_t na, RValue **b, size_t nb)
     return 1;
 }
 
-static int set_equal(const AsterSet *a, const AsterSet *b)
-{
+static int set_equal(const AsterSet *a, const AsterSet *b) {
     size_t i;
     if (a->len != b->len)
         return 0;
@@ -1448,8 +1686,7 @@ static int set_equal(const AsterSet *a, const AsterSet *b)
     return 1;
 }
 
-static int dict_equal(const AsterDict *a, const AsterDict *b)
-{
+static int dict_equal(const AsterDict *a, const AsterDict *b) {
     size_t i;
     RValue *value;
     if (a->len != b->len)
@@ -1462,8 +1699,7 @@ static int dict_equal(const AsterDict *a, const AsterDict *b)
     return 1;
 }
 
-int RValue_Equal(const RValue *a, const RValue *b)
-{
+int RValue_Equal(const RValue *a, const RValue *b) {
     int a_is_set, b_is_set;
 
     if (!a || !b)
@@ -1516,10 +1752,21 @@ int RValue_Equal(const RValue *a, const RValue *b)
     case RV_SET:
     case RV_FROZENSET:
         return set_equal(a->u.set, b->u.set);
-    case RV_ENUM:
-        return a->u.en.type == b->u.en.type && a->u.en.index == b->u.en.index;
+    case RV_ENUM: {
+        size_t i;
+        if (a->u.en.type != b->u.en.type || a->u.en.index != b->u.en.index ||
+            a->u.en.npayload != b->u.en.npayload)
+            return 0;
+        for (i = 0; i < a->u.en.npayload; i++) {
+            if (!RValue_Equal(a->u.en.payload[i], b->u.en.payload[i]))
+                return 0;
+        }
+        return 1;
+    }
     case RV_ENUMTYPE:
         return a->u.etype == b->u.etype;
+    case RV_VARIANT_CTOR:
+        return a->u.vc.type == b->u.vc.type && a->u.vc.index == b->u.vc.index;
     case RV_MODULE:
         return a->u.module == b->u.module;
     case RV_SUPER:
@@ -1543,8 +1790,7 @@ int RValue_Equal(const RValue *a, const RValue *b)
     }
 }
 
-int RValue_Compare(Interp *in, const RValue *a, const RValue *b, int *out)
-{
+int RValue_Compare(Interp *in, const RValue *a, const RValue *b, int *out) {
     *out = 0;
     if (RValue_IsNumber(a) && RValue_IsNumber(b)) {
         if (a->kind != RV_FLOAT && b->kind != RV_FLOAT) {
@@ -1591,8 +1837,7 @@ int RValue_Compare(Interp *in, const RValue *a, const RValue *b, int *out)
     return 0;
 }
 
-static int seq_index(Interp *in, const RValue *index, int64_t *out, int *ok)
-{
+static int seq_index(Interp *in, const RValue *index, int64_t *out, int *ok) {
     *ok = 1;
     if (index && (index->kind == RV_INT || index->kind == RV_BOOL)) {
         *out = index->kind == RV_INT ? index->u.i : index->u.b;
@@ -1604,8 +1849,7 @@ static int seq_index(Interp *in, const RValue *index, int64_t *out, int *ok)
     return 0;
 }
 
-static void key_repr(const RValue *key, char *buf, size_t cap)
-{
+static void key_repr(const RValue *key, char *buf, size_t cap) {
     if (key && key->kind == RV_STR)
         snprintf(buf, cap, "'%s'", key->u.s->data);
     else if (key && key->kind == RV_INT)
@@ -1618,8 +1862,7 @@ static void key_repr(const RValue *key, char *buf, size_t cap)
         snprintf(buf, cap, "<%s>", RValue_TypeName(key));
 }
 
-RValue *RValue_GetItem(Interp *in, RValue *container, RValue *index, int *ok)
-{
+RValue *RValue_GetItem(Interp *in, RValue *container, RValue *index, int *ok) {
     int64_t i;
     RValue *value;
 
@@ -1697,8 +1940,7 @@ RValue *RValue_GetItem(Interp *in, RValue *container, RValue *index, int *ok)
     }
 }
 
-int RValue_SetItem(Interp *in, RValue *container, RValue *index, RValue *value, int *ok)
-{
+int RValue_SetItem(Interp *in, RValue *container, RValue *index, RValue *value, int *ok) {
     int64_t i;
 
     *ok = 1;
@@ -1761,8 +2003,7 @@ int RValue_SetItem(Interp *in, RValue *container, RValue *index, RValue *value, 
     }
 }
 
-static int string_contains(AsterString *haystack, AsterString *needle)
-{
+static int string_contains(AsterString *haystack, AsterString *needle) {
     size_t i;
     if (needle->length == 0)
         return 1;
@@ -1775,8 +2016,7 @@ static int string_contains(AsterString *haystack, AsterString *needle)
     return 0;
 }
 
-int RValue_Contains(Interp *in, const RValue *container, const RValue *item, int *ok)
-{
+int RValue_Contains(Interp *in, const RValue *container, const RValue *item, int *ok) {
     size_t i;
 
     *ok = 1;
@@ -1844,8 +2084,7 @@ int RValue_Contains(Interp *in, const RValue *container, const RValue *item, int
     }
 }
 
-AsterString *RString_Repeat(Interp *in, AsterString *s, int64_t times)
-{
+AsterString *RString_Repeat(Interp *in, AsterString *s, int64_t times) {
     char *buf;
     size_t total;
     size_t i;
@@ -1867,8 +2106,7 @@ AsterString *RString_Repeat(Interp *in, AsterString *s, int64_t times)
     return out;
 }
 
-double RValue_AsDouble(Interp *in, const RValue *v, int *ok)
-{
+double RValue_AsDouble(Interp *in, const RValue *v, int *ok) {
     *ok = 1;
     switch (v->kind) {
     case RV_INT:
@@ -1896,8 +2134,7 @@ double RValue_AsDouble(Interp *in, const RValue *v, int *ok)
     }
 }
 
-int64_t RValue_AsInt(Interp *in, const RValue *v, int *ok)
-{
+int64_t RValue_AsInt(Interp *in, const RValue *v, int *ok) {
     *ok = 1;
     switch (v->kind) {
     case RV_INT:
@@ -1942,8 +2179,7 @@ typedef struct {
     size_t len, cap;
 } Buf;
 
-static void buf_reserve(Buf *b, size_t extra)
-{
+static void buf_reserve(Buf *b, size_t extra) {
     size_t need = b->len + extra + 1;
     size_t cap;
     if (need <= b->cap)
@@ -1955,26 +2191,22 @@ static void buf_reserve(Buf *b, size_t extra)
     b->cap = cap;
 }
 
-static void buf_write(Buf *b, const char *s, size_t n)
-{
+static void buf_write(Buf *b, const char *s, size_t n) {
     buf_reserve(b, n);
     memcpy(b->data + b->len, s, n);
     b->len += n;
     b->data[b->len] = 0;
 }
 
-static void buf_puts(Buf *b, const char *s)
-{
+static void buf_puts(Buf *b, const char *s) {
     buf_write(b, s, strlen(s));
 }
 
-static void buf_putc(Buf *b, char c)
-{
+static void buf_putc(Buf *b, char c) {
     buf_write(b, &c, 1);
 }
 
-static void buf_printf(Buf *b, const char *fmt, ...)
-{
+static void buf_printf(Buf *b, const char *fmt, ...) {
     va_list ap;
     char tmp[256];
     int n;
@@ -1998,8 +2230,7 @@ static void buf_printf(Buf *b, const char *fmt, ...)
     }
 }
 
-static void buf_repr_string(Buf *b, const char *s, size_t n)
-{
+static void buf_repr_string(Buf *b, const char *s, size_t n) {
     int quote = '\'';
     int has_single = 0, has_double = 0;
     size_t i;
@@ -2014,35 +2245,46 @@ static void buf_repr_string(Buf *b, const char *s, size_t n)
         quote = '"';
 
     buf_putc(b, (char)quote);
-    for (i = 0; i < n; i++) {
-        unsigned char c = (unsigned char)s[i];
-        if (c == (unsigned char)quote || c == '\\') {
-            buf_putc(b, '\\');
-            buf_putc(b, (char)c);
+    for (i = 0; i < n;) {
+        size_t adv = 1;
+        uint32_t cp = Aster_UTF8_Decode(s + i, n - i, &adv);
+        if (adv == 1 && (unsigned char)s[i] >= 0x80) {
+            buf_printf(b, "\\x%02x", (unsigned char)s[i]);
+            i++;
+            continue;
         }
-        else if (c == '\n') {
+        if (cp == (uint32_t)quote || cp == '\\') {
+            buf_putc(b, '\\');
+            buf_putc(b, (char)cp);
+        }
+        else if (cp == '\n') {
             buf_puts(b, "\\n");
         }
-        else if (c == '\r') {
+        else if (cp == '\r') {
             buf_puts(b, "\\r");
         }
-        else if (c == '\t') {
+        else if (cp == '\t') {
             buf_puts(b, "\\t");
         }
-        else if (c < 0x20 || c == 0x7f) {
-            buf_printf(b, "\\x%02x", c);
+        else if (Aster_Str_NeedsEscape(cp)) {
+            if (cp <= 0xff)
+                buf_printf(b, "\\x%02x", cp);
+            else if (cp <= 0xffff)
+                buf_printf(b, "\\u%04x", cp);
+            else
+                buf_printf(b, "\\U%08x", cp);
         }
         else {
-            buf_putc(b, (char)c);
+            buf_write(b, s + i, adv);
         }
+        i += adv;
     }
     buf_putc(b, (char)quote);
 }
 
 static void render_value(Buf *b, const RValue *v, int repr, int depth);
 
-static void render_tuple(Buf *b, const AsterTuple *tuple, int repr, int depth)
-{
+static void render_tuple(Buf *b, const AsterTuple *tuple, int repr, int depth) {
     (void)repr;
     if (depth > 8) {
         buf_puts(b, "...");
@@ -2064,8 +2306,7 @@ static void render_tuple(Buf *b, const AsterTuple *tuple, int repr, int depth)
     buf_putc(b, ')');
 }
 
-static void render_dict(Buf *b, const AsterDict *dict, int repr, int depth)
-{
+static void render_dict(Buf *b, const AsterDict *dict, int repr, int depth) {
     size_t i;
     (void)repr;
 
@@ -2084,8 +2325,7 @@ static void render_dict(Buf *b, const AsterDict *dict, int repr, int depth)
     buf_putc(b, '}');
 }
 
-static void render_set(Buf *b, const AsterSet *set, int repr, int depth, int frozen)
-{
+static void render_set(Buf *b, const AsterSet *set, int repr, int depth, int frozen) {
     size_t i;
     (void)repr;
 
@@ -2110,8 +2350,7 @@ static void render_set(Buf *b, const AsterSet *set, int repr, int depth, int fro
         buf_putc(b, ')');
 }
 
-static void render_struct(Buf *b, const AstStructValue *stv, int repr, int depth)
-{
+static void render_struct(Buf *b, const AstStructValue *stv, int repr, int depth) {
     size_t i;
 
     if (depth > 8) {
@@ -2130,8 +2369,7 @@ static void render_struct(Buf *b, const AstStructValue *stv, int repr, int depth
     buf_putc(b, ')');
 }
 
-static void render_value(Buf *b, const RValue *v, int repr, int depth)
-{
+static void render_value(Buf *b, const RValue *v, int repr, int depth) {
     char num[64];
 
     if (!v) {
@@ -2235,10 +2473,28 @@ static void render_value(Buf *b, const RValue *v, int repr, int depth)
         break;
     case RV_ENUM:
         buf_printf(b, "%s.%s", v->u.en.type->name, v->u.en.name);
+        if (v->u.en.npayload) {
+            size_t i;
+            buf_putc(b, '(');
+            for (i = 0; i < v->u.en.npayload; i++) {
+                if (i)
+                    buf_puts(b, ", ");
+                render_value(b, v->u.en.payload[i], 1, depth + 1);
+            }
+            buf_putc(b, ')');
+        }
         break;
     case RV_ENUMTYPE:
         buf_printf(b, "<enum %s>", v->u.etype->name);
         break;
+    case RV_VARIANT_CTOR: {
+        size_t index = v->u.vc.index;
+        const char *name = index < v->u.vc.type->nmembers
+                               ? v->u.vc.type->members[index].name
+                               : "?";
+        buf_printf(b, "<variant %s.%s>", v->u.vc.type->name, name);
+        break;
+    }
     case RV_OVERLOAD:
         buf_printf(b, "<fn %s>", v->u.overload->count ? v->u.overload->fns[0]->name
                                                       : "overload");
@@ -2251,8 +2507,7 @@ static void render_value(Buf *b, const RValue *v, int repr, int depth)
 
 /* ---- 연산자 훅 (__str__/__repr__) ---- */
 
-static AsterString *object_str_hook(Interp *in, const RValue *v, const char *name)
-{
+static AsterString *object_str_hook(Interp *in, const RValue *v, const char *name) {
     RValue *r;
 
     if (!v || v->kind != RV_OBJECT || !RValue_HasMethod(in, v, name))
@@ -2266,8 +2521,7 @@ static AsterString *object_str_hook(Interp *in, const RValue *v, const char *nam
     return NULL;
 }
 
-void RValue_Print(FILE *out, const RValue *v, int repr)
-{
+void RValue_Print(FILE *out, const RValue *v, int repr) {
     Buf b = {0};
     render_value(&b, v, repr, 0);
     if (b.data)
@@ -2275,8 +2529,7 @@ void RValue_Print(FILE *out, const RValue *v, int repr)
     free(b.data);
 }
 
-AsterString *RValue_ToString(Interp *in, const RValue *v)
-{
+AsterString *RValue_ToString(Interp *in, const RValue *v) {
     Buf b = {0};
     AsterString *s;
 
@@ -2293,8 +2546,7 @@ AsterString *RValue_ToString(Interp *in, const RValue *v)
     return s;
 }
 
-AsterString *RValue_Repr(Interp *in, const RValue *v)
-{
+AsterString *RValue_Repr(Interp *in, const RValue *v) {
     Buf b = {0};
     AsterString *s;
 
@@ -2309,23 +2561,14 @@ AsterString *RValue_Repr(Interp *in, const RValue *v)
     return s;
 }
 
-AsterString *RString_Concat(Interp *in, AsterString *a, AsterString *b)
-{
-    Buf buf = {0};
-    AsterString *s;
-
-    buf_write(&buf, a->data, a->length);
-    buf_write(&buf, b->data, b->length);
-    s = AsterString_FromUTF8(buf.data ? buf.data : "", buf.len);
-    free(buf.data);
+AsterString *RString_Concat(Interp *in, AsterString *a, AsterString *b) {
     (void)in;
-    return s;
+    return AsterString_Concat(a, b);
 }
 
 /* ---- 예외 ---- */
 
-static const char *builtin_exc_parent(const char *name)
-{
+static const char *builtin_exc_parent(const char *name) {
     if (!strcmp(name, "Exception"))
         return NULL;
     if (!strcmp(name, "ZeroDivisionError") || !strcmp(name, "OverflowError"))
@@ -2341,8 +2584,7 @@ static const char *builtin_exc_parent(const char *name)
     return "Exception";
 }
 
-const char *Exception_Parent(Interp *in, const char *name)
-{
+const char *Exception_Parent(Interp *in, const char *name) {
     size_t i;
     for (i = 0; i < in->nexc_bases; i++) {
         if (!strcmp(in->exc_bases[i].name, name))
@@ -2351,8 +2593,7 @@ const char *Exception_Parent(Interp *in, const char *name)
     return builtin_exc_parent(name);
 }
 
-void Exception_Register(Interp *in, const char *name, const char *base)
-{
+void Exception_Register(Interp *in, const char *name, const char *base) {
     size_t i;
     for (i = 0; i < in->nexc_bases; i++) {
         if (!strcmp(in->exc_bases[i].name, name))
@@ -2368,8 +2609,7 @@ void Exception_Register(Interp *in, const char *name, const char *base)
     in->nexc_bases++;
 }
 
-int Exception_Matches(Interp *in, const char *thrown, const char *caught)
-{
+int Exception_Matches(Interp *in, const char *thrown, const char *caught) {
     const char *cur = thrown;
     int guard = 0;
 
@@ -2381,13 +2621,11 @@ int Exception_Matches(Interp *in, const char *thrown, const char *caught)
     return 0;
 }
 
-RValue *Exception_NameValue(Interp *in, const char *name)
-{
+RValue *Exception_NameValue(Interp *in, const char *name) {
     return RValue_ExcClass(in, name);
 }
 
-void RT_Throw(Interp *in, const char *name, const char *fmt, ...)
-{
+void RT_Throw(Interp *in, const char *name, const char *fmt, ...) {
     char msg[512];
     va_list ap;
     AsterString *s;
@@ -2400,8 +2638,7 @@ void RT_Throw(Interp *in, const char *name, const char *fmt, ...)
     in->sig = SIG_THROW;
 }
 
-RValue *RT_ThrowValue(Interp *in, const char *name, const char *fmt, ...)
-{
+RValue *RT_ThrowValue(Interp *in, const char *name, const char *fmt, ...) {
     char msg[512];
     va_list ap;
     AsterString *s;
@@ -2417,16 +2654,14 @@ RValue *RT_ThrowValue(Interp *in, const char *name, const char *fmt, ...)
 
 /* ---- 내장 함수 ---- */
 
-AstBuiltin *Builtin_New(Interp *in, const char *name, BuiltinFn fn)
-{
+AstBuiltin *Builtin_New(Interp *in, const char *name, BuiltinFn fn) {
     AstBuiltin *b = Arena_Alloc(in->arena, sizeof(AstBuiltin));
     b->name = name;
     b->fn = fn;
     return b;
 }
 
-static RValue *bi_print(Interp *in, RValue *self, RValue **args, size_t nargs)
-{
+static RValue *bi_print(Interp *in, RValue *self, RValue **args, size_t nargs) {
     size_t i;
     (void)self;
     for (i = 0; i < nargs; i++) {
@@ -2446,15 +2681,13 @@ static RValue *bi_print(Interp *in, RValue *self, RValue **args, size_t nargs)
     return RValue_Null(in);
 }
 
-static RValue *bi_println(Interp *in, RValue *self, RValue **args, size_t nargs)
-{
+static RValue *bi_println(Interp *in, RValue *self, RValue **args, size_t nargs) {
     bi_print(in, self, args, nargs);
     fputc('\n', stdout);
     return RValue_Null(in);
 }
 
-static RValue *bi_eprint(Interp *in, RValue *self, RValue **args, size_t nargs)
-{
+static RValue *bi_eprint(Interp *in, RValue *self, RValue **args, size_t nargs) {
     size_t i;
     (void)self;
     for (i = 0; i < nargs; i++) {
@@ -2465,8 +2698,7 @@ static RValue *bi_eprint(Interp *in, RValue *self, RValue **args, size_t nargs)
     return RValue_Null(in);
 }
 
-static RValue *bi_eprintln(Interp *in, RValue *self, RValue **args, size_t nargs)
-{
+static RValue *bi_eprintln(Interp *in, RValue *self, RValue **args, size_t nargs) {
     bi_eprint(in, self, args, nargs);
     fputc('\n', stderr);
     return RValue_Null(in);
@@ -2474,8 +2706,7 @@ static RValue *bi_eprintln(Interp *in, RValue *self, RValue **args, size_t nargs
 
 static RValue *zero_value(Interp *in, RValue *v);
 
-static RValue *zero_struct(Interp *in, AstStructValue *stv)
-{
+static RValue *zero_struct(Interp *in, AstStructValue *stv) {
     AstStructValue *copy = StructValue_New(in, stv->type);
     size_t i;
 
@@ -2484,8 +2715,7 @@ static RValue *zero_struct(Interp *in, AstStructValue *stv)
     return RValue_Struct(in, copy);
 }
 
-static RValue *zero_value(Interp *in, RValue *v)
-{
+static RValue *zero_value(Interp *in, RValue *v) {
     if (!v)
         return RValue_Null(in);
     switch (v->kind) {
@@ -2507,8 +2737,7 @@ static RValue *zero_value(Interp *in, RValue *v)
     }
 }
 
-static RValue *bi_memset(Interp *in, RValue *self, RValue **args, size_t nargs)
-{
+static RValue *bi_memset(Interp *in, RValue *self, RValue **args, size_t nargs) {
     int ok;
     int64_t value;
 
@@ -2526,8 +2755,7 @@ static RValue *bi_memset(Interp *in, RValue *self, RValue **args, size_t nargs)
     return args[0];
 }
 
-static AstFn *make_builtin_method(Interp *in, const char *name, BuiltinFn fn)
-{
+static AstFn *make_builtin_method(Interp *in, const char *name, BuiltinFn fn) {
     AstFn *f = Arena_Alloc(in->arena, sizeof(AstFn));
     f->kind = FN_BUILTIN;
     f->name = name;
@@ -2537,8 +2765,7 @@ static AstFn *make_builtin_method(Interp *in, const char *name, BuiltinFn fn)
 }
 
 /* iterable을 값 배열로 펼친다. 반환 배열은 호출자가 free한다. */
-static int iter_values(Interp *in, RValue *src, RValue ***out, size_t *nout)
-{
+static int iter_values(Interp *in, RValue *src, RValue ***out, size_t *nout) {
     RValue **items = NULL;
     size_t n = 0;
     size_t i;
@@ -2619,8 +2846,7 @@ static int iter_values(Interp *in, RValue *src, RValue ***out, size_t *nout)
     return 1;
 }
 
-static RValue *sequence_from_args(Interp *in, RValue **args, size_t nargs, int as_tuple)
-{
+static RValue *sequence_from_args(Interp *in, RValue **args, size_t nargs, int as_tuple) {
     RValue **items;
     size_t n;
 
@@ -2651,8 +2877,7 @@ static RValue *sequence_from_args(Interp *in, RValue **args, size_t nargs, int a
     }
 }
 
-static RValue *bi_len(Interp *in, RValue *self, RValue **args, size_t nargs)
-{
+static RValue *bi_len(Interp *in, RValue *self, RValue **args, size_t nargs) {
     int ok;
     int64_t n;
     (void)self;
@@ -2664,24 +2889,21 @@ static RValue *bi_len(Interp *in, RValue *self, RValue **args, size_t nargs)
     return RValue_Int(in, n);
 }
 
-static RValue *bi_typename(Interp *in, RValue *self, RValue **args, size_t nargs)
-{
+static RValue *bi_typename(Interp *in, RValue *self, RValue **args, size_t nargs) {
     (void)self;
     if (nargs != 1)
         return RT_ThrowValue(in, "TypeError", "typeName takes exactly 1 argument");
     return RValue_Str(in, AsterString_FromCStr(RValue_TypeName(args[0])));
 }
 
-static RValue *bi_repr(Interp *in, RValue *self, RValue **args, size_t nargs)
-{
+static RValue *bi_repr(Interp *in, RValue *self, RValue **args, size_t nargs) {
     (void)self;
     if (nargs != 1)
         return RT_ThrowValue(in, "TypeError", "repr takes exactly 1 argument");
     return RValue_Str(in, RValue_Repr(in, args[0]));
 }
 
-static RValue *bi_chr(Interp *in, RValue *self, RValue **args, size_t nargs)
-{
+static RValue *bi_chr(Interp *in, RValue *self, RValue **args, size_t nargs) {
     int ok;
     int64_t cp;
     char buf[4];
@@ -2700,8 +2922,7 @@ static RValue *bi_chr(Interp *in, RValue *self, RValue **args, size_t nargs)
     return RValue_Str(in, AsterString_FromUTF8(buf, n));
 }
 
-static RValue *bi_ord(Interp *in, RValue *self, RValue **args, size_t nargs)
-{
+static RValue *bi_ord(Interp *in, RValue *self, RValue **args, size_t nargs) {
     AsterString *s;
     uint32_t cp;
     size_t adv;
@@ -2715,6 +2936,347 @@ static RValue *bi_ord(Interp *in, RValue *self, RValue **args, size_t nargs)
     }
     cp = Aster_UTF8_Decode(s->data, s->length, &adv);
     return RValue_Int(in, (int64_t)cp);
+}
+
+/* ---- 전역 내장 함수 (Python 호환) ---- */
+
+static char *read_stdin_line(int *eof);
+
+static int is_callable_value(const RValue *v) {
+    return v && (v->kind == RV_FUNC || v->kind == RV_BUILTIN ||
+                 v->kind == RV_OVERLOAD);
+}
+
+static int numeric_add(Interp *in, RValue *a, RValue *b, RValue **out) {
+    int a_int = a->kind == RV_INT || a->kind == RV_BOOL;
+    int b_int = b->kind == RV_INT || b->kind == RV_BOOL;
+
+    if (a_int && b_int) {
+        int64_t av = a->kind == RV_BOOL ? a->u.b : a->u.i;
+        int64_t bv = b->kind == RV_BOOL ? b->u.b : b->u.i;
+        if ((bv > 0 && av > INT64_MAX - bv) || (bv < 0 && av < INT64_MIN - bv)) {
+            RT_Throw(in, "OverflowError", "integer overflow");
+            return 0;
+        }
+        *out = RValue_Int(in, av + bv);
+        return 1;
+    }
+    if (RValue_IsNumber(a) && RValue_IsNumber(b)) {
+        int ok = 1;
+        double x = RValue_AsDouble(in, a, &ok);
+        double y;
+        if (!ok)
+            return 0;
+        y = RValue_AsDouble(in, b, &ok);
+        if (!ok)
+            return 0;
+        *out = RValue_Float(in, x + y);
+        return 1;
+    }
+    RT_Throw(in, "TypeError", "unsupported operand type(s) for +: '%s' and '%s'",
+             RValue_TypeName(a), RValue_TypeName(b));
+    return 0;
+}
+
+static RValue *bi_abs(Interp *in, RValue *self, RValue **args, size_t nargs) {
+    (void)self;
+    if (nargs != 1)
+        return RT_ThrowValue(in, "TypeError", "abs takes exactly 1 argument");
+    if (args[0]->kind == RV_FLOAT)
+        return RValue_Float(in, fabs(args[0]->u.f));
+    if (args[0]->kind == RV_INT) {
+        int64_t v = args[0]->u.i;
+        if (v == INT64_MIN) {
+            RT_Throw(in, "OverflowError", "integer overflow");
+            return NULL;
+        }
+        return RValue_Int(in, v < 0 ? -v : v);
+    }
+    if (args[0]->kind == RV_BOOL)
+        return RValue_Int(in, args[0]->u.b ? 1 : 0);
+    return RT_ThrowValue(in, "TypeError", "bad operand type for abs(): '%s'",
+                         RValue_TypeName(args[0]));
+}
+
+static RValue *bi_sum(Interp *in, RValue *self, RValue **args, size_t nargs) {
+    RValue **items;
+    size_t n = 0, i;
+    RValue *acc;
+    (void)self;
+    if (nargs < 1 || nargs > 2)
+        return RT_ThrowValue(in, "TypeError", "sum takes 1 or 2 arguments");
+    if (!iter_values(in, args[0], &items, &n))
+        return NULL;
+    acc = nargs == 2 ? RValue_Copy(in, args[1]) : RValue_Int(in, 0);
+    for (i = 0; i < n; i++) {
+        if (!numeric_add(in, acc, items[i], &acc)) {
+            free(items);
+            return NULL;
+        }
+    }
+    free(items);
+    return acc;
+}
+
+static RValue *min_or_max(Interp *in, RValue **args, size_t nargs, int want_max) {
+    RValue **items = NULL;
+    size_t n = 0, i;
+    RValue *best;
+    if (nargs == 0)
+        return RT_ThrowValue(in, "TypeError", want_max
+                             ? "max expected 1 argument, got 0"
+                             : "min expected 1 argument, got 0");
+    if (nargs == 1) {
+        if (!iter_values(in, args[0], &items, &n))
+            return NULL;
+        if (n == 0) {
+            free(items);
+            return RT_ThrowValue(in, "ValueError",
+                                 want_max ? "max() arg is an empty sequence"
+                                          : "min() arg is an empty sequence");
+        }
+        best = items[0];
+    }
+    else {
+        items = NULL;
+        n = nargs;
+        best = args[0];
+    }
+    for (i = 1; i < n; i++) {
+        RValue *v = items ? items[i] : args[i];
+        int cmp;
+        if (!RValue_Compare(in, v, best, &cmp)) {
+            free(items);
+            return NULL;
+        }
+        if (want_max ? cmp > 0 : cmp < 0)
+            best = v;
+    }
+    free(items);
+    return best;
+}
+
+static RValue *bi_min(Interp *in, RValue *self, RValue **args, size_t nargs) {
+    (void)self;
+    return min_or_max(in, args, nargs, 0);
+}
+
+static RValue *bi_max(Interp *in, RValue *self, RValue **args, size_t nargs) {
+    (void)self;
+    return min_or_max(in, args, nargs, 1);
+}
+
+static RValue *bi_all(Interp *in, RValue *self, RValue **args, size_t nargs) {
+    RValue **items;
+    size_t n, i;
+    (void)self;
+    if (nargs != 1)
+        return RT_ThrowValue(in, "TypeError", "all takes exactly 1 argument");
+    if (!iter_values(in, args[0], &items, &n))
+        return NULL;
+    for (i = 0; i < n; i++) {
+        if (!RValue_Truthy(items[i])) {
+            free(items);
+            return RValue_Bool(in, 0);
+        }
+    }
+    free(items);
+    return RValue_Bool(in, 1);
+}
+
+static RValue *bi_any(Interp *in, RValue *self, RValue **args, size_t nargs) {
+    RValue **items;
+    size_t n, i;
+    (void)self;
+    if (nargs != 1)
+        return RT_ThrowValue(in, "TypeError", "any takes exactly 1 argument");
+    if (!iter_values(in, args[0], &items, &n))
+        return NULL;
+    for (i = 0; i < n; i++) {
+        if (RValue_Truthy(items[i])) {
+            free(items);
+            return RValue_Bool(in, 1);
+        }
+    }
+    free(items);
+    return RValue_Bool(in, 0);
+}
+
+static RValue *bi_zip(Interp *in, RValue *self, RValue **args, size_t nargs) {
+    RValue ***seqs;
+    size_t *lens;
+    size_t n = (size_t)-1, i, j;
+    AsterList *out;
+    (void)self;
+    if (nargs == 0)
+        return RT_ThrowValue(in, "TypeError", "zip requires at least 1 argument");
+    seqs = Arena_Alloc(in->arena, nargs * sizeof(RValue **));
+    lens = Arena_Alloc(in->arena, nargs * sizeof(size_t));
+    for (i = 0; i < nargs; i++) {
+        if (!iter_values(in, args[i], &seqs[i], &lens[i]))
+            return NULL;
+        if (lens[i] < n)
+            n = lens[i];
+    }
+    out = List_New(in);
+    for (i = 0; i < n; i++) {
+        AsterTuple *tuple = Tuple_New(in, nargs);
+        for (j = 0; j < nargs; j++)
+            tuple->items[j] = RValue_Copy(in, seqs[j][i]);
+        List_Append(in, out, RValue_Tuple(in, tuple));
+    }
+    return RValue_List(in, out);
+}
+
+static RValue *bi_enumerate(Interp *in, RValue *self, RValue **args, size_t nargs) {
+    RValue **items;
+    size_t n = 0, i;
+    int ok = 1;
+    int64_t start = 0;
+    AsterList *out;
+    (void)self;
+    if (nargs < 1 || nargs > 2)
+        return RT_ThrowValue(in, "TypeError", "enumerate takes 1 or 2 arguments");
+    if (!iter_values(in, args[0], &items, &n))
+        return NULL;
+    if (nargs == 2) {
+        start = RValue_AsInt(in, args[1], &ok);
+        if (!ok) {
+            free(items);
+            return NULL;
+        }
+    }
+    out = List_New(in);
+    for (i = 0; i < n; i++) {
+        AsterTuple *tuple = Tuple_New(in, 2);
+        tuple->items[0] = RValue_Int(in, start + (int64_t)i);
+        tuple->items[1] = RValue_Copy(in, items[i]);
+        List_Append(in, out, RValue_Tuple(in, tuple));
+    }
+    free(items);
+    return RValue_List(in, out);
+}
+
+static RValue *bi_sorted(Interp *in, RValue *self, RValue **args, size_t nargs) {
+    RValue **items;
+    size_t n = 0, i;
+    RValue **keys = NULL;
+    RValue *key_fn = NULL;
+    AsterList *out;
+    (void)self;
+    if (nargs < 1 || nargs > 2)
+        return RT_ThrowValue(in, "TypeError", "sorted takes 1 or 2 arguments");
+    if (!iter_values(in, args[0], &items, &n))
+        return NULL;
+    if (nargs == 2 && args[1]->kind != RV_NULL) {
+        if (!is_callable_value(args[1])) {
+            free(items);
+            return RT_ThrowValue(in, "TypeError", "sorted() expects a function as key");
+        }
+        key_fn = args[1];
+    }
+    out = List_New(in);
+    for (i = 0; i < n; i++)
+        List_Append(in, out, RValue_Copy(in, items[i]));
+    free(items);
+    if (key_fn && out->len) {
+        keys = Arena_Alloc(in->arena, out->len * sizeof(RValue *));
+        for (i = 0; i < out->len; i++) {
+            keys[i] = Interp_CallValue(in, key_fn, &out->items[i], 1);
+            if (!keys[i])
+                return NULL;
+        }
+    }
+    for (i = 1; i < out->len; i++) {
+        RValue *item = out->items[i];
+        RValue *key = keys ? keys[i] : item;
+        size_t j = i;
+        while (j > 0) {
+            RValue *prev = keys ? keys[j - 1] : out->items[j - 1];
+            int cmp;
+            if (!RValue_Compare(in, prev, key, &cmp))
+                return NULL;
+            if (cmp <= 0)
+                break;
+            out->items[j] = out->items[j - 1];
+            if (keys)
+                keys[j] = keys[j - 1];
+            j--;
+        }
+        out->items[j] = item;
+        if (keys)
+            keys[j] = key;
+    }
+    return RValue_List(in, out);
+}
+
+static RValue *bi_round(Interp *in, RValue *self, RValue **args, size_t nargs) {
+    int ok = 1;
+    int64_t nd = 0;
+    (void)self;
+    if (nargs < 1 || nargs > 2)
+        return RT_ThrowValue(in, "TypeError", "round takes 1 or 2 arguments");
+    if (nargs == 2) {
+        nd = RValue_AsInt(in, args[1], &ok);
+        if (!ok)
+            return NULL;
+    }
+    if (args[0]->kind == RV_INT) {
+        int64_t v = args[0]->u.i;
+        if (nd >= 0)
+            return RValue_Int(in, v);
+        {
+            int64_t factor = 1;
+            int64_t scaled;
+            while (nd < 0 && factor <= INT64_MAX / 10) {
+                factor *= 10;
+                nd++;
+            }
+            scaled = (int64_t)nearbyint((double)v / (double)factor);
+            return RValue_Int(in, scaled * factor);
+        }
+    }
+    if (!RValue_IsNumber(args[0]))
+        return RT_ThrowValue(in, "TypeError", "type %s doesn't define __round__",
+                             RValue_TypeName(args[0]));
+    {
+        double x = RValue_AsDouble(in, args[0], &ok);
+        if (!ok)
+            return NULL;
+        if (nargs == 1 || nd == 0)
+            return RValue_Int(in, (int64_t)nearbyint(x));
+        if (nd > 0 && nd < 309) {
+            double factor = pow(10.0, (double)nd);
+            return RValue_Float(in, nearbyint(x * factor) / factor);
+        }
+        if (nd <= 0 && nd > -309) {
+            double factor = pow(10.0, (double)-nd);
+            return RValue_Float(in, nearbyint(x / factor) * factor);
+        }
+        return RValue_Float(in, x);
+    }
+}
+
+static RValue *bi_input(Interp *in, RValue *self, RValue **args, size_t nargs) {
+    int eof = 0;
+    char *line;
+    (void)self;
+    if (nargs > 1)
+        return RT_ThrowValue(in, "TypeError", "input takes at most 1 argument");
+    if (nargs == 1 && args[0]->kind == RV_STR) {
+        fwrite(args[0]->u.s->data, 1, args[0]->u.s->length, stdout);
+        fflush(stdout);
+    }
+    line = read_stdin_line(&eof);
+    if (!line) {
+        RT_Throw(in, "EOFError", "end of input");
+        return NULL;
+    }
+    {
+        RValue *v = RValue_Str(in, AsterString_FromCStr(line));
+        free(line);
+        return v;
+    }
 }
 
 /* ---- 표준 라이브러리(aster.*)가 쓰는 플랫폼 헬퍼 ---- */
@@ -2731,8 +3293,7 @@ __declspec(dllimport) unsigned long __stdcall GetCurrentDirectoryA(unsigned long
 __declspec(dllimport) int __cdecl _putenv_s(const char *name, const char *value);
 #endif
 
-static RValue *bi_now_ms(Interp *in, RValue *self, RValue **args, size_t nargs)
-{
+static RValue *bi_now_ms(Interp *in, RValue *self, RValue **args, size_t nargs) {
     int64_t ms;
     (void)self;
     (void)args;
@@ -2756,8 +3317,7 @@ static RValue *bi_now_ms(Interp *in, RValue *self, RValue **args, size_t nargs)
     return RValue_Int(in, ms);
 }
 
-static RValue *bi_sleep_ms(Interp *in, RValue *self, RValue **args, size_t nargs)
-{
+static RValue *bi_sleep_ms(Interp *in, RValue *self, RValue **args, size_t nargs) {
     int ok;
     int64_t ms;
     (void)self;
@@ -2781,8 +3341,43 @@ static RValue *bi_sleep_ms(Interp *in, RValue *self, RValue **args, size_t nargs
     return RValue_Null(in);
 }
 
-static RValue *bi_cwd(Interp *in, RValue *self, RValue **args, size_t nargs)
-{
+/* strftime 기반 로컬 시각 포맷. 기본 패턴은 "%Y-%m-%d %H:%M:%S". */
+static RValue *bi_format_time(Interp *in, RValue *self, RValue **args, size_t nargs) {
+    int ok;
+    int64_t secs;
+    AsterString *fmt = NULL;
+    time_t t;
+    struct tm tmv;
+    char buf[512];
+    size_t n;
+    (void)self;
+
+    if (nargs < 1 || nargs > 2)
+        return RT_ThrowValue(in, "TypeError", "formatTime takes 1 or 2 arguments");
+    secs = RValue_AsInt(in, args[0], &ok);
+    if (!ok)
+        return NULL;
+    if (nargs == 2) {
+        if (args[1]->kind != RV_STR)
+            return RT_ThrowValue(in, "TypeError", "formatTime pattern must be str");
+        fmt = args[1]->u.s;
+    }
+    t = (time_t)secs;
+#if defined(_WIN32)
+    if (localtime_s(&tmv, &t) != 0)
+        return RT_ThrowValue(in, "ValueError", "formatTime: timestamp out of range");
+#else
+    if (!localtime_r(&t, &tmv))
+        return RT_ThrowValue(in, "ValueError", "formatTime: timestamp out of range");
+#endif
+    n = strftime(buf, sizeof buf, fmt ? fmt->data : "%Y-%m-%d %H:%M:%S", &tmv);
+    if (n == 0)
+        return RT_ThrowValue(in, "ValueError",
+                             "formatTime: pattern produced no output or is invalid");
+    return RValue_Str(in, AsterString_FromUTF8(buf, n));
+}
+
+static RValue *bi_cwd(Interp *in, RValue *self, RValue **args, size_t nargs) {
     char buf[4096];
     const char *p = NULL;
     (void)self;
@@ -2800,8 +3395,7 @@ static RValue *bi_cwd(Interp *in, RValue *self, RValue **args, size_t nargs)
     return RValue_Str(in, AsterString_FromCStr(p));
 }
 
-static RValue *bi_pid(Interp *in, RValue *self, RValue **args, size_t nargs)
-{
+static RValue *bi_pid(Interp *in, RValue *self, RValue **args, size_t nargs) {
     (void)self;
     (void)args;
     if (nargs != 0)
@@ -2813,8 +3407,7 @@ static RValue *bi_pid(Interp *in, RValue *self, RValue **args, size_t nargs)
 #endif
 }
 
-static RValue *bi_platform(Interp *in, RValue *self, RValue **args, size_t nargs)
-{
+static RValue *bi_platform(Interp *in, RValue *self, RValue **args, size_t nargs) {
     (void)self;
     (void)args;
     if (nargs != 0)
@@ -2828,8 +3421,7 @@ static RValue *bi_platform(Interp *in, RValue *self, RValue **args, size_t nargs
 #endif
 }
 
-static RValue *bi_setenv(Interp *in, RValue *self, RValue **args, size_t nargs)
-{
+static RValue *bi_setenv(Interp *in, RValue *self, RValue **args, size_t nargs) {
     (void)self;
     if (nargs != 2 || !args[0] || args[0]->kind != RV_STR ||
         !args[1] || args[1]->kind != RV_STR)
@@ -2841,8 +3433,7 @@ static RValue *bi_setenv(Interp *in, RValue *self, RValue **args, size_t nargs)
 #endif
 }
 
-static RValue *bi_next(Interp *in, RValue *self, RValue **args, size_t nargs)
-{
+static RValue *bi_next(Interp *in, RValue *self, RValue **args, size_t nargs) {
     int ended = 0;
     RValue *v;
     (void)self;
@@ -2858,20 +3449,17 @@ static RValue *bi_next(Interp *in, RValue *self, RValue **args, size_t nargs)
     return v;
 }
 
-static RValue *bi_list(Interp *in, RValue *self, RValue **args, size_t nargs)
-{
+static RValue *bi_list(Interp *in, RValue *self, RValue **args, size_t nargs) {
     (void)self;
     return sequence_from_args(in, args, nargs, 0);
 }
 
-static RValue *bi_tuple(Interp *in, RValue *self, RValue **args, size_t nargs)
-{
+static RValue *bi_tuple(Interp *in, RValue *self, RValue **args, size_t nargs) {
     (void)self;
     return sequence_from_args(in, args, nargs, 1);
 }
 
-static RValue *bi_set(Interp *in, RValue *self, RValue **args, size_t nargs)
-{
+static RValue *bi_set(Interp *in, RValue *self, RValue **args, size_t nargs) {
     RValue **items;
     size_t n;
     size_t i;
@@ -2899,16 +3487,14 @@ static RValue *bi_set(Interp *in, RValue *self, RValue **args, size_t nargs)
     return RValue_Set(in, set);
 }
 
-static RValue *bi_frozenset(Interp *in, RValue *self, RValue **args, size_t nargs)
-{
+static RValue *bi_frozenset(Interp *in, RValue *self, RValue **args, size_t nargs) {
     RValue *set = bi_set(in, self, args, nargs);
     if (!set)
         return NULL;
     return RValue_FrozenSet(in, set->u.set);
 }
 
-static RValue *bi_dict(Interp *in, RValue *self, RValue **args, size_t nargs)
-{
+static RValue *bi_dict(Interp *in, RValue *self, RValue **args, size_t nargs) {
     AsterDict *dict = Dict_New(in);
     int ok;
 
@@ -2960,8 +3546,7 @@ static RValue *bi_dict(Interp *in, RValue *self, RValue **args, size_t nargs)
     return RValue_Dict(in, dict);
 }
 
-static int method_index(Interp *in, RValue *v, int64_t *out)
-{
+static int method_index(Interp *in, RValue *v, int64_t *out) {
     if (v && v->kind == RV_INT) {
         *out = v->u.i;
         return 1;
@@ -2974,8 +3559,7 @@ static int method_index(Interp *in, RValue *v, int64_t *out)
     return 0;
 }
 
-static size_t dict_index(const AsterDict *dict, const RValue *key, int *found)
-{
+static size_t dict_index(const AsterDict *dict, const RValue *key, int *found) {
     long i = Dict_FindIndex(dict, key);
     *found = i >= 0;
     return i >= 0 ? (size_t)i : 0;
@@ -2983,16 +3567,14 @@ static size_t dict_index(const AsterDict *dict, const RValue *key, int *found)
 
 /* ---- list 메서드 ---- */
 
-static RValue *list_m_append(Interp *in, RValue *self, RValue **args, size_t nargs)
-{
+static RValue *list_m_append(Interp *in, RValue *self, RValue **args, size_t nargs) {
     if (nargs != 1)
         return RT_ThrowValue(in, "TypeError", "append() takes exactly 1 argument");
     List_Append(in, self->u.list, RValue_Copy(in, args[0]));
     return RValue_Null(in);
 }
 
-static RValue *list_m_extend(Interp *in, RValue *self, RValue **args, size_t nargs)
-{
+static RValue *list_m_extend(Interp *in, RValue *self, RValue **args, size_t nargs) {
     RValue **items;
     size_t n;
     size_t i;
@@ -3007,8 +3589,7 @@ static RValue *list_m_extend(Interp *in, RValue *self, RValue **args, size_t nar
     return RValue_Null(in);
 }
 
-static RValue *list_m_insert(Interp *in, RValue *self, RValue **args, size_t nargs)
-{
+static RValue *list_m_insert(Interp *in, RValue *self, RValue **args, size_t nargs) {
     int64_t index;
     size_t len;
 
@@ -3028,8 +3609,7 @@ static RValue *list_m_insert(Interp *in, RValue *self, RValue **args, size_t nar
     return RValue_Null(in);
 }
 
-static RValue *list_m_pop(Interp *in, RValue *self, RValue **args, size_t nargs)
-{
+static RValue *list_m_pop(Interp *in, RValue *self, RValue **args, size_t nargs) {
     int64_t index = -1;
     RValue *item;
 
@@ -3048,8 +3628,7 @@ static RValue *list_m_pop(Interp *in, RValue *self, RValue **args, size_t nargs)
     return item;
 }
 
-static RValue *list_m_remove(Interp *in, RValue *self, RValue **args, size_t nargs)
-{
+static RValue *list_m_remove(Interp *in, RValue *self, RValue **args, size_t nargs) {
     size_t i;
 
     if (nargs != 1)
@@ -3063,16 +3642,14 @@ static RValue *list_m_remove(Interp *in, RValue *self, RValue **args, size_t nar
     return RT_ThrowValue(in, "ValueError", "list.remove(x): x not in list");
 }
 
-static RValue *list_m_clear(Interp *in, RValue *self, RValue **args, size_t nargs)
-{
+static RValue *list_m_clear(Interp *in, RValue *self, RValue **args, size_t nargs) {
     (void)args;
     (void)nargs;
     self->u.list->len = 0;
     return RValue_Null(in);
 }
 
-static RValue *list_m_index(Interp *in, RValue *self, RValue **args, size_t nargs)
-{
+static RValue *list_m_index(Interp *in, RValue *self, RValue **args, size_t nargs) {
     size_t i;
 
     if (nargs != 1)
@@ -3084,8 +3661,7 @@ static RValue *list_m_index(Interp *in, RValue *self, RValue **args, size_t narg
     return RT_ThrowValue(in, "ValueError", "x is not in list");
 }
 
-static RValue *list_m_count(Interp *in, RValue *self, RValue **args, size_t nargs)
-{
+static RValue *list_m_count(Interp *in, RValue *self, RValue **args, size_t nargs) {
     size_t i;
     int64_t count = 0;
 
@@ -3098,8 +3674,7 @@ static RValue *list_m_count(Interp *in, RValue *self, RValue **args, size_t narg
     return RValue_Int(in, count);
 }
 
-static RValue *list_m_copy(Interp *in, RValue *self, RValue **args, size_t nargs)
-{
+static RValue *list_m_copy(Interp *in, RValue *self, RValue **args, size_t nargs) {
     AsterList *list = List_New(in);
     size_t i;
     (void)args;
@@ -3109,8 +3684,7 @@ static RValue *list_m_copy(Interp *in, RValue *self, RValue **args, size_t nargs
     return RValue_List(in, list);
 }
 
-static RValue *list_m_map(Interp *in, RValue *self, RValue **args, size_t nargs)
-{
+static RValue *list_m_map(Interp *in, RValue *self, RValue **args, size_t nargs) {
     AsterList *out;
     size_t i;
     if (nargs != 1)
@@ -3131,8 +3705,7 @@ static RValue *list_m_map(Interp *in, RValue *self, RValue **args, size_t nargs)
     return RValue_List(in, out);
 }
 
-static RValue *list_m_filter(Interp *in, RValue *self, RValue **args, size_t nargs)
-{
+static RValue *list_m_filter(Interp *in, RValue *self, RValue **args, size_t nargs) {
     AsterList *out;
     size_t i;
     if (nargs != 1)
@@ -3154,8 +3727,7 @@ static RValue *list_m_filter(Interp *in, RValue *self, RValue **args, size_t nar
     return RValue_List(in, out);
 }
 
-static RValue *list_m_reverse(Interp *in, RValue *self, RValue **args, size_t nargs)
-{
+static RValue *list_m_reverse(Interp *in, RValue *self, RValue **args, size_t nargs) {
     size_t i, j;
     (void)args;
     (void)nargs;
@@ -3167,33 +3739,50 @@ static RValue *list_m_reverse(Interp *in, RValue *self, RValue **args, size_t na
     return RValue_Null(in);
 }
 
-static RValue *list_m_sort(Interp *in, RValue *self, RValue **args, size_t nargs)
-{
+static RValue *list_m_sort(Interp *in, RValue *self, RValue **args, size_t nargs) {
     AsterList *list = self->u.list;
+    RValue **keys = NULL;
     size_t i;
-    (void)args;
-    (void)nargs;
+
+    if (nargs > 1)
+        return RT_ThrowValue(in, "TypeError", "sort() takes at most 1 argument");
+    if (nargs == 1) {
+        if (!args[0] || (args[0]->kind != RV_FUNC && args[0]->kind != RV_BUILTIN &&
+                         args[0]->kind != RV_OVERLOAD))
+            return RT_ThrowValue(in, "TypeError", "sort() expects a function as key");
+        keys = list->len ? Arena_Alloc(in->arena, list->len * sizeof(RValue *)) : NULL;
+        for (i = 0; i < list->len; i++) {
+            keys[i] = Interp_CallValue(in, args[0], &list->items[i], 1);
+            if (!keys[i])
+                return NULL;
+        }
+    }
     for (i = 1; i < list->len; i++) {
         RValue *item = list->items[i];
+        RValue *key = keys ? keys[i] : item;
         size_t j = i;
         while (j > 0) {
+            RValue *prev = keys ? keys[j - 1] : list->items[j - 1];
             int cmp;
-            if (!RValue_Compare(in, list->items[j - 1], item, &cmp))
+            if (!RValue_Compare(in, prev, key, &cmp))
                 return NULL;
             if (cmp <= 0)
                 break;
             list->items[j] = list->items[j - 1];
+            if (keys)
+                keys[j] = keys[j - 1];
             j--;
         }
         list->items[j] = item;
+        if (keys)
+            keys[j] = key;
     }
     return RValue_Null(in);
 }
 
 /* ---- tuple 메서드 ---- */
 
-static RValue *tuple_m_index(Interp *in, RValue *self, RValue **args, size_t nargs)
-{
+static RValue *tuple_m_index(Interp *in, RValue *self, RValue **args, size_t nargs) {
     size_t i;
 
     if (nargs != 1)
@@ -3205,8 +3794,7 @@ static RValue *tuple_m_index(Interp *in, RValue *self, RValue **args, size_t nar
     return RT_ThrowValue(in, "ValueError", "tuple.index(x): x not in tuple");
 }
 
-static RValue *tuple_m_count(Interp *in, RValue *self, RValue **args, size_t nargs)
-{
+static RValue *tuple_m_count(Interp *in, RValue *self, RValue **args, size_t nargs) {
     size_t i;
     int64_t count = 0;
 
@@ -3221,8 +3809,7 @@ static RValue *tuple_m_count(Interp *in, RValue *self, RValue **args, size_t nar
 
 /* ---- dict 메서드 ---- */
 
-static RValue *dict_m_get(Interp *in, RValue *self, RValue **args, size_t nargs)
-{
+static RValue *dict_m_get(Interp *in, RValue *self, RValue **args, size_t nargs) {
     RValue *value;
 
     if (nargs < 1 || nargs > 2)
@@ -3237,8 +3824,7 @@ static RValue *dict_m_get(Interp *in, RValue *self, RValue **args, size_t nargs)
     return RValue_Null(in);
 }
 
-static RValue *dict_m_keys(Interp *in, RValue *self, RValue **args, size_t nargs)
-{
+static RValue *dict_m_keys(Interp *in, RValue *self, RValue **args, size_t nargs) {
     AsterList *list = List_New(in);
     size_t i;
     (void)args;
@@ -3248,8 +3834,7 @@ static RValue *dict_m_keys(Interp *in, RValue *self, RValue **args, size_t nargs
     return RValue_List(in, list);
 }
 
-static RValue *dict_m_values(Interp *in, RValue *self, RValue **args, size_t nargs)
-{
+static RValue *dict_m_values(Interp *in, RValue *self, RValue **args, size_t nargs) {
     AsterList *list = List_New(in);
     size_t i;
     (void)args;
@@ -3259,8 +3844,7 @@ static RValue *dict_m_values(Interp *in, RValue *self, RValue **args, size_t nar
     return RValue_List(in, list);
 }
 
-static RValue *dict_m_items(Interp *in, RValue *self, RValue **args, size_t nargs)
-{
+static RValue *dict_m_items(Interp *in, RValue *self, RValue **args, size_t nargs) {
     AsterList *list = List_New(in);
     size_t i;
     (void)args;
@@ -3274,8 +3858,7 @@ static RValue *dict_m_items(Interp *in, RValue *self, RValue **args, size_t narg
     return RValue_List(in, list);
 }
 
-static RValue *dict_m_pop(Interp *in, RValue *self, RValue **args, size_t nargs)
-{
+static RValue *dict_m_pop(Interp *in, RValue *self, RValue **args, size_t nargs) {
     int found;
     size_t index;
     RValue *value;
@@ -3299,8 +3882,7 @@ static RValue *dict_m_pop(Interp *in, RValue *self, RValue **args, size_t nargs)
     return value;
 }
 
-static RValue *dict_m_setdefault(Interp *in, RValue *self, RValue **args, size_t nargs)
-{
+static RValue *dict_m_setdefault(Interp *in, RValue *self, RValue **args, size_t nargs) {
     RValue *value;
     RValue *def = NULL;
     int ok;
@@ -3321,8 +3903,7 @@ static RValue *dict_m_setdefault(Interp *in, RValue *self, RValue **args, size_t
     return def;
 }
 
-static RValue *dict_m_update(Interp *in, RValue *self, RValue **args, size_t nargs)
-{
+static RValue *dict_m_update(Interp *in, RValue *self, RValue **args, size_t nargs) {
     int ok;
 
     if (nargs != 1)
@@ -3367,16 +3948,14 @@ static RValue *dict_m_update(Interp *in, RValue *self, RValue **args, size_t nar
     return RValue_Null(in);
 }
 
-static RValue *dict_m_clear(Interp *in, RValue *self, RValue **args, size_t nargs)
-{
+static RValue *dict_m_clear(Interp *in, RValue *self, RValue **args, size_t nargs) {
     (void)args;
     (void)nargs;
     Dict_Clear(self->u.dict);
     return RValue_Null(in);
 }
 
-static RValue *dict_m_copy(Interp *in, RValue *self, RValue **args, size_t nargs)
-{
+static RValue *dict_m_copy(Interp *in, RValue *self, RValue **args, size_t nargs) {
     AsterDict *dict = Dict_New(in);
     int ok;
     size_t i;
@@ -3390,15 +3969,13 @@ static RValue *dict_m_copy(Interp *in, RValue *self, RValue **args, size_t nargs
     return RValue_Dict(in, dict);
 }
 
-static RValue *set_result(Interp *in, RValue *self, AsterSet *set)
-{
+static RValue *set_result(Interp *in, RValue *self, AsterSet *set) {
     return self->kind == RV_FROZENSET ? RValue_FrozenSet(in, set) : RValue_Set(in, set);
 }
 
 /* ---- set 메서드 ---- */
 
-static RValue *set_m_add(Interp *in, RValue *self, RValue **args, size_t nargs)
-{
+static RValue *set_m_add(Interp *in, RValue *self, RValue **args, size_t nargs) {
     int ok;
     if (nargs != 1)
         return RT_ThrowValue(in, "TypeError", "add() takes exactly 1 argument");
@@ -3407,8 +3984,7 @@ static RValue *set_m_add(Interp *in, RValue *self, RValue **args, size_t nargs)
     return RValue_Null(in);
 }
 
-static RValue *set_m_remove(Interp *in, RValue *self, RValue **args, size_t nargs)
-{
+static RValue *set_m_remove(Interp *in, RValue *self, RValue **args, size_t nargs) {
     size_t i;
 
     if (nargs != 1)
@@ -3422,8 +3998,7 @@ static RValue *set_m_remove(Interp *in, RValue *self, RValue **args, size_t narg
     return RT_ThrowValue(in, "KeyError", "set.remove(x): x not in set");
 }
 
-static RValue *set_m_discard(Interp *in, RValue *self, RValue **args, size_t nargs)
-{
+static RValue *set_m_discard(Interp *in, RValue *self, RValue **args, size_t nargs) {
     size_t i;
 
     if (nargs != 1)
@@ -3437,8 +4012,7 @@ static RValue *set_m_discard(Interp *in, RValue *self, RValue **args, size_t nar
     return RValue_Null(in);
 }
 
-static RValue *set_m_pop(Interp *in, RValue *self, RValue **args, size_t nargs)
-{
+static RValue *set_m_pop(Interp *in, RValue *self, RValue **args, size_t nargs) {
     RValue *item;
     (void)args;
     (void)nargs;
@@ -3449,16 +4023,14 @@ static RValue *set_m_pop(Interp *in, RValue *self, RValue **args, size_t nargs)
     return item;
 }
 
-static RValue *set_m_clear(Interp *in, RValue *self, RValue **args, size_t nargs)
-{
+static RValue *set_m_clear(Interp *in, RValue *self, RValue **args, size_t nargs) {
     (void)args;
     (void)nargs;
     Set_Clear(self->u.set);
     return RValue_Null(in);
 }
 
-static RValue *set_m_copy(Interp *in, RValue *self, RValue **args, size_t nargs)
-{
+static RValue *set_m_copy(Interp *in, RValue *self, RValue **args, size_t nargs) {
     AsterSet *set = Set_New(in);
     int add_ok;
     size_t i;
@@ -3469,8 +4041,7 @@ static RValue *set_m_copy(Interp *in, RValue *self, RValue **args, size_t nargs)
     return set_result(in, self, set);
 }
 
-static AsterSet *set_like_from(Interp *in, RValue *src, int *ok)
-{
+static AsterSet *set_like_from(Interp *in, RValue *src, int *ok) {
     AsterSet *set = Set_New(in);
     RValue **items;
     size_t n;
@@ -3491,8 +4062,7 @@ static AsterSet *set_like_from(Interp *in, RValue *src, int *ok)
     return set;
 }
 
-static RValue *set_m_union(Interp *in, RValue *self, RValue **args, size_t nargs)
-{
+static RValue *set_m_union(Interp *in, RValue *self, RValue **args, size_t nargs) {
     AsterSet *set = Set_New(in);
     AsterSet *other;
     int ok;
@@ -3511,8 +4081,7 @@ static RValue *set_m_union(Interp *in, RValue *self, RValue **args, size_t nargs
     return set_result(in, self, set);
 }
 
-static RValue *set_m_intersection(Interp *in, RValue *self, RValue **args, size_t nargs)
-{
+static RValue *set_m_intersection(Interp *in, RValue *self, RValue **args, size_t nargs) {
     AsterSet *set = Set_New(in);
     AsterSet *other;
     int ok;
@@ -3530,8 +4099,7 @@ static RValue *set_m_intersection(Interp *in, RValue *self, RValue **args, size_
     return set_result(in, self, set);
 }
 
-static RValue *set_m_difference(Interp *in, RValue *self, RValue **args, size_t nargs)
-{
+static RValue *set_m_difference(Interp *in, RValue *self, RValue **args, size_t nargs) {
     AsterSet *set = Set_New(in);
     AsterSet *other;
     int ok;
@@ -3549,8 +4117,7 @@ static RValue *set_m_difference(Interp *in, RValue *self, RValue **args, size_t 
     return set_result(in, self, set);
 }
 
-static RValue *set_m_issubset(Interp *in, RValue *self, RValue **args, size_t nargs)
-{
+static RValue *set_m_issubset(Interp *in, RValue *self, RValue **args, size_t nargs) {
     AsterSet *other;
     int ok;
     size_t i;
@@ -3567,8 +4134,7 @@ static RValue *set_m_issubset(Interp *in, RValue *self, RValue **args, size_t na
     return RValue_Bool(in, 1);
 }
 
-static RValue *set_m_issuperset(Interp *in, RValue *self, RValue **args, size_t nargs)
-{
+static RValue *set_m_issuperset(Interp *in, RValue *self, RValue **args, size_t nargs) {
     AsterSet *other;
     int ok;
     size_t i;
@@ -3587,8 +4153,7 @@ static RValue *set_m_issuperset(Interp *in, RValue *self, RValue **args, size_t 
 
 /* ---- 문자열 메서드 ---- */
 
-static int str_arg(Interp *in, RValue *v, const char *what, AsterString **out)
-{
+static int str_arg(Interp *in, RValue *v, const char *what, AsterString **out) {
     if (!v || v->kind != RV_STR) {
         RT_Throw(in, "TypeError", "%s must be a string", what);
         return 0;
@@ -3597,13 +4162,11 @@ static int str_arg(Interp *in, RValue *v, const char *what, AsterString **out)
     return 1;
 }
 
-static int is_space_byte(int c)
-{
+static int is_space_byte(int c) {
     return c == ' ' || c == '\t' || c == '\r' || c == '\n' || c == '\f' || c == '\v';
 }
 
-static int find_sub(const char *hay, size_t hn, const char *needle, size_t nn, size_t from)
-{
+static int find_sub(const char *hay, size_t hn, const char *needle, size_t nn, size_t from) {
     size_t i;
     if (nn == 0)
         return (int)(from <= hn ? from : hn);
@@ -3616,8 +4179,7 @@ static int find_sub(const char *hay, size_t hn, const char *needle, size_t nn, s
     return -1;
 }
 
-static RValue *str_case_convert(Interp *in, RValue *self, int upper)
-{
+static RValue *str_case_convert(Interp *in, RValue *self, int upper) {
     Buf b = {0};
     size_t i = 0, n = self->u.s->length;
     while (i < n) {
@@ -3641,22 +4203,19 @@ static RValue *str_case_convert(Interp *in, RValue *self, int upper)
     }
 }
 
-static RValue *str_m_upper(Interp *in, RValue *self, RValue **args, size_t nargs)
-{
+static RValue *str_m_upper(Interp *in, RValue *self, RValue **args, size_t nargs) {
     (void)args;
     (void)nargs;
     return str_case_convert(in, self, 1);
 }
 
-static RValue *str_m_lower(Interp *in, RValue *self, RValue **args, size_t nargs)
-{
+static RValue *str_m_lower(Interp *in, RValue *self, RValue **args, size_t nargs) {
     (void)args;
     (void)nargs;
     return str_case_convert(in, self, 0);
 }
 
-static RValue *str_m_strip(Interp *in, RValue *self, RValue **args, size_t nargs)
-{
+static RValue *str_m_strip(Interp *in, RValue *self, RValue **args, size_t nargs) {
     const char *d = self->u.s->data;
     size_t n = self->u.s->length, start = 0, end = n;
     size_t adv;
@@ -3684,8 +4243,7 @@ static RValue *str_m_strip(Interp *in, RValue *self, RValue **args, size_t nargs
     return RValue_Str(in, AsterString_FromUTF8(d + start, end - start));
 }
 
-static RValue *str_m_split(Interp *in, RValue *self, RValue **args, size_t nargs)
-{
+static RValue *str_m_split(Interp *in, RValue *self, RValue **args, size_t nargs) {
     AsterList *list = List_New(in);
     const char *d = self->u.s->data;
     size_t n = self->u.s->length;
@@ -3737,8 +4295,7 @@ static RValue *str_m_split(Interp *in, RValue *self, RValue **args, size_t nargs
     return RValue_List(in, list);
 }
 
-static RValue *str_m_join(Interp *in, RValue *self, RValue **args, size_t nargs)
-{
+static RValue *str_m_join(Interp *in, RValue *self, RValue **args, size_t nargs) {
     RValue **items;
     size_t n, i;
     Buf b = {0};
@@ -3764,8 +4321,7 @@ static RValue *str_m_join(Interp *in, RValue *self, RValue **args, size_t nargs)
     return RValue_Str(in, s);
 }
 
-static RValue *str_m_replace(Interp *in, RValue *self, RValue **args, size_t nargs)
-{
+static RValue *str_m_replace(Interp *in, RValue *self, RValue **args, size_t nargs) {
     AsterString *old, *new_s;
     Buf b = {0};
     size_t i = 0, n = self->u.s->length;
@@ -3811,8 +4367,7 @@ static RValue *str_m_replace(Interp *in, RValue *self, RValue **args, size_t nar
 }
 
 static RValue *string_predicate(Interp *in, RValue *self, RValue **args, size_t nargs,
-                                int from_end)
-{
+                                int from_end) {
     AsterString *sub;
     int found;
 
@@ -3830,18 +4385,15 @@ static RValue *string_predicate(Interp *in, RValue *self, RValue **args, size_t 
     return RValue_Bool(in, found);
 }
 
-static RValue *str_m_startswith(Interp *in, RValue *self, RValue **args, size_t nargs)
-{
+static RValue *str_m_startswith(Interp *in, RValue *self, RValue **args, size_t nargs) {
     return string_predicate(in, self, args, nargs, 0);
 }
 
-static RValue *str_m_endswith(Interp *in, RValue *self, RValue **args, size_t nargs)
-{
+static RValue *str_m_endswith(Interp *in, RValue *self, RValue **args, size_t nargs) {
     return string_predicate(in, self, args, nargs, 1);
 }
 
-static RValue *str_m_find(Interp *in, RValue *self, RValue **args, size_t nargs)
-{
+static RValue *str_m_find(Interp *in, RValue *self, RValue **args, size_t nargs) {
     AsterString *sub;
     int found;
 
@@ -3855,8 +4407,34 @@ static RValue *str_m_find(Interp *in, RValue *self, RValue **args, size_t nargs)
     return RValue_Int(in, found);
 }
 
-static RValue *str_m_count(Interp *in, RValue *self, RValue **args, size_t nargs)
-{
+static RValue *str_m_lastindexof(Interp *in, RValue *self, RValue **args, size_t nargs) {
+    AsterString *sub;
+    size_t i;
+    int found = -1;
+
+    if (nargs != 1)
+        return RT_ThrowValue(in, "TypeError",
+                             "lastIndexOf() takes exactly 1 argument");
+    if (!str_arg(in, args[0], "lastIndexOf() argument", &sub))
+        return NULL;
+    if (sub->length == 0)
+        return RValue_Int(in, (int64_t)self->u.s->cp_length);
+    if (sub->length > self->u.s->length)
+        return RValue_Int(in, -1);
+    i = self->u.s->length - sub->length + 1;
+    while (i > 0) {
+        i--;
+        if (!memcmp(self->u.s->data + i, sub->data, sub->length)) {
+            found = (int)i;
+            break;
+        }
+    }
+    if (found >= 0)
+        found = (int)AsterString_CodePointIndex(self->u.s, (size_t)found);
+    return RValue_Int(in, found);
+}
+
+static RValue *str_m_count(Interp *in, RValue *self, RValue **args, size_t nargs) {
     AsterString *sub;
     size_t i = 0;
     int64_t count = 0;
@@ -3877,8 +4455,7 @@ static RValue *str_m_count(Interp *in, RValue *self, RValue **args, size_t nargs
     return RValue_Int(in, count);
 }
 
-static RValue *str_m_to_int(Interp *in, RValue *self, RValue **args, size_t nargs)
-{
+static RValue *str_m_to_int(Interp *in, RValue *self, RValue **args, size_t nargs) {
     int ok;
     int64_t n;
     (void)args;
@@ -3887,8 +4464,7 @@ static RValue *str_m_to_int(Interp *in, RValue *self, RValue **args, size_t narg
     return ok ? RValue_Int(in, n) : NULL;
 }
 
-static RValue *str_m_to_float(Interp *in, RValue *self, RValue **args, size_t nargs)
-{
+static RValue *str_m_to_float(Interp *in, RValue *self, RValue **args, size_t nargs) {
     int ok;
     double f;
     (void)args;
@@ -3897,15 +4473,13 @@ static RValue *str_m_to_float(Interp *in, RValue *self, RValue **args, size_t na
     return ok ? RValue_Float(in, f) : NULL;
 }
 
-static RValue *str_m_length(Interp *in, RValue *self, RValue **args, size_t nargs)
-{
+static RValue *str_m_length(Interp *in, RValue *self, RValue **args, size_t nargs) {
     (void)args;
     (void)nargs;
     return RValue_Int(in, (int64_t)self->u.s->cp_length);
 }
 
-static RValue *str_m_charat(Interp *in, RValue *self, RValue **args, size_t nargs)
-{
+static RValue *str_m_charat(Interp *in, RValue *self, RValue **args, size_t nargs) {
     int64_t index;
     size_t off, adv = 1;
     if (nargs != 1)
@@ -3921,8 +4495,7 @@ static RValue *str_m_charat(Interp *in, RValue *self, RValue **args, size_t narg
     return RValue_Str(in, AsterString_FromUTF8(self->u.s->data + off, adv));
 }
 
-static RValue *str_m_substring(Interp *in, RValue *self, RValue **args, size_t nargs)
-{
+static RValue *str_m_substring(Interp *in, RValue *self, RValue **args, size_t nargs) {
     int64_t start = 0, end = (int64_t)self->u.s->cp_length;
     size_t boff, eoff;
     if (nargs < 1 || nargs > 2)
@@ -3942,8 +4515,7 @@ static RValue *str_m_substring(Interp *in, RValue *self, RValue **args, size_t n
     return RValue_Str(in, AsterString_FromUTF8(self->u.s->data + boff, eoff - boff));
 }
 
-static RValue *str_m_isdigit(Interp *in, RValue *self, RValue **args, size_t nargs)
-{
+static RValue *str_m_isdigit(Interp *in, RValue *self, RValue **args, size_t nargs) {
     size_t i;
     (void)args;
     (void)nargs;
@@ -3955,8 +4527,7 @@ static RValue *str_m_isdigit(Interp *in, RValue *self, RValue **args, size_t nar
     return RValue_Bool(in, 1);
 }
 
-static RValue *str_m_isalpha(Interp *in, RValue *self, RValue **args, size_t nargs)
-{
+static RValue *str_m_isalpha(Interp *in, RValue *self, RValue **args, size_t nargs) {
     size_t i;
     (void)args;
     (void)nargs;
@@ -3970,8 +4541,7 @@ static RValue *str_m_isalpha(Interp *in, RValue *self, RValue **args, size_t nar
     return RValue_Bool(in, 1);
 }
 
-static RValue *str_m_isspace(Interp *in, RValue *self, RValue **args, size_t nargs)
-{
+static RValue *str_m_isspace(Interp *in, RValue *self, RValue **args, size_t nargs) {
     size_t i = 0, n = self->u.s->length;
     (void)args;
     (void)nargs;
@@ -3987,8 +4557,7 @@ static RValue *str_m_isspace(Interp *in, RValue *self, RValue **args, size_t nar
     return RValue_Bool(in, 1);
 }
 
-static RValue *str_m_chars(Interp *in, RValue *self, RValue **args, size_t nargs)
-{
+static RValue *str_m_chars(Interp *in, RValue *self, RValue **args, size_t nargs) {
     AsterList *list = List_New(in);
     size_t i = 0, n = self->u.s->length;
     (void)args;
@@ -4002,12 +4571,274 @@ static RValue *str_m_chars(Interp *in, RValue *self, RValue **args, size_t nargs
     return RValue_List(in, list);
 }
 
-static RValue *str_m_tostring(Interp *in, RValue *self, RValue **args, size_t nargs)
-{
+static RValue *str_m_tostring(Interp *in, RValue *self, RValue **args, size_t nargs) {
     (void)in;
     (void)args;
     (void)nargs;
     return self;
+}
+
+static void buf_fill(Buf *b, char ch, size_t count) {
+    size_t k;
+    for (k = 0; k < count; k++)
+        buf_putc(b, ch);
+}
+
+static void buf_append_uint_base(Buf *b, uint64_t mag, int base, int upper) {
+    const char *digits = upper ? "0123456789ABCDEF" : "0123456789abcdef";
+    char tmp[72];
+    size_t k = 0;
+
+    if (mag == 0) {
+        buf_putc(b, '0');
+        return;
+    }
+    while (mag) {
+        tmp[k++] = digits[mag % (uint64_t)base];
+        mag /= (uint64_t)base;
+    }
+    while (k)
+        buf_putc(b, tmp[--k]);
+}
+
+static void buf_write_padded(Buf *b, const char *sign, const char *body, size_t bodylen,
+                             size_t width, char fill, char align) {
+    size_t signlen = strlen(sign);
+    size_t total = signlen + bodylen;
+    size_t pad = width > total ? width - total : 0;
+    size_t left = 0, right = 0;
+
+    if (align == '=') {
+        buf_write(b, sign, signlen);
+        buf_fill(b, fill, pad);
+        buf_write(b, body, bodylen);
+        return;
+    }
+    if (align == '^') {
+        left = pad / 2;
+        right = pad - left;
+    }
+    else if (align == '>') {
+        left = pad;
+    }
+    else {
+        right = pad;
+    }
+    buf_fill(b, fill, left);
+    buf_write(b, sign, signlen);
+    buf_write(b, body, bodylen);
+    buf_fill(b, fill, right);
+}
+
+/* str.format: 위치 필드 {} / {N} + [fill][align][sign][0][width][.precision][type] */
+static RValue *str_m_format(Interp *in, RValue *self, RValue **args, size_t nargs) {
+    const char *d = self->u.s->data;
+    size_t n = self->u.s->length, i = 0, auto_index = 0;
+    Buf out = {0};
+    AsterString *s;
+
+    while (i < n) {
+        size_t j, idx;
+        int explicit_idx = 0, has_precision = 0;
+        size_t width = 0, precision = 0;
+        char fill = ' ', align = 0, type = 0;
+        int zero_pad = 0, plus = 0, space = 0, numeric = 0;
+        const char *sign = "";
+        Buf body = {0};
+        RValue *v;
+
+        if (d[i] == '}') {
+            if (i + 1 < n && d[i + 1] == '}') {
+                buf_putc(&out, '}');
+                i += 2;
+                continue;
+            }
+            free(out.data);
+            return RT_ThrowValue(in, "ValueError", "Invalid format string: unmatched '}'");
+        }
+        if (d[i] != '{') {
+            buf_putc(&out, d[i]);
+            i++;
+            continue;
+        }
+        if (i + 1 < n && d[i + 1] == '{') {
+            buf_putc(&out, '{');
+            i += 2;
+            continue;
+        }
+
+        j = i + 1;
+        if (j < n && d[j] >= '0' && d[j] <= '9') {
+            idx = 0;
+            while (j < n && d[j] >= '0' && d[j] <= '9') {
+                idx = idx * 10 + (size_t)(d[j] - '0');
+                j++;
+            }
+            explicit_idx = 1;
+        }
+        else {
+            idx = auto_index;
+        }
+        if (j < n && d[j] != ':' && d[j] != '}') {
+            free(out.data);
+            return RT_ThrowValue(in, "ValueError",
+                                 "Invalid format string: named fields are not supported");
+        }
+        if (!explicit_idx)
+            auto_index++;
+        if (j < n && d[j] == ':') {
+            j++;
+            if (j + 1 < n && (d[j + 1] == '<' || d[j + 1] == '>' || d[j + 1] == '^' ||
+                              d[j + 1] == '=')) {
+                fill = d[j];
+                align = d[j + 1];
+                j += 2;
+            }
+            else if (j < n && (d[j] == '<' || d[j] == '>' || d[j] == '^' || d[j] == '=')) {
+                align = d[j];
+                j++;
+            }
+            if (j < n && (d[j] == '+' || d[j] == '-' || d[j] == ' ')) {
+                if (d[j] == '+')
+                    plus = 1;
+                else if (d[j] == ' ')
+                    space = 1;
+                j++;
+            }
+            if (j < n && d[j] == '0')
+                zero_pad = 1;
+            while (j < n && d[j] >= '0' && d[j] <= '9') {
+                width = width * 10 + (size_t)(d[j] - '0');
+                j++;
+            }
+            if (j < n && d[j] == '.') {
+                j++;
+                has_precision = 1;
+                while (j < n && d[j] >= '0' && d[j] <= '9') {
+                    precision = precision * 10 + (size_t)(d[j] - '0');
+                    j++;
+                }
+            }
+            if (j < n && d[j] != '}')
+                type = d[j++];
+        }
+        if (j >= n || d[j] != '}') {
+            free(body.data);
+            free(out.data);
+            return RT_ThrowValue(in, "ValueError", "Invalid format string: expected '}'");
+        }
+        i = j + 1;
+
+        if (idx >= nargs) {
+            free(body.data);
+            free(out.data);
+            return RT_ThrowValue(in, "IndexError", "format() field index %zu out of range",
+                                 idx);
+        }
+        v = args[idx];
+
+        if (type == 0 || type == 's') {
+            AsterString *t = type == 's' && v->kind == RV_STR ? v->u.s
+                                                              : RValue_ToString(in, v);
+            size_t blen;
+            if (!t) {
+                free(body.data);
+                free(out.data);
+                return NULL;
+            }
+            blen = t->length;
+            if (has_precision && t->cp_length > precision)
+                blen = AsterString_ByteOffset(t, precision);
+            buf_write(&body, t->data, blen);
+        }
+        else if (type == 'd' || type == 'x' || type == 'X' || type == 'o' || type == 'b') {
+            int ok;
+            int64_t iv = RValue_AsInt(in, v, &ok);
+            uint64_t mag;
+            char tmp[32];
+            if (!ok) {
+                free(body.data);
+                free(out.data);
+                return RT_ThrowValue(in, "TypeError",
+                                     "format() with '%c' requires an integer", type);
+            }
+            numeric = 1;
+            if (iv < 0) {
+                sign = "-";
+                mag = (uint64_t)(-(iv + 1)) + 1;
+            }
+            else {
+                mag = (uint64_t)iv;
+            }
+            if (type == 'd') {
+                snprintf(tmp, sizeof tmp, "%llu", (unsigned long long)mag);
+                buf_write(&body, tmp, strlen(tmp));
+            }
+            else {
+                buf_append_uint_base(&body, mag, type == 'o' ? 8 : type == 'b' ? 2 : 16,
+                                     type == 'X');
+            }
+        }
+        else if (type == 'f' || type == 'e' || type == 'E' || type == 'g' || type == 'G' ||
+                 type == '%') {
+            int ok;
+            double dv = RValue_AsDouble(in, v, &ok);
+            char tmp[512];
+            int prec = has_precision ? (int)precision : 6;
+            if (!ok) {
+                free(body.data);
+                free(out.data);
+                return RT_ThrowValue(in, "TypeError",
+                                     "format() with '%c' requires a number", type);
+            }
+            numeric = 1;
+            if (dv < 0) {
+                sign = "-";
+                dv = -dv;
+            }
+            if (type == '%')
+                snprintf(tmp, sizeof tmp, "%.*f%%", prec, dv * 100.0);
+            else if (type == 'f')
+                snprintf(tmp, sizeof tmp, "%.*f", prec, dv);
+            else if (type == 'e')
+                snprintf(tmp, sizeof tmp, "%.*e", prec, dv);
+            else if (type == 'E')
+                snprintf(tmp, sizeof tmp, "%.*E", prec, dv);
+            else if (type == 'g')
+                snprintf(tmp, sizeof tmp, "%.*g", prec, dv);
+            else
+                snprintf(tmp, sizeof tmp, "%.*G", prec, dv);
+            buf_write(&body, tmp, strlen(tmp));
+        }
+        else {
+            char bad = type;
+            free(body.data);
+            free(out.data);
+            return RT_ThrowValue(in, "ValueError", "Invalid format specifier '%c'", bad);
+        }
+
+        if (numeric && !sign[0]) {
+            if (plus)
+                sign = "+";
+            else if (space)
+                sign = " ";
+        }
+        {
+            char eff_align = align;
+            if (!eff_align)
+                eff_align = numeric ? '>' : '<';
+            if (zero_pad && numeric && !align) {
+                fill = '0';
+                eff_align = '=';
+            }
+            buf_write_padded(&out, sign, body.data ? body.data : "", body.len, width, fill,
+                             eff_align);
+        }
+        free(body.data);
+    }
+    s = AsterString_FromUTF8(out.data ? out.data : "", out.len);
+    free(out.data);
+    return RValue_Str(in, s);
 }
 
 typedef struct {
@@ -4025,10 +4856,13 @@ static const StrMethodEntry str_methods[] = {
     {"split", str_m_split},
     {"join", str_m_join},
     {"replace", str_m_replace},
+    {"format", str_m_format},
     {"startswith", str_m_startswith},
     {"endswith", str_m_endswith},
     {"find", str_m_find},
     {"indexOf", str_m_find},
+    {"lastIndexOf", str_m_lastindexof},
+    {"rfind", str_m_lastindexof},
     {"count", str_m_count},
     {"to_int", str_m_to_int},
     {"to_float", str_m_to_float},
@@ -4042,8 +4876,7 @@ static const StrMethodEntry str_methods[] = {
     {"toString", str_m_tostring},
 };
 
-AstBuiltin *String_Method(Interp *in, RValue *self, const char *name)
-{
+AstBuiltin *String_Method(Interp *in, RValue *self, const char *name) {
     size_t i;
     for (i = 0; i < sizeof str_methods / sizeof str_methods[0]; i++) {
         if (!strcmp(str_methods[i].name, name)) {
@@ -4057,8 +4890,7 @@ AstBuiltin *String_Method(Interp *in, RValue *self, const char *name)
 
 /* ---- range ---- */
 
-static RValue *bi_range(Interp *in, RValue *self, RValue **args, size_t nargs)
-{
+static RValue *bi_range(Interp *in, RValue *self, RValue **args, size_t nargs) {
     int ok;
     int64_t start = 0, stop, step = 1, i;
     AsterList *list;
@@ -4104,8 +4936,7 @@ static RValue *bi_range(Interp *in, RValue *self, RValue **args, size_t nargs)
 
 /* ---- 시스템/입출력 (Java 스타일) ---- */
 
-static char *read_stdin_line(int *eof)
-{
+static char *read_stdin_line(int *eof) {
     size_t cap = 128, len = 0;
     char *buf = xrealloc(NULL, cap);
     int c = EOF;
@@ -4129,8 +4960,7 @@ static char *read_stdin_line(int *eof)
     return buf;
 }
 
-static RValue *inst_get(Interp *in, RValue *self, const char *name)
-{
+static RValue *inst_get(Interp *in, RValue *self, const char *name) {
     (void)in;
     InstField *f;
     if (!self || self->kind != RV_OBJECT)
@@ -4139,16 +4969,14 @@ static RValue *inst_get(Interp *in, RValue *self, const char *name)
     return f ? f->cell : NULL;
 }
 
-static void inst_set(Interp *in, RValue *self, const char *name, RValue *value)
-{
+static void inst_set(Interp *in, RValue *self, const char *name, RValue *value) {
     InstField *f = Instance_FindField(self->u.obj, name);
     (void)in;
     if (f)
         f->cell = value;
 }
 
-static char *path_bytes(Interp *in, RValue *v, int *ok)
-{
+static char *path_bytes(Interp *in, RValue *v, int *ok) {
     *ok = 0;
     if (!v || v->kind != RV_STR) {
         RT_Throw(in, "TypeError", "file path must be a string");
@@ -4158,8 +4986,7 @@ static char *path_bytes(Interp *in, RValue *v, int *ok)
     return v->u.s->data;
 }
 
-static RValue *scanner_ctor(Interp *in, RValue *self, RValue **args, size_t nargs)
-{
+static RValue *scanner_ctor(Interp *in, RValue *self, RValue **args, size_t nargs) {
     (void)args;
     (void)nargs;
     inst_set(in, self, "tokens", RValue_List(in, List_New(in)));
@@ -4168,8 +4995,7 @@ static RValue *scanner_ctor(Interp *in, RValue *self, RValue **args, size_t narg
     return RValue_Null(in);
 }
 
-static RValue *scanner_fill_tokens(Interp *in, RValue *self)
-{
+static RValue *scanner_fill_tokens(Interp *in, RValue *self) {
     RValue *pending = inst_get(in, self, "pending");
     int eof = 0;
     char *line;
@@ -4208,8 +5034,7 @@ static RValue *scanner_fill_tokens(Interp *in, RValue *self)
     return self;
 }
 
-static RValue *scanner_next(Interp *in, RValue *self, RValue **args, size_t nargs)
-{
+static RValue *scanner_next(Interp *in, RValue *self, RValue **args, size_t nargs) {
     RValue *tokens = inst_get(in, self, "tokens");
     RValue *posv = inst_get(in, self, "pos");
     int64_t pos = posv && posv->kind == RV_INT ? posv->u.i : 0;
@@ -4228,8 +5053,7 @@ static RValue *scanner_next(Interp *in, RValue *self, RValue **args, size_t narg
     }
 }
 
-static RValue *scanner_nextline(Interp *in, RValue *self, RValue **args, size_t nargs)
-{
+static RValue *scanner_nextline(Interp *in, RValue *self, RValue **args, size_t nargs) {
     RValue *pending = inst_get(in, self, "pending");
     int eof = 0;
     char *line;
@@ -4249,8 +5073,7 @@ static RValue *scanner_nextline(Interp *in, RValue *self, RValue **args, size_t 
     }
 }
 
-static RValue *scanner_hasnextline(Interp *in, RValue *self, RValue **args, size_t nargs)
-{
+static RValue *scanner_hasnextline(Interp *in, RValue *self, RValue **args, size_t nargs) {
     RValue *pending = inst_get(in, self, "pending");
     int eof = 0;
     char *line;
@@ -4267,8 +5090,7 @@ static RValue *scanner_hasnextline(Interp *in, RValue *self, RValue **args, size
     return RValue_Bool(in, 1);
 }
 
-static RValue *scanner_nextint(Interp *in, RValue *self, RValue **args, size_t nargs)
-{
+static RValue *scanner_nextint(Interp *in, RValue *self, RValue **args, size_t nargs) {
     RValue *tok = scanner_next(in, self, args, nargs);
     int ok;
     int64_t n;
@@ -4288,8 +5110,7 @@ static RValue *scanner_nextint(Interp *in, RValue *self, RValue **args, size_t n
     return ok ? RValue_Int(in, n) : NULL;
 }
 
-static RValue *scanner_nextfloat(Interp *in, RValue *self, RValue **args, size_t nargs)
-{
+static RValue *scanner_nextfloat(Interp *in, RValue *self, RValue **args, size_t nargs) {
     RValue *tok = scanner_next(in, self, args, nargs);
     int ok;
     double f;
@@ -4309,16 +5130,14 @@ static RValue *scanner_nextfloat(Interp *in, RValue *self, RValue **args, size_t
     return ok ? RValue_Float(in, f) : NULL;
 }
 
-static RValue *scanner_close(Interp *in, RValue *self, RValue **args, size_t nargs)
-{
+static RValue *scanner_close(Interp *in, RValue *self, RValue **args, size_t nargs) {
     (void)self;
     (void)args;
     (void)nargs;
     return RValue_Null(in);
 }
 
-static RValue *files_readstring(Interp *in, RValue *self, RValue **args, size_t nargs)
-{
+static RValue *files_readstring(Interp *in, RValue *self, RValue **args, size_t nargs) {
     int ok;
     char *path;
     FILE *f;
@@ -4344,8 +5163,7 @@ static RValue *files_readstring(Interp *in, RValue *self, RValue **args, size_t 
     }
 }
 
-static RValue *files_writestring(Interp *in, RValue *self, RValue **args, size_t nargs)
-{
+static RValue *files_writestring(Interp *in, RValue *self, RValue **args, size_t nargs) {
     int ok;
     char *path;
     AsterString *content;
@@ -4368,8 +5186,7 @@ static RValue *files_writestring(Interp *in, RValue *self, RValue **args, size_t
     return RValue_Null(in);
 }
 
-static RValue *files_readlines(Interp *in, RValue *self, RValue **args, size_t nargs)
-{
+static RValue *files_readlines(Interp *in, RValue *self, RValue **args, size_t nargs) {
     RValue *all = files_readstring(in, self, args, nargs);
     AsterList *list;
     const char *d;
@@ -4396,27 +5213,22 @@ static RValue *files_readlines(Interp *in, RValue *self, RValue **args, size_t n
     return RValue_List(in, list);
 }
 
-static RValue *files_exists(Interp *in, RValue *self, RValue **args, size_t nargs)
-{
+static RValue *files_exists(Interp *in, RValue *self, RValue **args, size_t nargs) {
     int ok;
     char *path;
-    FILE *f;
+    struct stat st;
     (void)self;
     if (nargs != 1)
         return RT_ThrowValue(in, "TypeError", "Files.exists() takes exactly 1 argument");
     path = path_bytes(in, args[0], &ok);
     if (!ok)
         return NULL;
-    f = fopen(path, "rb");
-    if (f) {
-        fclose(f);
-        return RValue_Bool(in, 1);
-    }
-    return RValue_Bool(in, 0);
+    return RValue_Bool(in, stat(path, &st) == 0);
 }
 
-static RValue *files_delete(Interp *in, RValue *self, RValue **args, size_t nargs)
-{
+static int fs_remove_path(const char *path);
+
+static RValue *files_delete(Interp *in, RValue *self, RValue **args, size_t nargs) {
     int ok;
     char *path;
     (void)self;
@@ -4425,13 +5237,276 @@ static RValue *files_delete(Interp *in, RValue *self, RValue **args, size_t narg
     path = path_bytes(in, args[0], &ok);
     if (!ok)
         return NULL;
-    if (remove(path) != 0)
+    if (fs_remove_path(path) != 0)
         return RT_ThrowValue(in, "OSError", "cannot delete file: %s", path);
     return RValue_Null(in);
 }
 
-static RValue *system_exit(Interp *in, RValue *self, RValue **args, size_t nargs)
-{
+/* ---- 경로/디렉터리 조작 ---- */
+
+static int path_is_absolute(const char *path) {
+    if (!path || !path[0])
+        return 0;
+    if (path[0] == '/' || path[0] == '\\')
+        return 1;
+    return path[1] == ':' &&
+           ((path[0] >= 'A' && path[0] <= 'Z') ||
+            (path[0] >= 'a' && path[0] <= 'z'));
+}
+
+static int fs_is_dir_path(const char *path) {
+    struct stat st;
+    return stat(path, &st) == 0 && S_ISDIR(st.st_mode);
+}
+
+static int fs_remove_path(const char *path) {
+#if defined(_WIN32)
+    if (remove(path) == 0)
+        return 0;
+    if (fs_is_dir_path(path))
+        return _rmdir(path);
+    return -1;
+#else
+    return remove(path);
+#endif
+}
+
+static int fs_mkdir_one(const char *path) {
+#if defined(_WIN32)
+    return _mkdir(path);
+#else
+    return mkdir(path, 0777);
+#endif
+}
+
+static int fs_mkdir_p(const char *path) {
+    size_t len = strlen(path), i;
+    char *tmp;
+    int ok = 1;
+
+    if (len == 0)
+        return 0;
+    tmp = xrealloc(NULL, len + 1);
+    memcpy(tmp, path, len + 1);
+    for (i = 1; i < len && ok; i++) {
+        char save;
+        if (tmp[i] != '/' && tmp[i] != '\\')
+            continue;
+        save = tmp[i];
+        tmp[i] = 0;
+        if (!(strlen(tmp) == 2 && tmp[1] == ':'))
+            ok = fs_mkdir_one(tmp) == 0 || errno == EEXIST;
+        tmp[i] = save;
+    }
+    if (ok)
+        ok = fs_mkdir_one(tmp) == 0 || errno == EEXIST;
+    free(tmp);
+    return ok;
+}
+
+static RValue *files_is_file(Interp *in, RValue *self, RValue **args, size_t nargs) {
+    int ok;
+    char *path;
+    struct stat st;
+    (void)self;
+    if (nargs != 1)
+        return RT_ThrowValue(in, "TypeError", "Files.isFile() takes exactly 1 argument");
+    path = path_bytes(in, args[0], &ok);
+    if (!ok)
+        return NULL;
+    return RValue_Bool(in, stat(path, &st) == 0 && S_ISREG(st.st_mode));
+}
+
+static RValue *files_is_dir(Interp *in, RValue *self, RValue **args, size_t nargs) {
+    int ok;
+    char *path;
+    (void)self;
+    if (nargs != 1)
+        return RT_ThrowValue(in, "TypeError",
+                             "Files.isDirectory() takes exactly 1 argument");
+    path = path_bytes(in, args[0], &ok);
+    if (!ok)
+        return NULL;
+    return RValue_Bool(in, fs_is_dir_path(path));
+}
+
+static RValue *files_length(Interp *in, RValue *self, RValue **args, size_t nargs) {
+    int ok;
+    char *path;
+    struct stat st;
+    (void)self;
+    if (nargs != 1)
+        return RT_ThrowValue(in, "TypeError", "Files.length() takes exactly 1 argument");
+    path = path_bytes(in, args[0], &ok);
+    if (!ok)
+        return NULL;
+    if (stat(path, &st) != 0)
+        return RValue_Int(in, 0);
+    return RValue_Int(in, (int64_t)st.st_size);
+}
+
+static RValue *files_list(Interp *in, RValue *self, RValue **args, size_t nargs) {
+    int ok;
+    char *path;
+    AsterList *list;
+    (void)self;
+    if (nargs != 1)
+        return RT_ThrowValue(in, "TypeError", "Files.list() takes exactly 1 argument");
+    path = path_bytes(in, args[0], &ok);
+    if (!ok)
+        return NULL;
+    list = List_New(in);
+#if defined(_WIN32)
+    {
+        size_t plen = strlen(path);
+        char *pattern = xrealloc(NULL, plen + 3);
+        struct _finddata_t fd;
+        intptr_t h;
+        memcpy(pattern, path, plen);
+        if (plen == 0 || (path[plen - 1] != '/' && path[plen - 1] != '\\')) {
+            pattern[plen] = '/';
+            pattern[plen + 1] = '*';
+            pattern[plen + 2] = 0;
+        }
+        else {
+            pattern[plen] = '*';
+            pattern[plen + 1] = 0;
+        }
+        h = _findfirst(pattern, &fd);
+        free(pattern);
+        if (h == -1) {
+            if (fs_is_dir_path(path))
+                return RValue_List(in, list);
+            return RT_ThrowValue(in, "OSError", "cannot list directory: %s", path);
+        }
+        do {
+            if (!strcmp(fd.name, ".") || !strcmp(fd.name, ".."))
+                continue;
+            List_Append(in, list, RValue_Str(in, AsterString_FromCStr(fd.name)));
+        } while (_findnext(h, &fd) == 0);
+        _findclose(h);
+    }
+#else
+    {
+        DIR *d = opendir(path);
+        struct dirent *ent;
+        if (!d)
+            return RT_ThrowValue(in, "OSError", "cannot list directory: %s", path);
+        while ((ent = readdir(d)) != NULL) {
+            if (!strcmp(ent->d_name, ".") || !strcmp(ent->d_name, ".."))
+                continue;
+            List_Append(in, list,
+                        RValue_Str(in, AsterString_FromCStr(ent->d_name)));
+        }
+        closedir(d);
+    }
+#endif
+    return RValue_List(in, list);
+}
+
+static RValue *files_mkdir(Interp *in, RValue *self, RValue **args, size_t nargs) {
+    int ok;
+    char *path;
+    (void)self;
+    if (nargs != 1)
+        return RT_ThrowValue(in, "TypeError", "Files.mkdir() takes exactly 1 argument");
+    path = path_bytes(in, args[0], &ok);
+    if (!ok)
+        return NULL;
+    return RValue_Bool(in, fs_mkdir_one(path) == 0);
+}
+
+static RValue *files_mkdirs(Interp *in, RValue *self, RValue **args, size_t nargs) {
+    int ok;
+    char *path;
+    (void)self;
+    if (nargs != 1)
+        return RT_ThrowValue(in, "TypeError", "Files.mkdirs() takes exactly 1 argument");
+    path = path_bytes(in, args[0], &ok);
+    if (!ok)
+        return NULL;
+    if (!fs_mkdir_p(path))
+        return RValue_Bool(in, 0);
+    return RValue_Bool(in, fs_is_dir_path(path));
+}
+
+static RValue *files_remove(Interp *in, RValue *self, RValue **args, size_t nargs) {
+    int ok;
+    char *path;
+    (void)self;
+    if (nargs != 1)
+        return RT_ThrowValue(in, "TypeError", "Files.remove() takes exactly 1 argument");
+    path = path_bytes(in, args[0], &ok);
+    if (!ok)
+        return NULL;
+    return RValue_Bool(in, fs_remove_path(path) == 0);
+}
+
+static RValue *files_rename(Interp *in, RValue *self, RValue **args, size_t nargs) {
+    int ok;
+    char *from, *to;
+    (void)self;
+    if (nargs != 2)
+        return RT_ThrowValue(in, "TypeError", "Files.rename() takes exactly 2 arguments");
+    from = path_bytes(in, args[0], &ok);
+    if (!ok)
+        return NULL;
+    to = path_bytes(in, args[1], &ok);
+    if (!ok)
+        return NULL;
+    return RValue_Bool(in, rename(from, to) == 0);
+}
+
+static RValue *files_absolute(Interp *in, RValue *self, RValue **args, size_t nargs) {
+    int ok;
+    char *path;
+    char cwd[4096];
+    (void)self;
+    if (nargs != 1)
+        return RT_ThrowValue(in, "TypeError",
+                             "Files.absolutePath() takes exactly 1 argument");
+    path = path_bytes(in, args[0], &ok);
+    if (!ok)
+        return NULL;
+    if (path_is_absolute(path))
+        return RValue_Str(in, AsterString_FromCStr(path));
+#if defined(_WIN32)
+    if (!_getcwd(cwd, sizeof cwd))
+#else
+    if (!getcwd(cwd, sizeof cwd))
+#endif
+        return RValue_Str(in, AsterString_FromCStr(path));
+    {
+        Buf b = {0};
+        size_t n = strlen(cwd);
+        AsterString *s;
+#if defined(_WIN32)
+        const char *sep = "\\";
+#else
+        const char *sep = "/";
+#endif
+        buf_write(&b, cwd, n);
+        if (n == 0 || (cwd[n - 1] != '/' && cwd[n - 1] != '\\'))
+            buf_write(&b, sep, 1);
+        buf_write(&b, path, strlen(path));
+        s = AsterString_FromUTF8(b.data ? b.data : "", b.len);
+        free(b.data);
+        return RValue_Str(in, s);
+    }
+}
+
+static RValue *files_separator(Interp *in, RValue *self, RValue **args, size_t nargs) {
+    (void)self;
+    (void)args;
+    (void)nargs;
+#if defined(_WIN32)
+    return RValue_Str(in, AsterString_FromCStr("\\"));
+#else
+    return RValue_Str(in, AsterString_FromCStr("/"));
+#endif
+}
+
+static RValue *system_exit(Interp *in, RValue *self, RValue **args, size_t nargs) {
     int ok;
     int64_t code = 0;
     (void)self;
@@ -4447,8 +5522,7 @@ static RValue *system_exit(Interp *in, RValue *self, RValue **args, size_t nargs
     return RValue_Null(in);
 }
 
-static RValue *system_set_recursion_limit(Interp *in, RValue *self, RValue **args, size_t nargs)
-{
+static RValue *system_set_recursion_limit(Interp *in, RValue *self, RValue **args, size_t nargs) {
     int ok;
     int64_t limit;
     (void)self;
@@ -4468,8 +5542,7 @@ static RValue *system_set_recursion_limit(Interp *in, RValue *self, RValue **arg
     return RValue_Null(in);
 }
 
-static RValue *system_get_recursion_limit(Interp *in, RValue *self, RValue **args, size_t nargs)
-{
+static RValue *system_get_recursion_limit(Interp *in, RValue *self, RValue **args, size_t nargs) {
     (void)self;
     (void)args;
     (void)nargs;
@@ -4529,8 +5602,7 @@ static const MethodEntry set_methods[] = {
     {"issuperset", set_m_issuperset, 0},
 };
 
-AstBuiltin *Collection_Method(Interp *in, RValue *self, const char *name)
-{
+AstBuiltin *Collection_Method(Interp *in, RValue *self, const char *name) {
     const MethodEntry *table = NULL;
     size_t count = 0;
     size_t i;
@@ -4569,8 +5641,7 @@ AstBuiltin *Collection_Method(Interp *in, RValue *self, const char *name)
     return NULL;
 }
 
-static int try_module_file(const char *dir, const char *rel, char *out, size_t cap)
-{
+static int try_module_file(const char *dir, const char *rel, char *out, size_t cap) {
     FILE *f;
     if (dir && dir[0])
         snprintf(out, cap, "%s/%s", dir, rel);
@@ -4585,8 +5656,7 @@ static int try_module_file(const char *dir, const char *rel, char *out, size_t c
 
 int Aster_ResolveModuleFile(const char *base_dir, const char *stdlib_dir,
                             const char **module_dirs, size_t nmodule_dirs,
-                            const char *name, char *out, size_t cap)
-{
+                            const char *name, char *out, size_t cap) {
     char rel[512], with_ast[600], with_init[620];
     size_t i, o = 0;
 
@@ -4613,8 +5683,7 @@ int Aster_ResolveModuleFile(const char *base_dir, const char *stdlib_dir,
     return 0;
 }
 
-AstModule *Module_New(Interp *in, const char *name, const char *path)
-{
+AstModule *Module_New(Interp *in, const char *name, const char *path) {
     AstModule *m = Arena_Alloc(in->arena, sizeof(AstModule));
     m->name = name;
     m->path = path;
@@ -4622,8 +5691,7 @@ AstModule *Module_New(Interp *in, const char *name, const char *path)
     return m;
 }
 
-AstModule *Module_Builtin(Interp *in, const char *name)
-{
+AstModule *Module_Builtin(Interp *in, const char *name) {
     size_t i;
     for (i = 0; i < in->nbuiltin_modules; i++) {
         if (!strcmp(in->builtin_modules[i]->name, name))
@@ -4632,8 +5700,7 @@ AstModule *Module_Builtin(Interp *in, const char *name)
     return NULL;
 }
 
-static AstModule *register_builtin_module(Interp *in, const char *name)
-{
+static AstModule *register_builtin_module(Interp *in, const char *name) {
     AstModule *m;
     if (in->nbuiltin_modules >= sizeof in->builtin_modules / sizeof in->builtin_modules[0])
         return NULL;
@@ -4642,8 +5709,12 @@ static AstModule *register_builtin_module(Interp *in, const char *name)
     return m;
 }
 
-void Module_AddExport(AstModule *module, Interp *in, const char *name)
-{
+AstModule *Module_RegisterBuiltin(Interp *in, const char *name) {
+    AstModule *m = Module_Builtin(in, name);
+    return m ? m : register_builtin_module(in, name);
+}
+
+void Module_AddExport(AstModule *module, Interp *in, const char *name) {
     size_t i;
     (void)in;
     for (i = 0; i < module->nexports; i++) {
@@ -4655,8 +5726,7 @@ void Module_AddExport(AstModule *module, Interp *in, const char *name)
     module->exports[module->nexports++] = name;
 }
 
-RValue *Module_GetExported(Interp *in, AstModule *module, const char *name)
-{
+RValue *Module_GetExported(Interp *in, AstModule *module, const char *name) {
     RValue **cell;
     (void)in;
     cell = Env_LookupCell(module->env, name);
@@ -4675,8 +5745,7 @@ RValue *Module_GetExported(Interp *in, AstModule *module, const char *name)
     return public_name ? *cell : NULL;
 }
 
-void Interp_AddModuleDir(Interp *in, const char *dir)
-{
+void Interp_AddModuleDir(Interp *in, const char *dir) {
     if (!dir || !dir[0])
         return;
     if (in->nmodule_dirs == in->cap_module_dirs) {
@@ -4690,15 +5759,15 @@ void Interp_AddModuleDir(Interp *in, const char *dir)
     in->module_dirs[in->nmodule_dirs++] = dir;
 }
 
-void Interp_Init(Interp *in)
-{
+void Interp_Init(Interp *in) {
     static const char *exceptions[] = {
         "Exception", "ArithmeticError", "ZeroDivisionError", "OverflowError",
         "ValueError", "TypeError", "NameError", "AttributeError", "KeyError",
         "IndexError", "RuntimeError", "NullPointerError", "LookupError",
         "AssertionError", "OSError", "EOFError", "IOException",
         "ImportError", "ModuleNotFoundError", "RecursionError",
-        "NumberFormatError", "NotImplementedError", "StopIteration"
+        "NumberFormatError", "NotImplementedError", "StopIteration",
+        "NoSuchElementError", "RegexError"
     };
     AstClass *stdout_cls, *stderr_cls, *stdin_cls, *scanner_cls, *files_cls;
     AstInstance *stdout_obj, *stderr_obj, *stdin_obj, *scanner_obj;
@@ -4725,10 +5794,27 @@ void Interp_Init(Interp *in)
     Env_Define(in, in->globals, "repr", RValue_Builtin(in, Builtin_New(in, "repr", bi_repr)));
     Env_Define(in, in->globals, "chr", RValue_Builtin(in, Builtin_New(in, "chr", bi_chr)));
     Env_Define(in, in->globals, "ord", RValue_Builtin(in, Builtin_New(in, "ord", bi_ord)));
+    Env_Define(in, in->globals, "abs", RValue_Builtin(in, Builtin_New(in, "abs", bi_abs)));
+    Env_Define(in, in->globals, "sum", RValue_Builtin(in, Builtin_New(in, "sum", bi_sum)));
+    Env_Define(in, in->globals, "min", RValue_Builtin(in, Builtin_New(in, "min", bi_min)));
+    Env_Define(in, in->globals, "max", RValue_Builtin(in, Builtin_New(in, "max", bi_max)));
+    Env_Define(in, in->globals, "all", RValue_Builtin(in, Builtin_New(in, "all", bi_all)));
+    Env_Define(in, in->globals, "any", RValue_Builtin(in, Builtin_New(in, "any", bi_any)));
+    Env_Define(in, in->globals, "zip", RValue_Builtin(in, Builtin_New(in, "zip", bi_zip)));
+    Env_Define(in, in->globals, "enumerate",
+               RValue_Builtin(in, Builtin_New(in, "enumerate", bi_enumerate)));
+    Env_Define(in, in->globals, "sorted",
+               RValue_Builtin(in, Builtin_New(in, "sorted", bi_sorted)));
+    Env_Define(in, in->globals, "round",
+               RValue_Builtin(in, Builtin_New(in, "round", bi_round)));
+    Env_Define(in, in->globals, "input",
+               RValue_Builtin(in, Builtin_New(in, "input", bi_input)));
     Env_Define(in, in->globals, "_aster_now_ms",
                RValue_Builtin(in, Builtin_New(in, "_aster_now_ms", bi_now_ms)));
     Env_Define(in, in->globals, "_aster_sleep_ms",
                RValue_Builtin(in, Builtin_New(in, "_aster_sleep_ms", bi_sleep_ms)));
+    Env_Define(in, in->globals, "_aster_format_time",
+               RValue_Builtin(in, Builtin_New(in, "_aster_format_time", bi_format_time)));
     Env_Define(in, in->globals, "_aster_cwd",
                RValue_Builtin(in, Builtin_New(in, "_aster_cwd", bi_cwd)));
     Env_Define(in, in->globals, "_aster_pid",
@@ -4810,8 +5896,8 @@ void Interp_Init(Interp *in)
     files_cls = Arena_Alloc(in->arena, sizeof(AstClass));
     files_cls->name = "Files";
     files_cls->env = in->globals;
-    files_cls->nmethods = 5;
-    files_cls->methods = Arena_Alloc(in->arena, 5 * sizeof(MethodDesc));
+    files_cls->nmethods = 15;
+    files_cls->methods = Arena_Alloc(in->arena, 15 * sizeof(MethodDesc));
     files_cls->methods[0].name = "readString";
     files_cls->methods[0].fn = make_builtin_method(in, "readString", files_readstring);
     files_cls->methods[1].name = "writeString";
@@ -4822,6 +5908,26 @@ void Interp_Init(Interp *in)
     files_cls->methods[3].fn = make_builtin_method(in, "exists", files_exists);
     files_cls->methods[4].name = "delete";
     files_cls->methods[4].fn = make_builtin_method(in, "delete", files_delete);
+    files_cls->methods[5].name = "isFile";
+    files_cls->methods[5].fn = make_builtin_method(in, "isFile", files_is_file);
+    files_cls->methods[6].name = "isDirectory";
+    files_cls->methods[6].fn = make_builtin_method(in, "isDirectory", files_is_dir);
+    files_cls->methods[7].name = "length";
+    files_cls->methods[7].fn = make_builtin_method(in, "length", files_length);
+    files_cls->methods[8].name = "list";
+    files_cls->methods[8].fn = make_builtin_method(in, "list", files_list);
+    files_cls->methods[9].name = "mkdir";
+    files_cls->methods[9].fn = make_builtin_method(in, "mkdir", files_mkdir);
+    files_cls->methods[10].name = "mkdirs";
+    files_cls->methods[10].fn = make_builtin_method(in, "mkdirs", files_mkdirs);
+    files_cls->methods[11].name = "remove";
+    files_cls->methods[11].fn = make_builtin_method(in, "remove", files_remove);
+    files_cls->methods[12].name = "rename";
+    files_cls->methods[12].fn = make_builtin_method(in, "rename", files_rename);
+    files_cls->methods[13].name = "absolutePath";
+    files_cls->methods[13].fn = make_builtin_method(in, "absolutePath", files_absolute);
+    files_cls->methods[14].name = "separator";
+    files_cls->methods[14].fn = make_builtin_method(in, "separator", files_separator);
     files_obj = Arena_Alloc(in->arena, sizeof(AstInstance));
     files_obj->cls = files_cls;
     Env_Define(in, in->globals, "Files", RValue_Object(in, files_obj));
@@ -4863,4 +5969,6 @@ void Interp_Init(Interp *in)
                                                   system_get_recursion_limit)));
         (void)in_mod;
     }
+
+    Regex_Install(in);
 }

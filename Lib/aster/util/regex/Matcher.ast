@@ -1,0 +1,178 @@
+/* aster.util.regex.Matcher: Java Matcher 스타일 래퍼.
+   매칭 자체는 파이썬 re와 동일한 Native 엔진이 수행하며, 이 클래스는
+   find()/group() 같은 상태 기반 API만 제공한다. */
+
+import aster.util.regex.Native;
+import aster.util.regex.Support;
+
+export class Matcher {
+    private int pid;
+    private str text;
+    private str source;
+    private int patFlags;
+    private int pos;
+    private int lastMid;
+    private bool finished;
+
+    constructor(int pid, str text, str source, int patFlags) {
+        self->pid = pid;
+        self->text = text;
+        self->source = source;
+        self->patFlags = patFlags;
+        self->pos = 0;
+        self->lastMid = -1;
+        self->finished = false;
+    }
+
+    /* 다음 매치를 찾는다. Python re.search 반복과 같다. */
+    public fn find() -> bool {
+        if (self->finished) {
+            self->lastMid = -1;
+            return false;
+        }
+        int mid = Native.exec(self->pid, self->text, self->pos, 0);
+        if (mid < 0) {
+            self->finished = true;
+            self->lastMid = -1;
+            return false;
+        }
+        self->lastMid = mid;
+        int b = Native.start(mid, 0);
+        int e = Native.end(mid, 0);
+        if (b == e) {
+            if (e >= self->text.length()) {
+                self->finished = true;
+            }
+            else {
+                self->pos = e + 1;
+            }
+        }
+        else {
+            self->pos = e;
+        }
+        return true;
+    }
+
+    /* 지정 위치부터 다시 찾는다 (Java find(int)). */
+    public fn find(int start) -> bool {
+        self->reset();
+        if (start < 0 or start > self->text.length()) {
+            throw "start index out of range" as IndexError;
+        }
+        self->pos = start;
+        return self->find();
+    }
+
+    /* 입력 전체가 패턴과 일치하는지 (Python fullmatch). */
+    public fn matches() -> bool {
+        int mid = Native.exec(self->pid, self->text, 0, 2);
+        self->lastMid = mid;
+        return mid >= 0;
+    }
+
+    /* 입력 앞부분이 패턴과 일치하는지 (Python match). */
+    public fn lookingAt() -> bool {
+        int mid = Native.exec(self->pid, self->text, 0, 1);
+        self->lastMid = mid;
+        return mid >= 0;
+    }
+
+    public fn group() -> str? {
+        return self->group(0);
+    }
+
+    public fn group(int g) -> str? {
+        if (self->lastMid < 0) {
+            throw "no match available" as RuntimeError;
+        }
+        return Native.group(self->lastMid, g);
+    }
+
+    public fn group(str name) -> str? {
+        if (self->lastMid < 0) {
+            throw "no match available" as RuntimeError;
+        }
+        return Native.groupname(self->lastMid, name);
+    }
+
+    public fn start() -> int {
+        return self->start(0);
+    }
+
+    public fn start(int g) -> int {
+        if (self->lastMid < 0) {
+            throw "no match available" as RuntimeError;
+        }
+        return Native.start(self->lastMid, g);
+    }
+
+    public fn start(str name) -> int {
+        if (self->lastMid < 0) {
+            throw "no match available" as RuntimeError;
+        }
+        return Native.startname(self->lastMid, name);
+    }
+
+    public fn end() -> int {
+        return self->end(0);
+    }
+
+    public fn end(int g) -> int {
+        if (self->lastMid < 0) {
+            throw "no match available" as RuntimeError;
+        }
+        return Native.end(self->lastMid, g);
+    }
+
+    public fn end(str name) -> int {
+        if (self->lastMid < 0) {
+            throw "no match available" as RuntimeError;
+        }
+        return Native.endname(self->lastMid, name);
+    }
+
+    /* 마지막 매치에서 마지막으로 참여한 그룹 번호 (Python lastindex). */
+    public fn lastIndex() -> int? {
+        if (self->lastMid < 0) {
+            return null;
+        }
+        return Native.lastindex(self->lastMid);
+    }
+
+    public fn groupCount() -> int {
+        return Native.groupcount(self->pid);
+    }
+
+    public fn pattern() -> str {
+        return self->source;
+    }
+
+    public fn flags() -> int {
+        return self->patFlags;
+    }
+
+    public fn inputText() -> str {
+        return self->text;
+    }
+
+    public fn reset() -> Matcher {
+        self->pos = 0;
+        self->lastMid = -1;
+        self->finished = false;
+        return self;
+    }
+
+    public fn reset(str newText) -> Matcher {
+        self->text = newText;
+        return self->reset();
+    }
+
+    /* 치환 문자열은 Python re.sub와 같은 문법(\\1, \\g<name>)을 쓴다. */
+    public fn replaceAll(str replacement) -> str {
+        return Native.sub(self->pid, self->text, Support.javaReplacement(replacement), 0);
+    }
+
+    public fn replaceFirst(str replacement) -> str {
+        return Native.sub(self->pid, self->text, Support.javaReplacement(replacement), 1);
+    }
+}

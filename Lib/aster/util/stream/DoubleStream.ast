@@ -1,0 +1,93 @@
+/* aster.util.stream.DoubleStream: 실수 전용 스트림.
+   Aster의 float은 64비트 배정도이므로 Java double에 해당한다. */
+
+import aster.util.stream.Stream;
+
+export class DoubleStream {
+    private list<float> items;
+
+    constructor(list<float> xs) {
+        self->items = xs.copy();
+    }
+
+    public static fn of(list<float> xs) -> DoubleStream {
+        return new DoubleStream(xs);
+    }
+
+    public fn filter(fn(float) -> bool predicate) -> DoubleStream {
+        list<float> out = [];
+        for (float x in self->items) {
+            if (predicate(x)) {
+                out.append(x);
+            }
+        }
+        return new DoubleStream(out);
+    }
+
+    public fn map(fn(float) -> float mapper) -> DoubleStream {
+        list<float> out = [];
+        for (float x in self->items) {
+            out.append(mapper(x));
+        }
+        return new DoubleStream(out);
+    }
+
+    public fn sum() -> float {
+        float total = 0.0;
+        for (float x in self->items) {
+            total = total + x;
+        }
+        return total;
+    }
+
+    public fn average() -> float {
+        if (len(self->items) == 0) {
+            return 0.0;
+        }
+        return self->sum() / (float)len(self->items);
+    }
+
+    public fn min() -> float? {
+        if (len(self->items) == 0) {
+            return null;
+        }
+        float best = self->items[0];
+        for (float x in self->items) {
+            if (x < best) {
+                best = x;
+            }
+        }
+        return best;
+    }
+
+    public fn max() -> float? {
+        if (len(self->items) == 0) {
+            return null;
+        }
+        float best = self->items[0];
+        for (float x in self->items) {
+            if (x > best) {
+                best = x;
+            }
+        }
+        return best;
+    }
+
+    public fn count() -> int {
+        return len(self->items);
+    }
+
+    public fn boxed() -> Stream<float> {
+        return new Stream<float>(self->items);
+    }
+
+    public fn toList() -> list<float> {
+        return self->items.copy();
+    }
+
+    public fn forEach(fn(float) -> void action) -> void {
+        for (float x in self->items) {
+            action(x);
+        }
+    }
+}

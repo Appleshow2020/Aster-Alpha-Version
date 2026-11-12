@@ -1,0 +1,5 @@
+fn run(int seed) -> int {
+    int unused = seed;
+    return 0;
+    print(seed);
+}

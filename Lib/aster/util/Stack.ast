@@ -1,0 +1,40 @@
+/* aster.util.Stack: LIFO 스택 (Java Stack 스타일, LinkedList 상속).
+
+   push/pop/peek는 맨 위(리스트의 앞)에서 동작하고,
+   search는 맨 위에서부터 1부터 세는 위치를 돌려준다(없으면 -1). */
+
+import aster.util.LinkedList;
+
+export class Stack<E> extends LinkedList<E> {
+    constructor() {
+        super();
+    }
+
+    public fn push(E value) -> void {
+        super.push(value);
+    }
+
+    public fn pop() -> E {
+        return super.pop();
+    }
+
+    public fn peek() -> E? {
+        return super.peek();
+    }
+
+    public fn empty() -> bool {
+        return super.isEmpty();
+    }
+
+    public fn search(E value) -> int {
+        list<E> all = super.toArray();
+        int i = 0;
+        while (i < len(all)) {
+            if (all[i] == value) {
+                return i + 1;
+            }
+            i = i + 1;
+        }
+        return -1;
+    }
+}

@@ -1,0 +1,14 @@
+import System.stdout.*;
+
+class B extends A {
+    constructor() {}
+    public fn f() -> str { return "B"; }
+}
+
+class A {
+    public fn f() -> str { return "A"; }
+    public static fn make() -> A { return new B(); }
+}
+
+println(A.make().f());
+println(B.make().f());

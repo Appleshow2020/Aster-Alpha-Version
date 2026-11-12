@@ -1,0 +1,4 @@
+/* aster.io.Serializable: empty marker interface, like Java Serializable. */
+
+export interface Serializable {
+}

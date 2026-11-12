@@ -1,0 +1,70 @@
+"""Generate Include/internal/unicode_ranges.h from Python's unicodedata.
+
+The regex engine's \\w and \\d character classes must agree with Python's
+str.isalnum()/str.isdecimal() classification, so the ranges are generated from
+the interpreter running this script rather than maintained by hand.
+
+Usage: python3 Tools/build/gen_unicode_ranges.py [output]
+"""
+
+import sys
+import unicodedata
+
+MAX_CP = 0x110000
+
+
+def ranges_of(predicate):
+    out = []
+    start = None
+    prev = None
+    for cp in range(MAX_CP):
+        if predicate(chr(cp)):
+            if start is None:
+                start = cp
+            prev = cp
+        elif start is not None:
+            out.append((start, prev))
+            start = None
+    if start is not None:
+        out.append((start, prev))
+    return out
+
+
+def emit_table(fh, name, ranges):
+    fh.write("static const AsterCPRange %s[] = {\n" % name)
+    line = "    "
+    for lo, hi in ranges:
+        item = "{0x%04X, 0x%04X}, " % (lo, hi)
+        if len(line) + len(item) > 96:
+            fh.write(line.rstrip() + "\n")
+            line = "    "
+        line += item
+    if line.strip():
+        fh.write(line.rstrip() + "\n")
+    fh.write("};\n\n")
+
+
+def main():
+    out = sys.argv[1] if len(sys.argv) > 1 else "Include/internal/unicode_ranges.h"
+    word = ranges_of(str.isalnum)
+    digit = ranges_of(str.isdecimal)
+    nonprint = ranges_of(lambda ch: not ch.isprintable())
+
+    with open(out, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write("/* 자동 생성: Tools/build/gen_unicode_ranges.py ")
+        fh.write("(unicodedata %s). 직접 고치지 마세요. */\n" % unicodedata.unidata_version)
+        fh.write("#ifndef ASTER_UNICODE_RANGES_H\n#define ASTER_UNICODE_RANGES_H\n\n")
+        fh.write("#include <stdint.h>\n\n")
+        fh.write("typedef struct {\n    uint32_t lo, hi;\n} AsterCPRange;\n\n")
+        emit_table(fh, "_AsterWordRanges", word)
+        emit_table(fh, "_AsterDigitRanges", digit)
+        emit_table(fh, "_AsterNonPrintRanges", nonprint)
+        fh.write("#endif\n")
+    print("wrote %s: %d word ranges, %d digit ranges, %d non-print ranges "
+          "(unicode %s)"
+          % (out, len(word), len(digit), len(nonprint),
+             unicodedata.unidata_version))
+
+
+if __name__ == "__main__":
+    main()

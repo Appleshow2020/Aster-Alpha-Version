@@ -1,0 +1,5 @@
+/* aster.util.function.BooleanSupplier: Java BooleanSupplier shape. */
+
+export interface BooleanSupplier {
+    fn getAsBoolean() -> bool;
+}

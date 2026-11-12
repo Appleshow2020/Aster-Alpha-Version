@@ -1,0 +1,123 @@
+/* aster.io.PrintWriter: Java PrintWriter 스타일 편의 Writer.
+
+   생성자는 하나이고 인자 종류에 따라 세 가지 모드로 동작한다.
+     0) 경로 문자열  -> 버퍼에 모았다가 flush/close 때 Files.writeString으로 기록
+     1) System.out/err 같은 콘솔 객체 -> print를 즉시 위임
+     2) 그 밖의 Writer -> 버퍼에 모았다가 flush 때 write
+   Aster는 같은 인자 수의 생성자 오버로드를 구분하지 못하므로 모드를
+   런타임에 판별한다. */
+
+import aster.io.Writer;
+
+export class PrintWriter extends Writer {
+    private any sink;
+    private str path;
+    private str buffer;
+    private int mode;
+    private bool closed;
+
+    constructor(any target) {
+        super();
+        self->buffer = "";
+        self->sink = target;
+        self->path = "";
+        self->mode = 2;
+        self->closed = false;
+        str kind = typeName(target);
+        if (kind == "str") {
+            self->mode = 0;
+            self->path = target;
+            self->sink = null;
+        }
+        else if (kind == "Stdout" or kind == "Stderr") {
+            self->mode = 1;
+        }
+    }
+
+    private fn emit(str text) -> void {
+        if (self->mode == 1) {
+            self->sink.print(text);
+            return;
+        }
+        self->buffer = self->buffer + text;
+    }
+
+    public fn write(str text) -> void {
+        self->emit(text);
+    }
+
+    public fn write(int c) -> void {
+        self->emit(chr(c));
+    }
+
+    public fn print(any value) -> void {
+        self->emit(str(value));
+    }
+
+    public fn println(any value) -> void {
+        self->emit(str(value) + "\n");
+    }
+
+    public fn println() -> void {
+        self->emit("\n");
+    }
+
+    public fn printf(str pattern) -> PrintWriter {
+        self->emit(pattern);
+        return self;
+    }
+
+    public fn printf(str pattern, any first) -> PrintWriter {
+        self->emit(pattern.format(first));
+        return self;
+    }
+
+    public fn printf(str pattern, any first, any second) -> PrintWriter {
+        self->emit(pattern.format(first, second));
+        return self;
+    }
+
+    public fn printf(str pattern, any first, any second, any third) -> PrintWriter {
+        self->emit(pattern.format(first, second, third));
+        return self;
+    }
+
+    public fn format(str pattern) -> PrintWriter {
+        return self->printf(pattern);
+    }
+
+    public fn format(str pattern, any first) -> PrintWriter {
+        return self->printf(pattern, first);
+    }
+
+    public fn format(str pattern, any first, any second) -> PrintWriter {
+        return self->printf(pattern, first, second);
+    }
+
+    public fn format(str pattern, any first, any second, any third) -> PrintWriter {
+        return self->printf(pattern, first, second, third);
+    }
+
+    public fn flush() -> void {
+        if (self->mode == 0) {
+            Files.writeString(self->path, self->buffer);
+        }
+        else if (self->mode == 2 and self->sink != null) {
+            self->sink.write(self->buffer);
+            self->buffer = "";
+        }
+    }
+
+    public fn close() -> void {
+        self->flush();
+        if (self->mode == 2 and self->sink != null) {
+            self->sink.close();
+        }
+        self->closed = true;
+    }
+
+    public fn checkError() -> bool {
+        self->flush();
+        return false;
+    }
+}

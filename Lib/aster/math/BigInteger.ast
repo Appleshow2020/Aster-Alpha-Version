@@ -1,0 +1,762 @@
+/* aster.math.BigInteger: 임의 정밀도 부호 있는 정수.
+   값은 sign(-1/0/1)과 10진 숫자의 little-endian 리스트로 표현한다.
+   나눗셈은 10진 기반 schoolbook 장제법(각 자리에서 9..0 시도 뺄셈)이라
+   임의 크기에서도 동작한다. 모든 연산은 새 값을 돌려준다. */
+
+const str _BI_DIGITS = "0123456789abcdefghijklmnopqrstuvwxyz";
+
+export class BigInteger {
+    private int sign;
+    private list<int> digits;
+
+    /* Java의 BigInteger.ZERO/ONE/TEN. Aster는 클래스 자신을 담는 static
+       초기화식을 허용하지 않으므로 선언만 하고 모듈 끝에서 채운다. */
+    public static BigInteger ZERO;
+    public static BigInteger ONE;
+    public static BigInteger TEN;
+
+    /* Aster 타입 검사기는 생성자 오버로드를 지원하지 않으므로
+       int와 str을 합집합 타입 하나로 받는다. radix 생성자는
+       fromRadix(str, int) 정적 팩터리로 대신한다. */
+    constructor(int | str value) {
+        self->sign = 0;
+        self->digits = [];
+        self->_parse(str(value), 10);
+    }
+
+    public static fn fromRadix(str text, int radix) -> BigInteger {
+        BigInteger result = new BigInteger(0);
+        result->_parse(text, radix);
+        return result;
+    }
+
+    /* --- 정적 팩터리 --- */
+
+    public static fn zero() -> BigInteger {
+        return new BigInteger(0);
+    }
+
+    public static fn one() -> BigInteger {
+        return new BigInteger(1);
+    }
+
+    public static fn ten() -> BigInteger {
+        return new BigInteger(10);
+    }
+
+    public static fn valueOf(int value) -> BigInteger {
+        return new BigInteger(value);
+    }
+
+    /* --- 내부 표현 도우미 --- */
+
+    private fn _parse(str text, int radix) -> void {
+        if (radix < 2 or radix > 36) {
+            throw "radix must be between 2 and 36" as ValueError;
+        }
+        str s = text.strip();
+        if (s.length() == 0) {
+            throw "Zero length BigInteger" as ValueError;
+        }
+        int index = 0;
+        int newSign = 1;
+        str first = s.charAt(0);
+        if (first == "-") {
+            newSign = -1;
+            index = 1;
+        }
+        else if (first == "+") {
+            index = 1;
+        }
+        if (index >= s.length()) {
+            throw "Zero length BigInteger" as ValueError;
+        }
+        list<int> acc = [];
+        while (index < s.length()) {
+            str ch = s.charAt(index);
+            int d = _BI_DIGITS.find(ch.lower());
+            if (d < 0 or d >= radix) {
+                throw "For input string: \"" + text + "\"" as ValueError;
+            }
+            acc = BigInteger._mulSmall(acc, radix);
+            acc = BigInteger._addSmall(acc, d);
+            index = index + 1;
+        }
+        self->digits = acc;
+        while (len(self->digits) > 0 and self->digits[len(self->digits) - 1] == 0) {
+            self->digits.pop();
+        }
+        if (len(self->digits) == 0) {
+            self->sign = 0;
+        }
+        else {
+            self->sign = newSign;
+        }
+    }
+
+    private static fn _make(int newSign, list<int> raw) -> BigInteger {
+        list<int> out = [];
+        int i = 0;
+        while (i < len(raw)) {
+            out.append(raw[i]);
+            i = i + 1;
+        }
+        while (len(out) > 0 and out[len(out) - 1] == 0) {
+            out.pop();
+        }
+        BigInteger result = new BigInteger(0);
+        result->digits = out;
+        if (len(out) == 0) {
+            result->sign = 0;
+        }
+        else if (newSign < 0) {
+            result->sign = -1;
+        }
+        else {
+            result->sign = 1;
+        }
+        return result;
+    }
+
+    private static fn _trim(list<int> raw) -> list<int> {
+        list<int> out = [];
+        int i = 0;
+        while (i < len(raw)) {
+            out.append(raw[i]);
+            i = i + 1;
+        }
+        while (len(out) > 0 and out[len(out) - 1] == 0) {
+            out.pop();
+        }
+        return out;
+    }
+
+    private static fn _cmpAbs(list<int> a, list<int> b) -> int {
+        if (len(a) != len(b)) {
+            if (len(a) < len(b)) { return -1; }
+            return 1;
+        }
+        int i = len(a) - 1;
+        while (i >= 0) {
+            if (a[i] != b[i]) {
+                if (a[i] < b[i]) { return -1; }
+                return 1;
+            }
+            i = i - 1;
+        }
+        return 0;
+    }
+
+    private static fn _addAbs(list<int> a, list<int> b) -> list<int> {
+        list<int> out = [];
+        int carry = 0;
+        int i = 0;
+        while (i < len(a) or i < len(b) or carry > 0) {
+            int sum = carry;
+            if (i < len(a)) { sum = sum + a[i]; }
+            if (i < len(b)) { sum = sum + b[i]; }
+            out.append(sum % 10);
+            carry = sum / 10;
+            i = i + 1;
+        }
+        return BigInteger._trim(out);
+    }
+
+    /* a >= b 를 전제로 한다. */
+    private static fn _subAbs(list<int> a, list<int> b) -> list<int> {
+        list<int> out = [];
+        int borrow = 0;
+        int i = 0;
+        while (i < len(a)) {
+            int value = a[i] - borrow;
+            if (i < len(b)) { value = value - b[i]; }
+            if (value < 0) {
+                value = value + 10;
+                borrow = 1;
+            }
+            else {
+                borrow = 0;
+            }
+            out.append(value);
+            i = i + 1;
+        }
+        return BigInteger._trim(out);
+    }
+
+    private static fn _mulSmall(list<int> a, int m) -> list<int> {
+        if (m == 0 or len(a) == 0) {
+            return [];
+        }
+        list<int> out = [];
+        int carry = 0;
+        int i = 0;
+        while (i < len(a)) {
+            int cur = a[i] * m + carry;
+            out.append(cur % 10);
+            carry = cur / 10;
+            i = i + 1;
+        }
+        while (carry > 0) {
+            out.append(carry % 10);
+            carry = carry / 10;
+        }
+        return BigInteger._trim(out);
+    }
+
+    private static fn _addSmall(list<int> a, int v) -> list<int> {
+        list<int> out = [];
+        int i = 0;
+        while (i < len(a)) {
+            out.append(a[i]);
+            i = i + 1;
+        }
+        int carry = v;
+        i = 0;
+        while (carry > 0) {
+            if (i < len(out)) {
+                int cur = out[i] + carry;
+                out[i] = cur % 10;
+                carry = cur / 10;
+            }
+            else {
+                out.append(carry % 10);
+                carry = carry / 10;
+            }
+            i = i + 1;
+        }
+        return BigInteger._trim(out);
+    }
+
+    private static fn _divSmall(list<int> a, int d) -> list<int> {
+        if (len(a) == 0) { return []; }
+        list<int> rev = [];
+        int rem = 0;
+        int i = len(a) - 1;
+        while (i >= 0) {
+            int cur = rem * 10 + a[i];
+            rev.append(cur / d);
+            rem = cur % d;
+            i = i - 1;
+        }
+        list<int> out = [];
+        i = len(rev) - 1;
+        while (i >= 0) {
+            out.append(rev[i]);
+            i = i - 1;
+        }
+        while (len(out) > 0 and out[len(out) - 1] == 0) {
+            out.pop();
+        }
+        return out;
+    }
+
+    private static fn _modSmall(list<int> a, int d) -> int {
+        int rem = 0;
+        int i = len(a) - 1;
+        while (i >= 0) {
+            rem = (rem * 10 + a[i]) % d;
+            i = i - 1;
+        }
+        return rem;
+    }
+
+    private static fn _mulDigits(list<int> a, list<int> b) -> list<int> {
+        if (len(a) == 0 or len(b) == 0) { return []; }
+        list<int> out = [];
+        int total = len(a) + len(b);
+        int k = 0;
+        while (k < total) {
+            out.append(0);
+            k = k + 1;
+        }
+        int i = 0;
+        while (i < len(a)) {
+            int carry = 0;
+            int j = 0;
+            while (j < len(b)) {
+                int cur = out[i + j] + a[i] * b[j] + carry;
+                out[i + j] = cur % 10;
+                carry = cur / 10;
+                j = j + 1;
+            }
+            k = i + len(b);
+            while (carry > 0) {
+                int cur = out[k] + carry;
+                out[k] = cur % 10;
+                carry = cur / 10;
+                k = k + 1;
+            }
+            i = i + 1;
+        }
+        return BigInteger._trim(out);
+    }
+
+    /* |a| / |b| 를 장제법으로 계산한다. b != 0. */
+    private static fn _divModAbs(list<int> a, list<int> b) -> list<BigInteger> {
+        if (len(b) == 0) {
+            throw "BigInteger divide by zero" as ArithmeticError;
+        }
+        list<BigInteger> result = [];
+        if (BigInteger._cmpAbs(a, b) < 0) {
+            result.append(BigInteger.zero());
+            result.append(BigInteger._make(1, a));
+            return result;
+        }
+        list<int> q = [];
+        int i = 0;
+        while (i < len(a)) {
+            q.append(0);
+            i = i + 1;
+        }
+        list<int> rem = [];
+        i = len(a) - 1;
+        while (i >= 0) {
+            rem = BigInteger._mulSmall(rem, 10);
+            rem = BigInteger._addSmall(rem, a[i]);
+            int qd = 9;
+            while (qd > 0 and BigInteger._cmpAbs(BigInteger._mulSmall(b, qd), rem) > 0) {
+                qd = qd - 1;
+            }
+            if (qd > 0) {
+                rem = BigInteger._subAbs(rem, BigInteger._mulSmall(b, qd));
+            }
+            q[i] = qd;
+            i = i - 1;
+        }
+        result.append(BigInteger._make(1, q));
+        result.append(BigInteger._make(1, rem));
+        return result;
+    }
+
+    private static fn _pow2(int n) -> BigInteger {
+        list<int> d = [1];
+        int i = 0;
+        while (i < n) {
+            d = BigInteger._mulSmall(d, 2);
+            i = i + 1;
+        }
+        return BigInteger._make(1, d);
+    }
+
+    private static fn _bitAbs(list<int> d, int n) -> bool {
+        if (n < 0) {
+            throw "negative bit index" as ArithmeticError;
+        }
+        list<int> cur = d;
+        int i = 0;
+        while (i < n) {
+            if (len(cur) == 0) { return false; }
+            cur = BigInteger._divSmall(cur, 2);
+            i = i + 1;
+        }
+        if (len(cur) == 0) { return false; }
+        return cur[0] % 2 == 1;
+    }
+
+    /* --- 산술 --- */
+
+    public fn add(BigInteger other) -> BigInteger {
+        if (self->sign == 0) {
+            return BigInteger._make(other->sign, other->digits);
+        }
+        if (other->sign == 0) {
+            return BigInteger._make(self->sign, self->digits);
+        }
+        if (self->sign == other->sign) {
+            return BigInteger._make(self->sign,
+                BigInteger._addAbs(self->digits, other->digits));
+        }
+        int cmp = BigInteger._cmpAbs(self->digits, other->digits);
+        if (cmp == 0) {
+            return BigInteger.zero();
+        }
+        if (cmp > 0) {
+            return BigInteger._make(self->sign,
+                BigInteger._subAbs(self->digits, other->digits));
+        }
+        return BigInteger._make(other->sign,
+            BigInteger._subAbs(other->digits, self->digits));
+    }
+
+    public fn subtract(BigInteger other) -> BigInteger {
+        return self->add(other->negate());
+    }
+
+    public fn multiply(BigInteger other) -> BigInteger {
+        if (self->sign == 0 or other->sign == 0) {
+            return BigInteger.zero();
+        }
+        return BigInteger._make(self->sign * other->sign,
+            BigInteger._mulDigits(self->digits, other->digits));
+    }
+
+    public fn divide(BigInteger other) -> BigInteger {
+        if (other->sign == 0) {
+            throw "BigInteger divide by zero" as ArithmeticError;
+        }
+        if (self->sign == 0) {
+            return BigInteger.zero();
+        }
+        list<BigInteger> qr = BigInteger._divModAbs(self->digits, other->digits);
+        return BigInteger._make(self->sign * other->sign, qr[0]->digits);
+    }
+
+    public fn remainder(BigInteger other) -> BigInteger {
+        if (other->sign == 0) {
+            throw "BigInteger divide by zero" as ArithmeticError;
+        }
+        if (self->sign == 0) {
+            return BigInteger.zero();
+        }
+        list<BigInteger> qr = BigInteger._divModAbs(self->digits, other->digits);
+        return BigInteger._make(self->sign, qr[1]->digits);
+    }
+
+    public fn divideAndRemainder(BigInteger other) -> list<BigInteger> {
+        if (other->sign == 0) {
+            throw "BigInteger divide by zero" as ArithmeticError;
+        }
+        list<BigInteger> result = [];
+        if (self->sign == 0) {
+            result.append(BigInteger.zero());
+            result.append(BigInteger.zero());
+            return result;
+        }
+        list<BigInteger> qr = BigInteger._divModAbs(self->digits, other->digits);
+        result.append(BigInteger._make(self->sign * other->sign, qr[0]->digits));
+        result.append(BigInteger._make(self->sign, qr[1]->digits));
+        return result;
+    }
+
+    /* Java BigInteger.mod: 나머지의 부호가 제수와 같다. */
+    public fn mod(BigInteger other) -> BigInteger {
+        if (other->sign == 0) {
+            throw "BigInteger divide by zero" as ArithmeticError;
+        }
+        BigInteger r = self->remainder(other);
+        if (r->sign != 0 and r->sign != other->sign) {
+            r = r->add(other);
+        }
+        return r;
+    }
+
+    public fn pow(int exponent) -> BigInteger {
+        if (exponent < 0) {
+            throw "negative exponent" as ArithmeticError;
+        }
+        BigInteger result = BigInteger.one();
+        BigInteger base = BigInteger._make(self->sign, self->digits);
+        int e = exponent;
+        while (e > 0) {
+            if (e % 2 == 1) {
+                result = result->multiply(base);
+            }
+            e = e / 2;
+            if (e > 0) {
+                base = base->multiply(base);
+            }
+        }
+        return result;
+    }
+
+    public fn gcd(BigInteger other) -> BigInteger {
+        BigInteger a = self->abs();
+        BigInteger b = other->abs();
+        while (b->sign != 0) {
+            BigInteger t = a->remainder(b);
+            a = b;
+            b = t;
+        }
+        return a;
+    }
+
+    public fn abs() -> BigInteger {
+        if (self->sign < 0) {
+            return BigInteger._make(1, self->digits);
+        }
+        return BigInteger._make(self->sign, self->digits);
+    }
+
+    public fn negate() -> BigInteger {
+        if (self->sign == 0) {
+            return BigInteger.zero();
+        }
+        return BigInteger._make(-self->sign, self->digits);
+    }
+
+    public fn signum() -> int {
+        return self->sign;
+    }
+
+    public fn compareTo(BigInteger other) -> int {
+        if (self->sign != other->sign) {
+            if (self->sign < other->sign) { return -1; }
+            return 1;
+        }
+        if (self->sign == 0) {
+            return 0;
+        }
+        int cmp = BigInteger._cmpAbs(self->digits, other->digits);
+        if (self->sign > 0) { return cmp; }
+        return -cmp;
+    }
+
+    public fn equals(BigInteger other) -> bool {
+        if (self->sign != other->sign) { return false; }
+        if (len(self->digits) != len(other->digits)) { return false; }
+        int i = 0;
+        while (i < len(self->digits)) {
+            if (self->digits[i] != other->digits[i]) { return false; }
+            i = i + 1;
+        }
+        return true;
+    }
+
+    public fn hashCode() -> int {
+        int h = 0;
+        int i = 0;
+        while (i < len(self->digits)) {
+            h = (h * 31 + self->digits[i]) % 1000000007;
+            i = i + 1;
+        }
+        if (self->sign < 0) { h = -h; }
+        return h;
+    }
+
+    /* --- 변환 --- */
+
+    public fn toString() -> str {
+        if (self->sign == 0) { return "0"; }
+        list<str> chars = [];
+        int i = len(self->digits) - 1;
+        while (i >= 0) {
+            chars.append(_BI_DIGITS.charAt(self->digits[i]));
+            i = i - 1;
+        }
+        str out = "".join(chars);
+        if (self->sign < 0) { return "-" + out; }
+        return out;
+    }
+
+    public fn toString(int radix) -> str {
+        if (radix < 2 or radix > 36) {
+            throw "radix must be between 2 and 36" as ValueError;
+        }
+        if (self->sign == 0) { return "0"; }
+        list<int> cur = self->digits;
+        list<str> chars = [];
+        while (len(cur) > 0) {
+            int rem = BigInteger._modSmall(cur, radix);
+            chars.append(_BI_DIGITS.charAt(rem));
+            cur = BigInteger._divSmall(cur, radix);
+        }
+        chars.reverse();
+        str out = "".join(chars);
+        if (self->sign < 0) { return "-" + out; }
+        return out;
+    }
+
+    private static fn _low32(list<int> d) -> int {
+        int acc = 0;
+        int i = len(d) - 1;
+        while (i >= 0) {
+            acc = (acc * 10 + d[i]) % 4294967296;
+            i = i - 1;
+        }
+        return acc;
+    }
+
+    private static fn _signedFromParts(int hi, int lo) -> int {
+        if (hi >= 2147483648) {
+            return (hi - 4294967296) * 4294967296 + lo;
+        }
+        return hi * 4294967296 + lo;
+    }
+
+    public fn intValue() -> int {
+        int mag = BigInteger._low32(self->digits);
+        if (self->sign < 0 and mag != 0) {
+            mag = 4294967296 - mag;
+        }
+        if (mag >= 2147483648) {
+            return mag - 4294967296;
+        }
+        return mag;
+    }
+
+    public fn longValue() -> int {
+        int lo = BigInteger._low32(self->digits);
+        list<int> high = BigInteger._divSmall(self->digits, 4294967296);
+        int hi = BigInteger._low32(high);
+        if (self->sign >= 0) {
+            return BigInteger._signedFromParts(hi, lo);
+        }
+        int nlo = 0;
+        int nhi = 0;
+        if (lo == 0) {
+            if (hi != 0) { nhi = 4294967296 - hi; }
+        }
+        else {
+            nlo = 4294967296 - lo;
+            if (hi == 4294967295) { nhi = 0; }
+            else { nhi = 4294967295 - hi; }
+        }
+        return BigInteger._signedFromParts(nhi, nlo);
+    }
+
+    public fn doubleValue() -> float {
+        float result = 0.0;
+        int i = len(self->digits) - 1;
+        while (i >= 0) {
+            result = result * 10.0 + (float)self->digits[i];
+            i = i - 1;
+        }
+        if (self->sign < 0) { return -result; }
+        return result;
+    }
+
+    /* --- 비트 --- */
+
+    public fn bitLength() -> int {
+        if (self->sign == 0) { return 0; }
+        list<int> cur = self->digits;
+        if (self->sign < 0) {
+            BigInteger m1 = self->abs()->subtract(BigInteger.one());
+            cur = m1->digits;
+        }
+        int bits = 0;
+        while (len(cur) > 0) {
+            cur = BigInteger._divSmall(cur, 2);
+            bits = bits + 1;
+        }
+        return bits;
+    }
+
+    public fn shiftLeft(int n) -> BigInteger {
+        if (n < 0) { return self->shiftRight(-n); }
+        if (self->sign == 0) { return BigInteger.zero(); }
+        list<int> d = self->digits;
+        int i = 0;
+        while (i < n) {
+            d = BigInteger._mulSmall(d, 2);
+            i = i + 1;
+        }
+        return BigInteger._make(self->sign, d);
+    }
+
+    public fn shiftRight(int n) -> BigInteger {
+        if (n < 0) { return self->shiftLeft(-n); }
+        if (self->sign == 0) { return BigInteger.zero(); }
+        list<int> d = self->digits;
+        int lost = 0;
+        int i = 0;
+        while (i < n) {
+            if (BigInteger._modSmall(d, 2) != 0) { lost = 1; }
+            d = BigInteger._divSmall(d, 2);
+            i = i + 1;
+        }
+        if (self->sign < 0 and lost == 1) {
+            d = BigInteger._addSmall(d, 1);
+        }
+        if (self->sign < 0) {
+            return BigInteger._make(-1, d);
+        }
+        return BigInteger._make(1, d);
+    }
+
+    public fn testBit(int n) -> bool {
+        if (n < 0) { throw "negative bit index" as ArithmeticError; }
+        if (self->sign == 0) { return false; }
+        if (self->sign > 0) {
+            return BigInteger._bitAbs(self->digits, n);
+        }
+        BigInteger m = self->abs();
+        BigInteger m1 = m->subtract(BigInteger.one());
+        bool bit = BigInteger._bitAbs(m1->digits, n);
+        return not bit;
+    }
+
+    public fn setBit(int n) -> BigInteger {
+        if (n < 0) { throw "negative bit index" as ArithmeticError; }
+        BigInteger p = BigInteger._pow2(n);
+        if (self->sign >= 0) {
+            if (BigInteger._bitAbs(self->digits, n)) {
+                return self->abs();
+            }
+            return self->add(p);
+        }
+        BigInteger m = self->abs();
+        if (not BigInteger._bitAbs(m->digits, n)) {
+            return self->negate()->negate();
+        }
+        return m->subtract(p)->negate();
+    }
+
+    public fn clearBit(int n) -> BigInteger {
+        if (n < 0) { throw "negative bit index" as ArithmeticError; }
+        BigInteger p = BigInteger._pow2(n);
+        if (self->sign >= 0) {
+            if (not BigInteger._bitAbs(self->digits, n)) {
+                return self->abs();
+            }
+            return self->subtract(p);
+        }
+        BigInteger m = self->abs();
+        if (BigInteger._bitAbs(m->digits, n)) {
+            return self->negate()->negate();
+        }
+        return m->add(p)->negate();
+    }
+
+    public fn flipBit(int n) -> BigInteger {
+        if (n < 0) { throw "negative bit index" as ArithmeticError; }
+        BigInteger p = BigInteger._pow2(n);
+        if (self->sign >= 0) {
+            if (BigInteger._bitAbs(self->digits, n)) {
+                return self->subtract(p);
+            }
+            return self->add(p);
+        }
+        BigInteger m = self->abs();
+        if (BigInteger._bitAbs(m->digits, n)) {
+            return m->subtract(p)->negate();
+        }
+        return m->add(p)->negate();
+    }
+
+    /* certainty는 참고만 한다. 큰 수는 작은 소수로 나눠 본 뒤 확률적 소수로 본다. */
+    public fn isProbablePrime(int certainty) -> bool {
+        if (self->sign == 0) { return false; }
+        BigInteger n = self->abs();
+        if (n->equals(BigInteger.one())) { return false; }
+        if (n->equals(BigInteger.valueOf(2))) { return true; }
+        if (BigInteger._modSmall(n->digits, 2) == 0) { return false; }
+        if (len(n->digits) <= 6) {
+            int v = n->intValue();
+            int d = 3;
+            while (d * d <= v) {
+                if (v % d == 0) { return false; }
+                d = d + 2;
+            }
+            return true;
+        }
+        int d = 3;
+        while (d <= 10000) {
+            if (BigInteger._modSmall(n->digits, d) == 0) { return false; }
+            d = d + 2;
+        }
+        return true;
+    }
+
+    public fn __str__() -> str {
+        return self->toString();
+    }
+}
+
+/* Java의 BigInteger.ZERO/ONE/TEN에 해당하는 모듈 상수. */
+BigInteger.ZERO = BigInteger.zero();
+BigInteger.ONE = BigInteger.one();
+BigInteger.TEN = BigInteger.ten();
+export BigInteger ZERO = BigInteger.ZERO;
+export BigInteger ONE = BigInteger.ONE;
+export BigInteger TEN = BigInteger.TEN;

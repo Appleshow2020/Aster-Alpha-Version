@@ -1,0 +1,9 @@
+import System.stdout.*;
+println(typeName(float(0)));
+class A {
+    public fn f(float x) -> str { return "f " + str(x); }
+    public fn f(int x) -> str { return "i " + self->g(float(x)); }
+    public fn g(float x) -> str { return "g " + str(x); }
+}
+A a = new A();
+println(a.f(0));

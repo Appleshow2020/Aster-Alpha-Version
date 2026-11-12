@@ -1,0 +1,5 @@
+/* aster.util.function.LongPredicate: Java LongPredicate shape. */
+
+export interface LongPredicate {
+    fn test(int value) -> bool;
+}

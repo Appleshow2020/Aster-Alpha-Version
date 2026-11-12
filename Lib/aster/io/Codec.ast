@@ -1,0 +1,108 @@
+/* aster.io.Codec: UTF-8 and big-endian integer helpers shared by the byte
+   stream classes. Aster has no bitwise operators, so byte extraction uses
+   floor division and modulo with explicit sign handling. */
+
+export fn encodeUtf8(str text) -> list<int> {
+    list<int> out = [];
+    for (str ch in text) {
+        int cp = ord(ch);
+        if (cp < 128) {
+            out.append(cp);
+        }
+        else if (cp < 2048) {
+            out.append(192 + cp / 64);
+            out.append(128 + cp % 64);
+        }
+        else if (cp < 65536) {
+            out.append(224 + cp / 4096);
+            out.append(128 + (cp / 64) % 64);
+            out.append(128 + cp % 64);
+        }
+        else {
+            out.append(240 + cp / 262144);
+            out.append(128 + (cp / 4096) % 64);
+            out.append(128 + (cp / 64) % 64);
+            out.append(128 + cp % 64);
+        }
+    }
+    return out;
+}
+
+export fn decodeUtf8(list<int> bytes) -> str {
+    list<str> parts = [];
+    int i = 0;
+    int n = len(bytes);
+    while (i < n) {
+        int b = bytes[i];
+        if (b < 128) {
+            parts.append(chr(b));
+            i = i + 1;
+        }
+        else if (b >= 192 and b < 224 and i + 1 < n) {
+            int cp = (b - 192) * 64 + (bytes[i + 1] - 128);
+            parts.append(chr(cp));
+            i = i + 2;
+        }
+        else if (b >= 224 and b < 240 and i + 2 < n) {
+            int cp = (b - 224) * 4096 + (bytes[i + 1] - 128) * 64 + (bytes[i + 2] - 128);
+            parts.append(chr(cp));
+            i = i + 3;
+        }
+        else if (b >= 240 and i + 3 < n) {
+            int cp = (b - 240) * 262144 + (bytes[i + 1] - 128) * 4096
+                + (bytes[i + 2] - 128) * 64 + (bytes[i + 3] - 128);
+            parts.append(chr(cp));
+            i = i + 4;
+        }
+        else {
+            i = i + 1;
+        }
+    }
+    return "".join(parts);
+}
+
+/* Normalize an integer to an unsigned byte value (0..255). */
+export fn byteValue(int value) -> int {
+    int v = value % 256;
+    if (v < 0) {
+        v = v + 256;
+    }
+    return v;
+}
+
+/* Big-endian two's complement bytes of `value` (width bytes). */
+export fn toBytesBE(int value, int width) -> list<int> {
+    list<int> little = [];
+    int x = value;
+    int i = 0;
+    while (i < width) {
+        int q = x / 256;
+        if (x < 0 and x % 256 != 0) {
+            q = q - 1;
+        }
+        little.append(x - q * 256);
+        x = q;
+        i = i + 1;
+    }
+    list<int> out = [];
+    int j = len(little) - 1;
+    while (j >= 0) {
+        out.append(little[j]);
+        j = j - 1;
+    }
+    return out;
+}
+
+/* Read a big-endian two's complement integer of `width` bytes. */
+export fn fromBytesBE(list<int> bytes, int offset, int width) -> int {
+    int value = 0;
+    if (bytes[offset] >= 128) {
+        value = -1;
+    }
+    int i = 0;
+    while (i < width) {
+        value = value * 256 + bytes[offset + i];
+        i = i + 1;
+    }
+    return value;
+}

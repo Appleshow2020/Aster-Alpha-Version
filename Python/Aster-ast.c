@@ -4,14 +4,12 @@
 #include "internal/ast.h"
 #include "internal/object.h"
 
-static void missing(const char *field, const char *node)
-{
-    fprintf(stderr, "internal error: required field '%s' of %s is null\n", node, field);
+static void missing(const char *field, const char *node) {
+    fprintf(stderr, "내부 오류: %s의 필수 필드 '%s'가 비어 있습니다\n", node, field);
     abort();
 }
 
-mod_ty _Aster_Module(asdl_seq *package, asdl_seq *body, Arena *arena)
-{
+mod_ty _Aster_Module(asdl_seq *package, asdl_seq *body, Arena *arena) {
     mod_ty p;
     if (!package) missing("package", "Module");
     if (!body) missing("body", "Module");
@@ -22,8 +20,7 @@ mod_ty _Aster_Module(asdl_seq *package, asdl_seq *body, Arena *arena)
     return p;
 }
 
-stmt_ty _Aster_FunctionDef(identifier name, asdl_seq *type_params, asdl_seq *params, ret_ty returns, asdl_seq *body, int is_extern, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena)
-{
+stmt_ty _Aster_FunctionDef(identifier name, asdl_seq *type_params, asdl_seq *params, ret_ty returns, asdl_seq *body, int is_extern, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena) {
     stmt_ty p;
     if (!name) missing("name", "FunctionDef");
     if (!type_params) missing("type_params", "FunctionDef");
@@ -45,8 +42,7 @@ stmt_ty _Aster_FunctionDef(identifier name, asdl_seq *type_params, asdl_seq *par
     return p;
 }
 
-stmt_ty _Aster_ClassDef(identifier name, asdl_seq *type_params, typeref_ty base, asdl_seq *interfaces, asdl_seq *members, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena)
-{
+stmt_ty _Aster_ClassDef(identifier name, asdl_seq *type_params, typeref_ty base, asdl_seq *interfaces, asdl_seq *members, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena) {
     stmt_ty p;
     if (!name) missing("name", "ClassDef");
     if (!type_params) missing("type_params", "ClassDef");
@@ -66,8 +62,7 @@ stmt_ty _Aster_ClassDef(identifier name, asdl_seq *type_params, typeref_ty base,
     return p;
 }
 
-stmt_ty _Aster_InterfaceDef(identifier name, asdl_seq *methods, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena)
-{
+stmt_ty _Aster_InterfaceDef(identifier name, asdl_seq *methods, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena) {
     stmt_ty p;
     if (!name) missing("name", "InterfaceDef");
     if (!methods) missing("methods", "InterfaceDef");
@@ -82,8 +77,7 @@ stmt_ty _Aster_InterfaceDef(identifier name, asdl_seq *methods, int lineno, int 
     return p;
 }
 
-stmt_ty _Aster_StructDef(identifier tag, identifier alias, asdl_seq *members, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena)
-{
+stmt_ty _Aster_StructDef(identifier tag, identifier alias, asdl_seq *members, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena) {
     stmt_ty p;
     if (!tag) missing("tag", "StructDef");
     if (!members) missing("members", "StructDef");
@@ -99,8 +93,7 @@ stmt_ty _Aster_StructDef(identifier tag, identifier alias, asdl_seq *members, in
     return p;
 }
 
-stmt_ty _Aster_VarDecl(typeref_ty ty, identifier name, initializer_ty init, int is_const, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena)
-{
+stmt_ty _Aster_VarDecl(typeref_ty ty, identifier name, initializer_ty init, int is_const, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena) {
     stmt_ty p;
     if (!ty) missing("ty", "VarDecl");
     if (!name) missing("name", "VarDecl");
@@ -118,8 +111,7 @@ stmt_ty _Aster_VarDecl(typeref_ty ty, identifier name, initializer_ty init, int 
     return p;
 }
 
-stmt_ty _Aster_EnumDef(identifier name, asdl_seq *members, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena)
-{
+stmt_ty _Aster_EnumDef(identifier name, asdl_seq *members, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena) {
     stmt_ty p;
     if (!name) missing("name", "EnumDef");
     if (!members) missing("members", "EnumDef");
@@ -134,8 +126,7 @@ stmt_ty _Aster_EnumDef(identifier name, asdl_seq *members, int lineno, int col_o
     return p;
 }
 
-stmt_ty _Aster_Destructure(asdl_seq *names, expr_ty value, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena)
-{
+stmt_ty _Aster_Destructure(asdl_seq *names, expr_ty value, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena) {
     stmt_ty p;
     if (!names) missing("names", "Destructure");
     if (!value) missing("value", "Destructure");
@@ -150,8 +141,7 @@ stmt_ty _Aster_Destructure(asdl_seq *names, expr_ty value, int lineno, int col_o
     return p;
 }
 
-stmt_ty _Aster_Assert(expr_ty test, expr_ty message, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena)
-{
+stmt_ty _Aster_Assert(expr_ty test, expr_ty message, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena) {
     stmt_ty p;
     if (!test) missing("test", "Assert");
     p = Arena_Alloc(arena, sizeof(*p));
@@ -165,8 +155,7 @@ stmt_ty _Aster_Assert(expr_ty test, expr_ty message, int lineno, int col_offset,
     return p;
 }
 
-stmt_ty _Aster_Assign(expr_ty target, assign_op_ty op, expr_ty value, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena)
-{
+stmt_ty _Aster_Assign(expr_ty target, assign_op_ty op, expr_ty value, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena) {
     stmt_ty p;
     if (!target) missing("target", "Assign");
     if (!op) missing("op", "Assign");
@@ -183,8 +172,7 @@ stmt_ty _Aster_Assign(expr_ty target, assign_op_ty op, expr_ty value, int lineno
     return p;
 }
 
-stmt_ty _Aster_If(expr_ty test, asdl_seq *body, asdl_seq *orelse, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena)
-{
+stmt_ty _Aster_If(expr_ty test, asdl_seq *body, asdl_seq *orelse, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena) {
     stmt_ty p;
     if (!test) missing("test", "If");
     if (!body) missing("body", "If");
@@ -201,8 +189,7 @@ stmt_ty _Aster_If(expr_ty test, asdl_seq *body, asdl_seq *orelse, int lineno, in
     return p;
 }
 
-stmt_ty _Aster_While(expr_ty test, asdl_seq *body, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena)
-{
+stmt_ty _Aster_While(expr_ty test, asdl_seq *body, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena) {
     stmt_ty p;
     if (!test) missing("test", "While");
     if (!body) missing("body", "While");
@@ -217,8 +204,7 @@ stmt_ty _Aster_While(expr_ty test, asdl_seq *body, int lineno, int col_offset, i
     return p;
 }
 
-stmt_ty _Aster_For(stmt_ty init, expr_ty test, stmt_ty step, asdl_seq *body, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena)
-{
+stmt_ty _Aster_For(stmt_ty init, expr_ty test, stmt_ty step, asdl_seq *body, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena) {
     stmt_ty p;
     if (!init) missing("init", "For");
     if (!test) missing("test", "For");
@@ -237,8 +223,7 @@ stmt_ty _Aster_For(stmt_ty init, expr_ty test, stmt_ty step, asdl_seq *body, int
     return p;
 }
 
-stmt_ty _Aster_ForRange(typeref_ty ty, identifier name, range_expr_ty iter, asdl_seq *body, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena)
-{
+stmt_ty _Aster_ForRange(typeref_ty ty, identifier name, range_expr_ty iter, asdl_seq *body, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena) {
     stmt_ty p;
     if (!ty) missing("ty", "ForRange");
     if (!name) missing("name", "ForRange");
@@ -257,8 +242,7 @@ stmt_ty _Aster_ForRange(typeref_ty ty, identifier name, range_expr_ty iter, asdl
     return p;
 }
 
-stmt_ty _Aster_ForIn(typeref_ty ty, identifier name, expr_ty iter, asdl_seq *body, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena)
-{
+stmt_ty _Aster_ForIn(typeref_ty ty, identifier name, expr_ty iter, asdl_seq *body, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena) {
     stmt_ty p;
     if (!ty) missing("ty", "ForIn");
     if (!name) missing("name", "ForIn");
@@ -277,8 +261,22 @@ stmt_ty _Aster_ForIn(typeref_ty ty, identifier name, expr_ty iter, asdl_seq *bod
     return p;
 }
 
-stmt_ty _Aster_Try(asdl_seq *body, asdl_seq *handlers, asdl_seq *finalbody, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena)
-{
+stmt_ty _Aster_Switch(expr_ty subject, asdl_seq *cases, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena) {
+    stmt_ty p;
+    if (!subject) missing("subject", "Switch");
+    if (!cases) missing("cases", "Switch");
+    p = Arena_Alloc(arena, sizeof(*p));
+    p->kind = Switch_kind;
+    p->v.Switch.subject = subject;
+    p->v.Switch.cases = cases;
+    p->lineno = lineno;
+    p->col_offset = col_offset;
+    p->end_lineno = end_lineno;
+    p->end_col_offset = end_col_offset;
+    return p;
+}
+
+stmt_ty _Aster_Try(asdl_seq *body, asdl_seq *handlers, asdl_seq *finalbody, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena) {
     stmt_ty p;
     if (!body) missing("body", "Try");
     if (!handlers) missing("handlers", "Try");
@@ -295,8 +293,7 @@ stmt_ty _Aster_Try(asdl_seq *body, asdl_seq *handlers, asdl_seq *finalbody, int 
     return p;
 }
 
-stmt_ty _Aster_Yield(expr_ty value, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena)
-{
+stmt_ty _Aster_Yield(expr_ty value, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena) {
     stmt_ty p;
     p = Arena_Alloc(arena, sizeof(*p));
     p->kind = Yield_kind;
@@ -308,8 +305,7 @@ stmt_ty _Aster_Yield(expr_ty value, int lineno, int col_offset, int end_lineno, 
     return p;
 }
 
-stmt_ty _Aster_Return(expr_ty value, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena)
-{
+stmt_ty _Aster_Return(expr_ty value, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena) {
     stmt_ty p;
     p = Arena_Alloc(arena, sizeof(*p));
     p->kind = Return_kind;
@@ -321,8 +317,7 @@ stmt_ty _Aster_Return(expr_ty value, int lineno, int col_offset, int end_lineno,
     return p;
 }
 
-stmt_ty _Aster_Throw(expr_ty value, identifier exc_type, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena)
-{
+stmt_ty _Aster_Throw(expr_ty value, identifier exc_type, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena) {
     stmt_ty p;
     if (!value) missing("value", "Throw");
     p = Arena_Alloc(arena, sizeof(*p));
@@ -336,8 +331,7 @@ stmt_ty _Aster_Throw(expr_ty value, identifier exc_type, int lineno, int col_off
     return p;
 }
 
-stmt_ty _Aster_Break(int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena)
-{
+stmt_ty _Aster_Break(int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena) {
     stmt_ty p;
     p = Arena_Alloc(arena, sizeof(*p));
     p->kind = Break_kind;
@@ -348,8 +342,7 @@ stmt_ty _Aster_Break(int lineno, int col_offset, int end_lineno, int end_col_off
     return p;
 }
 
-stmt_ty _Aster_Continue(int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena)
-{
+stmt_ty _Aster_Continue(int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena) {
     stmt_ty p;
     p = Arena_Alloc(arena, sizeof(*p));
     p->kind = Continue_kind;
@@ -360,8 +353,7 @@ stmt_ty _Aster_Continue(int lineno, int col_offset, int end_lineno, int end_col_
     return p;
 }
 
-stmt_ty _Aster_Import(asdl_seq *path, int wildcard, identifier alias, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena)
-{
+stmt_ty _Aster_Import(asdl_seq *path, int wildcard, identifier alias, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena) {
     stmt_ty p;
     if (!path) missing("path", "Import");
     p = Arena_Alloc(arena, sizeof(*p));
@@ -376,8 +368,7 @@ stmt_ty _Aster_Import(asdl_seq *path, int wildcard, identifier alias, int lineno
     return p;
 }
 
-stmt_ty _Aster_ImportFrom(asdl_seq *module, identifier name, identifier alias, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena)
-{
+stmt_ty _Aster_ImportFrom(asdl_seq *module, identifier name, identifier alias, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena) {
     stmt_ty p;
     if (!module) missing("module", "ImportFrom");
     p = Arena_Alloc(arena, sizeof(*p));
@@ -392,8 +383,7 @@ stmt_ty _Aster_ImportFrom(asdl_seq *module, identifier name, identifier alias, i
     return p;
 }
 
-stmt_ty _Aster_Export(stmt_ty body, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena)
-{
+stmt_ty _Aster_Export(stmt_ty body, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena) {
     stmt_ty p;
     if (!body) missing("body", "Export");
     p = Arena_Alloc(arena, sizeof(*p));
@@ -406,8 +396,7 @@ stmt_ty _Aster_Export(stmt_ty body, int lineno, int col_offset, int end_lineno, 
     return p;
 }
 
-stmt_ty _Aster_ExceptionDef(identifier name, identifier base, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena)
-{
+stmt_ty _Aster_ExceptionDef(identifier name, identifier base, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena) {
     stmt_ty p;
     if (!name) missing("name", "ExceptionDef");
     p = Arena_Alloc(arena, sizeof(*p));
@@ -421,8 +410,7 @@ stmt_ty _Aster_ExceptionDef(identifier name, identifier base, int lineno, int co
     return p;
 }
 
-stmt_ty _Aster_ExprStmt(expr_ty value, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena)
-{
+stmt_ty _Aster_ExprStmt(expr_ty value, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena) {
     stmt_ty p;
     if (!value) missing("value", "ExprStmt");
     p = Arena_Alloc(arena, sizeof(*p));
@@ -435,8 +423,7 @@ stmt_ty _Aster_ExprStmt(expr_ty value, int lineno, int col_offset, int end_linen
     return p;
 }
 
-expr_ty _Aster_Lambda(asdl_seq *params, ret_ty returns, expr_ty body, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena)
-{
+expr_ty _Aster_Lambda(asdl_seq *params, ret_ty returns, expr_ty body, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena) {
     expr_ty p;
     if (!params) missing("params", "Lambda");
     if (!returns) missing("returns", "Lambda");
@@ -453,8 +440,7 @@ expr_ty _Aster_Lambda(asdl_seq *params, ret_ty returns, expr_ty body, int lineno
     return p;
 }
 
-expr_ty _Aster_Pipe(expr_ty value, expr_ty func, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena)
-{
+expr_ty _Aster_Pipe(expr_ty value, expr_ty func, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena) {
     expr_ty p;
     if (!value) missing("value", "Pipe");
     if (!func) missing("func", "Pipe");
@@ -469,8 +455,7 @@ expr_ty _Aster_Pipe(expr_ty value, expr_ty func, int lineno, int col_offset, int
     return p;
 }
 
-expr_ty _Aster_Coalesce(expr_ty left, expr_ty right, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena)
-{
+expr_ty _Aster_Coalesce(expr_ty left, expr_ty right, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena) {
     expr_ty p;
     if (!left) missing("left", "Coalesce");
     if (!right) missing("right", "Coalesce");
@@ -485,8 +470,7 @@ expr_ty _Aster_Coalesce(expr_ty left, expr_ty right, int lineno, int col_offset,
     return p;
 }
 
-expr_ty _Aster_BoolOp(boolop_ty op, expr_ty left, expr_ty right, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena)
-{
+expr_ty _Aster_BoolOp(boolop_ty op, expr_ty left, expr_ty right, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena) {
     expr_ty p;
     if (!op) missing("op", "BoolOp");
     if (!left) missing("left", "BoolOp");
@@ -503,8 +487,7 @@ expr_ty _Aster_BoolOp(boolop_ty op, expr_ty left, expr_ty right, int lineno, int
     return p;
 }
 
-expr_ty _Aster_UnaryOp(unaryop_ty op, expr_ty operand, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena)
-{
+expr_ty _Aster_UnaryOp(unaryop_ty op, expr_ty operand, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena) {
     expr_ty p;
     if (!op) missing("op", "UnaryOp");
     if (!operand) missing("operand", "UnaryOp");
@@ -519,8 +502,7 @@ expr_ty _Aster_UnaryOp(unaryop_ty op, expr_ty operand, int lineno, int col_offse
     return p;
 }
 
-expr_ty _Aster_BinOp(expr_ty left, operator_ty op, expr_ty right, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena)
-{
+expr_ty _Aster_BinOp(expr_ty left, operator_ty op, expr_ty right, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena) {
     expr_ty p;
     if (!left) missing("left", "BinOp");
     if (!op) missing("op", "BinOp");
@@ -537,8 +519,7 @@ expr_ty _Aster_BinOp(expr_ty left, operator_ty op, expr_ty right, int lineno, in
     return p;
 }
 
-expr_ty _Aster_Compare(expr_ty left, cmpop_ty op, expr_ty right, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena)
-{
+expr_ty _Aster_Compare(expr_ty left, cmpop_ty op, expr_ty right, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena) {
     expr_ty p;
     if (!left) missing("left", "Compare");
     if (!op) missing("op", "Compare");
@@ -555,8 +536,7 @@ expr_ty _Aster_Compare(expr_ty left, cmpop_ty op, expr_ty right, int lineno, int
     return p;
 }
 
-expr_ty _Aster_Is(expr_ty value, typeref_ty ty, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena)
-{
+expr_ty _Aster_Is(expr_ty value, typeref_ty ty, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena) {
     expr_ty p;
     if (!value) missing("value", "Is");
     if (!ty) missing("ty", "Is");
@@ -571,8 +551,7 @@ expr_ty _Aster_Is(expr_ty value, typeref_ty ty, int lineno, int col_offset, int 
     return p;
 }
 
-expr_ty _Aster_In(expr_ty item, expr_ty container, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena)
-{
+expr_ty _Aster_In(expr_ty item, expr_ty container, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena) {
     expr_ty p;
     if (!item) missing("item", "In");
     if (!container) missing("container", "In");
@@ -587,8 +566,7 @@ expr_ty _Aster_In(expr_ty item, expr_ty container, int lineno, int col_offset, i
     return p;
 }
 
-expr_ty _Aster_Cast(typeref_ty ty, expr_ty value, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena)
-{
+expr_ty _Aster_Cast(typeref_ty ty, expr_ty value, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena) {
     expr_ty p;
     if (!ty) missing("ty", "Cast");
     if (!value) missing("value", "Cast");
@@ -603,8 +581,7 @@ expr_ty _Aster_Cast(typeref_ty ty, expr_ty value, int lineno, int col_offset, in
     return p;
 }
 
-expr_ty _Aster_AddressOf(expr_ty value, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena)
-{
+expr_ty _Aster_AddressOf(expr_ty value, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena) {
     expr_ty p;
     if (!value) missing("value", "AddressOf");
     p = Arena_Alloc(arena, sizeof(*p));
@@ -617,8 +594,7 @@ expr_ty _Aster_AddressOf(expr_ty value, int lineno, int col_offset, int end_line
     return p;
 }
 
-expr_ty _Aster_Deref(expr_ty value, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena)
-{
+expr_ty _Aster_Deref(expr_ty value, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena) {
     expr_ty p;
     if (!value) missing("value", "Deref");
     p = Arena_Alloc(arena, sizeof(*p));
@@ -631,8 +607,7 @@ expr_ty _Aster_Deref(expr_ty value, int lineno, int col_offset, int end_lineno, 
     return p;
 }
 
-expr_ty _Aster_SizeOf(typeref_ty ty, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena)
-{
+expr_ty _Aster_SizeOf(typeref_ty ty, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena) {
     expr_ty p;
     if (!ty) missing("ty", "SizeOf");
     p = Arena_Alloc(arena, sizeof(*p));
@@ -645,8 +620,7 @@ expr_ty _Aster_SizeOf(typeref_ty ty, int lineno, int col_offset, int end_lineno,
     return p;
 }
 
-expr_ty _Aster_Call(expr_ty func, asdl_seq *args, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena)
-{
+expr_ty _Aster_Call(expr_ty func, asdl_seq *args, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena) {
     expr_ty p;
     if (!func) missing("func", "Call");
     if (!args) missing("args", "Call");
@@ -661,8 +635,7 @@ expr_ty _Aster_Call(expr_ty func, asdl_seq *args, int lineno, int col_offset, in
     return p;
 }
 
-expr_ty _Aster_New(identifier cls, asdl_seq *type_args, asdl_seq *args, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena)
-{
+expr_ty _Aster_New(identifier cls, asdl_seq *type_args, asdl_seq *args, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena) {
     expr_ty p;
     if (!cls) missing("cls", "New");
     if (!type_args) missing("type_args", "New");
@@ -679,8 +652,7 @@ expr_ty _Aster_New(identifier cls, asdl_seq *type_args, asdl_seq *args, int line
     return p;
 }
 
-expr_ty _Aster_Attribute(expr_ty value, identifier attr, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena)
-{
+expr_ty _Aster_Attribute(expr_ty value, identifier attr, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena) {
     expr_ty p;
     if (!value) missing("value", "Attribute");
     if (!attr) missing("attr", "Attribute");
@@ -695,8 +667,7 @@ expr_ty _Aster_Attribute(expr_ty value, identifier attr, int lineno, int col_off
     return p;
 }
 
-expr_ty _Aster_PtrAttribute(expr_ty value, identifier attr, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena)
-{
+expr_ty _Aster_PtrAttribute(expr_ty value, identifier attr, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena) {
     expr_ty p;
     if (!value) missing("value", "PtrAttribute");
     if (!attr) missing("attr", "PtrAttribute");
@@ -711,8 +682,7 @@ expr_ty _Aster_PtrAttribute(expr_ty value, identifier attr, int lineno, int col_
     return p;
 }
 
-expr_ty _Aster_OptionalAttribute(expr_ty value, identifier attr, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena)
-{
+expr_ty _Aster_OptionalAttribute(expr_ty value, identifier attr, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena) {
     expr_ty p;
     if (!value) missing("value", "OptionalAttribute");
     if (!attr) missing("attr", "OptionalAttribute");
@@ -727,8 +697,7 @@ expr_ty _Aster_OptionalAttribute(expr_ty value, identifier attr, int lineno, int
     return p;
 }
 
-expr_ty _Aster_Name(identifier id, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena)
-{
+expr_ty _Aster_Name(identifier id, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena) {
     expr_ty p;
     if (!id) missing("id", "Name");
     p = Arena_Alloc(arena, sizeof(*p));
@@ -741,8 +710,7 @@ expr_ty _Aster_Name(identifier id, int lineno, int col_offset, int end_lineno, i
     return p;
 }
 
-expr_ty _Aster_Self(int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena)
-{
+expr_ty _Aster_Self(int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena) {
     expr_ty p;
     p = Arena_Alloc(arena, sizeof(*p));
     p->kind = Self_kind;
@@ -753,8 +721,7 @@ expr_ty _Aster_Self(int lineno, int col_offset, int end_lineno, int end_col_offs
     return p;
 }
 
-expr_ty _Aster_Constant(Value value, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena)
-{
+expr_ty _Aster_Constant(Value value, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena) {
     expr_ty p;
     p = Arena_Alloc(arena, sizeof(*p));
     p->kind = Constant_kind;
@@ -766,8 +733,7 @@ expr_ty _Aster_Constant(Value value, int lineno, int col_offset, int end_lineno,
     return p;
 }
 
-expr_ty _Aster_Array(asdl_seq *elements, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena)
-{
+expr_ty _Aster_Array(asdl_seq *elements, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena) {
     expr_ty p;
     if (!elements) missing("elements", "Array");
     p = Arena_Alloc(arena, sizeof(*p));
@@ -780,8 +746,7 @@ expr_ty _Aster_Array(asdl_seq *elements, int lineno, int col_offset, int end_lin
     return p;
 }
 
-expr_ty _Aster_Range(expr_ty start, expr_ty stop, expr_ty step, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena)
-{
+expr_ty _Aster_Range(expr_ty start, expr_ty stop, expr_ty step, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena) {
     expr_ty p;
     if (!start) missing("start", "Range");
     if (!stop) missing("stop", "Range");
@@ -797,8 +762,7 @@ expr_ty _Aster_Range(expr_ty start, expr_ty stop, expr_ty step, int lineno, int 
     return p;
 }
 
-expr_ty _Aster_Subscript(expr_ty value, expr_ty index, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena)
-{
+expr_ty _Aster_Subscript(expr_ty value, expr_ty index, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena) {
     expr_ty p;
     if (!value) missing("value", "Subscript");
     if (!index) missing("index", "Subscript");
@@ -813,8 +777,7 @@ expr_ty _Aster_Subscript(expr_ty value, expr_ty index, int lineno, int col_offse
     return p;
 }
 
-expr_ty _Aster_Slice(expr_ty lower, expr_ty upper, expr_ty step, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena)
-{
+expr_ty _Aster_Slice(expr_ty lower, expr_ty upper, expr_ty step, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena) {
     expr_ty p;
     p = Arena_Alloc(arena, sizeof(*p));
     p->kind = Slice_kind;
@@ -828,8 +791,7 @@ expr_ty _Aster_Slice(expr_ty lower, expr_ty upper, expr_ty step, int lineno, int
     return p;
 }
 
-expr_ty _Aster_FString(asdl_seq *values, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena)
-{
+expr_ty _Aster_FString(asdl_seq *values, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena) {
     expr_ty p;
     if (!values) missing("values", "FString");
     p = Arena_Alloc(arena, sizeof(*p));
@@ -842,8 +804,7 @@ expr_ty _Aster_FString(asdl_seq *values, int lineno, int col_offset, int end_lin
     return p;
 }
 
-expr_ty _Aster_FormattedValue(expr_ty value, int conversion, expr_ty format_spec, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena)
-{
+expr_ty _Aster_FormattedValue(expr_ty value, int conversion, expr_ty format_spec, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena) {
     expr_ty p;
     if (!value) missing("value", "FormattedValue");
     p = Arena_Alloc(arena, sizeof(*p));
@@ -858,8 +819,7 @@ expr_ty _Aster_FormattedValue(expr_ty value, int conversion, expr_ty format_spec
     return p;
 }
 
-expr_ty _Aster_List(asdl_seq *elements, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena)
-{
+expr_ty _Aster_List(asdl_seq *elements, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena) {
     expr_ty p;
     if (!elements) missing("elements", "List");
     p = Arena_Alloc(arena, sizeof(*p));
@@ -872,8 +832,7 @@ expr_ty _Aster_List(asdl_seq *elements, int lineno, int col_offset, int end_line
     return p;
 }
 
-expr_ty _Aster_Tuple(asdl_seq *elements, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena)
-{
+expr_ty _Aster_Tuple(asdl_seq *elements, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena) {
     expr_ty p;
     if (!elements) missing("elements", "Tuple");
     p = Arena_Alloc(arena, sizeof(*p));
@@ -886,8 +845,7 @@ expr_ty _Aster_Tuple(asdl_seq *elements, int lineno, int col_offset, int end_lin
     return p;
 }
 
-expr_ty _Aster_Dict(asdl_seq *keys, asdl_seq *values, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena)
-{
+expr_ty _Aster_Dict(asdl_seq *keys, asdl_seq *values, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena) {
     expr_ty p;
     if (!keys) missing("keys", "Dict");
     if (!values) missing("values", "Dict");
@@ -902,8 +860,7 @@ expr_ty _Aster_Dict(asdl_seq *keys, asdl_seq *values, int lineno, int col_offset
     return p;
 }
 
-expr_ty _Aster_Set(asdl_seq *elements, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena)
-{
+expr_ty _Aster_Set(asdl_seq *elements, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena) {
     expr_ty p;
     if (!elements) missing("elements", "Set");
     p = Arena_Alloc(arena, sizeof(*p));
@@ -916,8 +873,7 @@ expr_ty _Aster_Set(asdl_seq *elements, int lineno, int col_offset, int end_linen
     return p;
 }
 
-expr_ty _Aster_Spread(expr_ty value, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena)
-{
+expr_ty _Aster_Spread(expr_ty value, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena) {
     expr_ty p;
     if (!value) missing("value", "Spread");
     p = Arena_Alloc(arena, sizeof(*p));
@@ -930,8 +886,7 @@ expr_ty _Aster_Spread(expr_ty value, int lineno, int col_offset, int end_lineno,
     return p;
 }
 
-expr_ty _Aster_ListComp(expr_ty elt, identifier name, expr_ty iter, expr_ty cond, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena)
-{
+expr_ty _Aster_ListComp(expr_ty elt, identifier name, expr_ty iter, expr_ty cond, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena) {
     expr_ty p;
     if (!elt) missing("elt", "ListComp");
     if (!name) missing("name", "ListComp");
@@ -949,8 +904,7 @@ expr_ty _Aster_ListComp(expr_ty elt, identifier name, expr_ty iter, expr_ty cond
     return p;
 }
 
-expr_ty _Aster_SetComp(expr_ty elt, identifier name, expr_ty iter, expr_ty cond, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena)
-{
+expr_ty _Aster_SetComp(expr_ty elt, identifier name, expr_ty iter, expr_ty cond, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena) {
     expr_ty p;
     if (!elt) missing("elt", "SetComp");
     if (!name) missing("name", "SetComp");
@@ -968,8 +922,7 @@ expr_ty _Aster_SetComp(expr_ty elt, identifier name, expr_ty iter, expr_ty cond,
     return p;
 }
 
-expr_ty _Aster_DictComp(expr_ty key, expr_ty value, identifier name, expr_ty iter, expr_ty cond, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena)
-{
+expr_ty _Aster_DictComp(expr_ty key, expr_ty value, identifier name, expr_ty iter, expr_ty cond, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena) {
     expr_ty p;
     if (!key) missing("key", "DictComp");
     if (!value) missing("value", "DictComp");
@@ -989,8 +942,7 @@ expr_ty _Aster_DictComp(expr_ty key, expr_ty value, identifier name, expr_ty ite
     return p;
 }
 
-expr_ty _Aster_Incr(expr_ty target, int is_inc, int is_prefix, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena)
-{
+expr_ty _Aster_Incr(expr_ty target, int is_inc, int is_prefix, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena) {
     expr_ty p;
     if (!target) missing("target", "Incr");
     p = Arena_Alloc(arena, sizeof(*p));
@@ -1005,8 +957,7 @@ expr_ty _Aster_Incr(expr_ty target, int is_inc, int is_prefix, int lineno, int c
     return p;
 }
 
-typeref_ty _Aster_Primitive(prim_ty kind, Arena *arena)
-{
+typeref_ty _Aster_Primitive(prim_ty kind, Arena *arena) {
     typeref_ty p;
     if (!kind) missing("kind", "Primitive");
     p = Arena_Alloc(arena, sizeof(*p));
@@ -1015,8 +966,7 @@ typeref_ty _Aster_Primitive(prim_ty kind, Arena *arena)
     return p;
 }
 
-typeref_ty _Aster_Named(identifier name, asdl_seq *args, Arena *arena)
-{
+typeref_ty _Aster_Named(identifier name, asdl_seq *args, Arena *arena) {
     typeref_ty p;
     if (!name) missing("name", "Named");
     if (!args) missing("args", "Named");
@@ -1027,8 +977,7 @@ typeref_ty _Aster_Named(identifier name, asdl_seq *args, Arena *arena)
     return p;
 }
 
-typeref_ty _Aster_StructRef(identifier tag, Arena *arena)
-{
+typeref_ty _Aster_StructRef(identifier tag, Arena *arena) {
     typeref_ty p;
     if (!tag) missing("tag", "StructRef");
     p = Arena_Alloc(arena, sizeof(*p));
@@ -1037,8 +986,7 @@ typeref_ty _Aster_StructRef(identifier tag, Arena *arena)
     return p;
 }
 
-typeref_ty _Aster_Pointer(typeref_ty base, Arena *arena)
-{
+typeref_ty _Aster_Pointer(typeref_ty base, Arena *arena) {
     typeref_ty p;
     if (!base) missing("base", "Pointer");
     p = Arena_Alloc(arena, sizeof(*p));
@@ -1047,8 +995,7 @@ typeref_ty _Aster_Pointer(typeref_ty base, Arena *arena)
     return p;
 }
 
-typeref_ty _Aster_Nullable(typeref_ty base, Arena *arena)
-{
+typeref_ty _Aster_Nullable(typeref_ty base, Arena *arena) {
     typeref_ty p;
     if (!base) missing("base", "Nullable");
     p = Arena_Alloc(arena, sizeof(*p));
@@ -1057,8 +1004,16 @@ typeref_ty _Aster_Nullable(typeref_ty base, Arena *arena)
     return p;
 }
 
-typeref_ty _Aster_FunctionTy(asdl_seq *params, ret_ty returns, Arena *arena)
-{
+typeref_ty _Aster_UnionTy(asdl_seq *members, Arena *arena) {
+    typeref_ty p;
+    if (!members) missing("members", "UnionTy");
+    p = Arena_Alloc(arena, sizeof(*p));
+    p->kind = UnionTy_kind;
+    p->v.UnionTy.members = members;
+    return p;
+}
+
+typeref_ty _Aster_FunctionTy(asdl_seq *params, ret_ty returns, Arena *arena) {
     typeref_ty p;
     if (!params) missing("params", "FunctionTy");
     if (!returns) missing("returns", "FunctionTy");
@@ -1069,16 +1024,14 @@ typeref_ty _Aster_FunctionTy(asdl_seq *params, ret_ty returns, Arena *arena)
     return p;
 }
 
-ret_ty _Aster_VoidRet(Arena *arena)
-{
+ret_ty _Aster_VoidRet(Arena *arena) {
     ret_ty p;
     p = Arena_Alloc(arena, sizeof(*p));
     p->kind = VoidRet_kind;
     return p;
 }
 
-ret_ty _Aster_ValueRet(typeref_ty ty, Arena *arena)
-{
+ret_ty _Aster_ValueRet(typeref_ty ty, Arena *arena) {
     ret_ty p;
     if (!ty) missing("ty", "ValueRet");
     p = Arena_Alloc(arena, sizeof(*p));
@@ -1087,8 +1040,7 @@ ret_ty _Aster_ValueRet(typeref_ty ty, Arena *arena)
     return p;
 }
 
-param_ty _Aster_param(typeref_ty ty, identifier name, Arena *arena)
-{
+param_ty _Aster_param(typeref_ty ty, identifier name, Arena *arena) {
     param_ty p;
     if (!ty) missing("ty", "param");
     if (!name) missing("name", "param");
@@ -1098,8 +1050,7 @@ param_ty _Aster_param(typeref_ty ty, identifier name, Arena *arena)
     return p;
 }
 
-lparam_ty _Aster_lparam(typeref_ty ty, identifier name, Arena *arena)
-{
+lparam_ty _Aster_lparam(typeref_ty ty, identifier name, Arena *arena) {
     lparam_ty p;
     if (!name) missing("name", "lparam");
     p = Arena_Alloc(arena, sizeof(*p));
@@ -1108,8 +1059,7 @@ lparam_ty _Aster_lparam(typeref_ty ty, identifier name, Arena *arena)
     return p;
 }
 
-signature_ty _Aster_signature(access_ty access, identifier name, asdl_seq *params, ret_ty returns, Arena *arena)
-{
+signature_ty _Aster_signature(access_ty access, identifier name, asdl_seq *params, ret_ty returns, Arena *arena) {
     signature_ty p;
     if (!name) missing("name", "signature");
     if (!params) missing("params", "signature");
@@ -1122,8 +1072,7 @@ signature_ty _Aster_signature(access_ty access, identifier name, asdl_seq *param
     return p;
 }
 
-handler_ty _Aster_handler(typeref_ty ty, identifier name, asdl_seq *body, Arena *arena)
-{
+handler_ty _Aster_handler(typeref_ty ty, identifier name, asdl_seq *body, Arena *arena) {
     handler_ty p;
     if (!ty) missing("ty", "handler");
     if (!name) missing("name", "handler");
@@ -1135,8 +1084,7 @@ handler_ty _Aster_handler(typeref_ty ty, identifier name, asdl_seq *body, Arena 
     return p;
 }
 
-range_expr_ty _Aster_range_expr(expr_ty start, expr_ty stop, expr_ty step, Arena *arena)
-{
+range_expr_ty _Aster_range_expr(expr_ty start, expr_ty stop, expr_ty step, Arena *arena) {
     range_expr_ty p;
     if (!start) missing("start", "range_expr");
     if (!stop) missing("stop", "range_expr");
@@ -1147,26 +1095,64 @@ range_expr_ty _Aster_range_expr(expr_ty start, expr_ty stop, expr_ty step, Arena
     return p;
 }
 
-enum_member_ty _Aster_enum_member(identifier name, expr_ty value, Arena *arena)
-{
+enum_member_ty _Aster_enum_member(identifier name, asdl_seq *params, expr_ty value, Arena *arena) {
     enum_member_ty p;
     if (!name) missing("name", "enum_member");
+    if (!params) missing("params", "enum_member");
     p = Arena_Alloc(arena, sizeof(*p));
     p->name = name;
+    p->params = params;
     p->value = value;
     return p;
 }
 
-initializer_ty _Aster_NoInit(Arena *arena)
-{
+match_case_ty _Aster_match_case(match_pattern_ty pattern, asdl_seq *body, Arena *arena) {
+    match_case_ty p;
+    if (!pattern) missing("pattern", "match_case");
+    if (!body) missing("body", "match_case");
+    p = Arena_Alloc(arena, sizeof(*p));
+    p->pattern = pattern;
+    p->body = body;
+    return p;
+}
+
+match_pattern_ty _Aster_PLiteral(expr_ty value, Arena *arena) {
+    match_pattern_ty p;
+    if (!value) missing("value", "PLiteral");
+    p = Arena_Alloc(arena, sizeof(*p));
+    p->kind = PLiteral_kind;
+    p->v.PLiteral.value = value;
+    return p;
+}
+
+match_pattern_ty _Aster_PVariant(expr_ty path, asdl_seq *items, Arena *arena) {
+    match_pattern_ty p;
+    if (!path) missing("path", "PVariant");
+    if (!items) missing("items", "PVariant");
+    p = Arena_Alloc(arena, sizeof(*p));
+    p->kind = PVariant_kind;
+    p->v.PVariant.path = path;
+    p->v.PVariant.items = items;
+    return p;
+}
+
+match_pattern_ty _Aster_PBind(identifier name, Arena *arena) {
+    match_pattern_ty p;
+    if (!name) missing("name", "PBind");
+    p = Arena_Alloc(arena, sizeof(*p));
+    p->kind = PBind_kind;
+    p->v.PBind.name = name;
+    return p;
+}
+
+initializer_ty _Aster_NoInit(Arena *arena) {
     initializer_ty p;
     p = Arena_Alloc(arena, sizeof(*p));
     p->kind = NoInit_kind;
     return p;
 }
 
-initializer_ty _Aster_ExprInit(expr_ty value, Arena *arena)
-{
+initializer_ty _Aster_ExprInit(expr_ty value, Arena *arena) {
     initializer_ty p;
     if (!value) missing("value", "ExprInit");
     p = Arena_Alloc(arena, sizeof(*p));
@@ -1175,8 +1161,7 @@ initializer_ty _Aster_ExprInit(expr_ty value, Arena *arena)
     return p;
 }
 
-initializer_ty _Aster_PositionalInit(asdl_seq *values, Arena *arena)
-{
+initializer_ty _Aster_PositionalInit(asdl_seq *values, Arena *arena) {
     initializer_ty p;
     if (!values) missing("values", "PositionalInit");
     p = Arena_Alloc(arena, sizeof(*p));
@@ -1185,8 +1170,7 @@ initializer_ty _Aster_PositionalInit(asdl_seq *values, Arena *arena)
     return p;
 }
 
-initializer_ty _Aster_DesignatedInit(asdl_seq *items, Arena *arena)
-{
+initializer_ty _Aster_DesignatedInit(asdl_seq *items, Arena *arena) {
     initializer_ty p;
     if (!items) missing("items", "DesignatedInit");
     p = Arena_Alloc(arena, sizeof(*p));
@@ -1195,8 +1179,7 @@ initializer_ty _Aster_DesignatedInit(asdl_seq *items, Arena *arena)
     return p;
 }
 
-designation_ty _Aster_designation(identifier field, expr_ty value, Arena *arena)
-{
+designation_ty _Aster_designation(identifier field, expr_ty value, Arena *arena) {
     designation_ty p;
     if (!field) missing("field", "designation");
     if (!value) missing("value", "designation");
@@ -1206,8 +1189,7 @@ designation_ty _Aster_designation(identifier field, expr_ty value, Arena *arena)
     return p;
 }
 
-member_ty _Aster_Field(access_ty access, typeref_ty ty, identifier name, expr_ty value, int is_static, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena)
-{
+member_ty _Aster_Field(access_ty access, typeref_ty ty, identifier name, expr_ty value, int is_static, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena) {
     member_ty p;
     if (!ty) missing("ty", "Field");
     if (!name) missing("name", "Field");
@@ -1225,8 +1207,7 @@ member_ty _Aster_Field(access_ty access, typeref_ty ty, identifier name, expr_ty
     return p;
 }
 
-member_ty _Aster_Method(access_ty access, identifier name, asdl_seq *type_params, asdl_seq *params, ret_ty returns, asdl_seq *body, int is_static, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena)
-{
+member_ty _Aster_Method(access_ty access, identifier name, asdl_seq *type_params, asdl_seq *params, ret_ty returns, asdl_seq *body, int is_static, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena) {
     member_ty p;
     if (!name) missing("name", "Method");
     if (!type_params) missing("type_params", "Method");
@@ -1249,8 +1230,7 @@ member_ty _Aster_Method(access_ty access, identifier name, asdl_seq *type_params
     return p;
 }
 
-member_ty _Aster_Constructor(asdl_seq *params, asdl_seq *body, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena)
-{
+member_ty _Aster_Constructor(asdl_seq *params, asdl_seq *body, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena) {
     member_ty p;
     if (!params) missing("params", "Constructor");
     if (!body) missing("body", "Constructor");
@@ -1265,8 +1245,7 @@ member_ty _Aster_Constructor(asdl_seq *params, asdl_seq *body, int lineno, int c
     return p;
 }
 
-member_ty _Aster_Property(access_ty access, typeref_ty ty, identifier name, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena)
-{
+member_ty _Aster_Property(access_ty access, typeref_ty ty, identifier name, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena) {
     member_ty p;
     if (!ty) missing("ty", "Property");
     if (!name) missing("name", "Property");
@@ -1282,8 +1261,7 @@ member_ty _Aster_Property(access_ty access, typeref_ty ty, identifier name, int 
     return p;
 }
 
-member_ty _Aster_Getter(identifier name, asdl_seq *body, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena)
-{
+member_ty _Aster_Getter(identifier name, asdl_seq *body, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena) {
     member_ty p;
     if (!name) missing("name", "Getter");
     if (!body) missing("body", "Getter");
@@ -1298,8 +1276,7 @@ member_ty _Aster_Getter(identifier name, asdl_seq *body, int lineno, int col_off
     return p;
 }
 
-member_ty _Aster_Setter(identifier name, param_ty param, asdl_seq *body, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena)
-{
+member_ty _Aster_Setter(identifier name, param_ty param, asdl_seq *body, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena) {
     member_ty p;
     if (!name) missing("name", "Setter");
     if (!param) missing("param", "Setter");
@@ -1316,8 +1293,7 @@ member_ty _Aster_Setter(identifier name, param_ty param, asdl_seq *body, int lin
     return p;
 }
 
-struct_member_ty _Aster_StructField(typeref_ty ty, identifier name, Arena *arena)
-{
+struct_member_ty _Aster_StructField(typeref_ty ty, identifier name, Arena *arena) {
     struct_member_ty p;
     if (!ty) missing("ty", "StructField");
     if (!name) missing("name", "StructField");
@@ -1328,8 +1304,7 @@ struct_member_ty _Aster_StructField(typeref_ty ty, identifier name, Arena *arena
     return p;
 }
 
-struct_member_ty _Aster_StructCtor(asdl_seq *params, asdl_seq *inits, asdl_seq *body, Arena *arena)
-{
+struct_member_ty _Aster_StructCtor(asdl_seq *params, asdl_seq *inits, asdl_seq *body, Arena *arena) {
     struct_member_ty p;
     if (!params) missing("params", "StructCtor");
     if (!inits) missing("inits", "StructCtor");
@@ -1342,8 +1317,7 @@ struct_member_ty _Aster_StructCtor(asdl_seq *params, asdl_seq *inits, asdl_seq *
     return p;
 }
 
-member_init_ty _Aster_member_init(identifier field, expr_ty value, Arena *arena)
-{
+member_init_ty _Aster_member_init(identifier field, expr_ty value, Arena *arena) {
     member_init_ty p;
     if (!field) missing("field", "member_init");
     if (!value) missing("value", "member_init");
@@ -1359,8 +1333,7 @@ static void dump_identifier(FILE *out, identifier s) { if (!s) fputs("None", out
 static void dump_int(FILE *out, int i) { fprintf(out, "%d", i); }
 static void dump_constant(FILE *out, Value v) { Aster_Value_Repr(out, v); }
 static void dumpv_identifier(FILE *out, void *p) { dump_identifier(out, (identifier)p); }
-static void dump_seq(FILE *out, asdl_seq *s, void (*fn)(FILE *, void *))
-{
+static void dump_seq(FILE *out, asdl_seq *s, void (*fn)(FILE *, void *)) {
     size_t i;
     fputc('[', out);
     for (i = 0; i < asdl_seq_LEN(s); i++) { if (i) fputs(", ", out); fn(out, asdl_seq_GET(s, i)); }
@@ -1391,6 +1364,10 @@ static void dump_range_expr(FILE *out, range_expr_ty n);
 static inline void dumpv_range_expr(FILE *out, void *p) { dump_range_expr(out, (range_expr_ty)p); }
 static void dump_enum_member(FILE *out, enum_member_ty n);
 static inline void dumpv_enum_member(FILE *out, void *p) { dump_enum_member(out, (enum_member_ty)p); }
+static void dump_match_case(FILE *out, match_case_ty n);
+static inline void dumpv_match_case(FILE *out, void *p) { dump_match_case(out, (match_case_ty)p); }
+static void dump_match_pattern(FILE *out, match_pattern_ty n);
+static inline void dumpv_match_pattern(FILE *out, void *p) { dump_match_pattern(out, (match_pattern_ty)p); }
 static void dump_initializer(FILE *out, initializer_ty n);
 static inline void dumpv_initializer(FILE *out, void *p) { dump_initializer(out, (initializer_ty)p); }
 static void dump_designation(FILE *out, designation_ty n);
@@ -1414,8 +1391,7 @@ static inline void dumpv_cmpop(FILE *out, void *p) { dump_cmpop(out, (cmpop_ty)p
 static void dump_assign_op(FILE *out, assign_op_ty n);
 static inline void dumpv_assign_op(FILE *out, void *p) { dump_assign_op(out, (assign_op_ty)p); }
 
-static void dump_mod(FILE *out, mod_ty n)
-{
+static void dump_mod(FILE *out, mod_ty n) {
     if (!n) { fputs("None", out); return; }
     switch (n->kind) {
     case Module_kind:
@@ -1429,8 +1405,7 @@ static void dump_mod(FILE *out, mod_ty n)
     }
 }
 
-static void dump_stmt(FILE *out, stmt_ty n)
-{
+static void dump_stmt(FILE *out, stmt_ty n) {
     if (!n) { fputs("None", out); return; }
     switch (n->kind) {
     case FunctionDef_kind:
@@ -1581,6 +1556,14 @@ static void dump_stmt(FILE *out, stmt_ty n)
         dump_seq(out, n->v.ForIn.body, dumpv_stmt);
         fputc(')', out);
         break;
+    case Switch_kind:
+        fputs("Switch(", out);
+        fputs("subject=", out);
+        dump_expr(out, n->v.Switch.subject);
+        fputs(", cases=", out);
+        dump_seq(out, n->v.Switch.cases, dumpv_match_case);
+        fputc(')', out);
+        break;
     case Try_kind:
         fputs("Try(", out);
         fputs("body=", out);
@@ -1660,8 +1643,7 @@ static void dump_stmt(FILE *out, stmt_ty n)
     }
 }
 
-static void dump_expr(FILE *out, expr_ty n)
-{
+static void dump_expr(FILE *out, expr_ty n) {
     if (!n) { fputs("None", out); return; }
     switch (n->kind) {
     case Lambda_kind:
@@ -1960,8 +1942,7 @@ static void dump_expr(FILE *out, expr_ty n)
     }
 }
 
-static void dump_typeref(FILE *out, typeref_ty n)
-{
+static void dump_typeref(FILE *out, typeref_ty n) {
     if (!n) { fputs("None", out); return; }
     switch (n->kind) {
     case Primitive_kind:
@@ -1996,6 +1977,12 @@ static void dump_typeref(FILE *out, typeref_ty n)
         dump_typeref(out, n->v.Nullable.base);
         fputc(')', out);
         break;
+    case UnionTy_kind:
+        fputs("UnionTy(", out);
+        fputs("members=", out);
+        dump_seq(out, n->v.UnionTy.members, dumpv_typeref);
+        fputc(')', out);
+        break;
     case FunctionTy_kind:
         fputs("FunctionTy(", out);
         fputs("params=", out);
@@ -2007,8 +1994,7 @@ static void dump_typeref(FILE *out, typeref_ty n)
     }
 }
 
-static void dump_prim(FILE *out, prim_ty n)
-{
+static void dump_prim(FILE *out, prim_ty n) {
     if (!n) { fputs("None", out); return; }
     switch (n) {
     case IntT: fputs("IntT()", out); break;
@@ -2019,8 +2005,7 @@ static void dump_prim(FILE *out, prim_ty n)
     }
 }
 
-static void dump_ret(FILE *out, ret_ty n)
-{
+static void dump_ret(FILE *out, ret_ty n) {
     if (!n) { fputs("None", out); return; }
     switch (n->kind) {
     case VoidRet_kind:
@@ -2035,8 +2020,7 @@ static void dump_ret(FILE *out, ret_ty n)
     }
 }
 
-static void dump_param(FILE *out, param_ty n)
-{
+static void dump_param(FILE *out, param_ty n) {
     if (!n) { fputs("None", out); return; }
     fputs("param(", out);
     fputs("ty=", out);
@@ -2046,8 +2030,7 @@ static void dump_param(FILE *out, param_ty n)
     fputc(')', out);
 }
 
-static void dump_lparam(FILE *out, lparam_ty n)
-{
+static void dump_lparam(FILE *out, lparam_ty n) {
     if (!n) { fputs("None", out); return; }
     fputs("lparam(", out);
     fputs("ty=", out);
@@ -2057,8 +2040,7 @@ static void dump_lparam(FILE *out, lparam_ty n)
     fputc(')', out);
 }
 
-static void dump_signature(FILE *out, signature_ty n)
-{
+static void dump_signature(FILE *out, signature_ty n) {
     if (!n) { fputs("None", out); return; }
     fputs("signature(", out);
     fputs("access=", out);
@@ -2072,8 +2054,7 @@ static void dump_signature(FILE *out, signature_ty n)
     fputc(')', out);
 }
 
-static void dump_handler(FILE *out, handler_ty n)
-{
+static void dump_handler(FILE *out, handler_ty n) {
     if (!n) { fputs("None", out); return; }
     fputs("handler(", out);
     fputs("ty=", out);
@@ -2085,8 +2066,7 @@ static void dump_handler(FILE *out, handler_ty n)
     fputc(')', out);
 }
 
-static void dump_range_expr(FILE *out, range_expr_ty n)
-{
+static void dump_range_expr(FILE *out, range_expr_ty n) {
     if (!n) { fputs("None", out); return; }
     fputs("range_expr(", out);
     fputs("start=", out);
@@ -2098,19 +2078,55 @@ static void dump_range_expr(FILE *out, range_expr_ty n)
     fputc(')', out);
 }
 
-static void dump_enum_member(FILE *out, enum_member_ty n)
-{
+static void dump_enum_member(FILE *out, enum_member_ty n) {
     if (!n) { fputs("None", out); return; }
     fputs("enum_member(", out);
     fputs("name=", out);
     dump_identifier(out, n->name);
+    fputs(", params=", out);
+    dump_seq(out, n->params, dumpv_param);
     fputs(", value=", out);
     dump_expr(out, n->value);
     fputc(')', out);
 }
 
-static void dump_initializer(FILE *out, initializer_ty n)
-{
+static void dump_match_case(FILE *out, match_case_ty n) {
+    if (!n) { fputs("None", out); return; }
+    fputs("match_case(", out);
+    fputs("pattern=", out);
+    dump_match_pattern(out, n->pattern);
+    fputs(", body=", out);
+    dump_seq(out, n->body, dumpv_stmt);
+    fputc(')', out);
+}
+
+static void dump_match_pattern(FILE *out, match_pattern_ty n) {
+    if (!n) { fputs("None", out); return; }
+    switch (n->kind) {
+    case PLiteral_kind:
+        fputs("PLiteral(", out);
+        fputs("value=", out);
+        dump_expr(out, n->v.PLiteral.value);
+        fputc(')', out);
+        break;
+    case PVariant_kind:
+        fputs("PVariant(", out);
+        fputs("path=", out);
+        dump_expr(out, n->v.PVariant.path);
+        fputs(", items=", out);
+        dump_seq(out, n->v.PVariant.items, dumpv_match_pattern);
+        fputc(')', out);
+        break;
+    case PBind_kind:
+        fputs("PBind(", out);
+        fputs("name=", out);
+        dump_identifier(out, n->v.PBind.name);
+        fputc(')', out);
+        break;
+    }
+}
+
+static void dump_initializer(FILE *out, initializer_ty n) {
     if (!n) { fputs("None", out); return; }
     switch (n->kind) {
     case NoInit_kind:
@@ -2137,8 +2153,7 @@ static void dump_initializer(FILE *out, initializer_ty n)
     }
 }
 
-static void dump_designation(FILE *out, designation_ty n)
-{
+static void dump_designation(FILE *out, designation_ty n) {
     if (!n) { fputs("None", out); return; }
     fputs("designation(", out);
     fputs("field=", out);
@@ -2148,8 +2163,7 @@ static void dump_designation(FILE *out, designation_ty n)
     fputc(')', out);
 }
 
-static void dump_access(FILE *out, access_ty n)
-{
+static void dump_access(FILE *out, access_ty n) {
     if (!n) { fputs("None", out); return; }
     switch (n) {
     case Public: fputs("Public()", out); break;
@@ -2159,8 +2173,7 @@ static void dump_access(FILE *out, access_ty n)
     }
 }
 
-static void dump_member(FILE *out, member_ty n)
-{
+static void dump_member(FILE *out, member_ty n) {
     if (!n) { fputs("None", out); return; }
     switch (n->kind) {
     case Field_kind:
@@ -2234,8 +2247,7 @@ static void dump_member(FILE *out, member_ty n)
     }
 }
 
-static void dump_struct_member(FILE *out, struct_member_ty n)
-{
+static void dump_struct_member(FILE *out, struct_member_ty n) {
     if (!n) { fputs("None", out); return; }
     switch (n->kind) {
     case StructField_kind:
@@ -2259,8 +2271,7 @@ static void dump_struct_member(FILE *out, struct_member_ty n)
     }
 }
 
-static void dump_member_init(FILE *out, member_init_ty n)
-{
+static void dump_member_init(FILE *out, member_init_ty n) {
     if (!n) { fputs("None", out); return; }
     fputs("member_init(", out);
     fputs("field=", out);
@@ -2270,8 +2281,7 @@ static void dump_member_init(FILE *out, member_init_ty n)
     fputc(')', out);
 }
 
-static void dump_boolop(FILE *out, boolop_ty n)
-{
+static void dump_boolop(FILE *out, boolop_ty n) {
     if (!n) { fputs("None", out); return; }
     switch (n) {
     case And: fputs("And()", out); break;
@@ -2279,8 +2289,7 @@ static void dump_boolop(FILE *out, boolop_ty n)
     }
 }
 
-static void dump_unaryop(FILE *out, unaryop_ty n)
-{
+static void dump_unaryop(FILE *out, unaryop_ty n) {
     if (!n) { fputs("None", out); return; }
     switch (n) {
     case UAdd: fputs("UAdd()", out); break;
@@ -2289,8 +2298,7 @@ static void dump_unaryop(FILE *out, unaryop_ty n)
     }
 }
 
-static void dump_operator(FILE *out, operator_ty n)
-{
+static void dump_operator(FILE *out, operator_ty n) {
     if (!n) { fputs("None", out); return; }
     switch (n) {
     case Add: fputs("Add()", out); break;
@@ -2303,8 +2311,7 @@ static void dump_operator(FILE *out, operator_ty n)
     }
 }
 
-static void dump_cmpop(FILE *out, cmpop_ty n)
-{
+static void dump_cmpop(FILE *out, cmpop_ty n) {
     if (!n) { fputs("None", out); return; }
     switch (n) {
     case Eq: fputs("Eq()", out); break;
@@ -2316,8 +2323,7 @@ static void dump_cmpop(FILE *out, cmpop_ty n)
     }
 }
 
-static void dump_assign_op(FILE *out, assign_op_ty n)
-{
+static void dump_assign_op(FILE *out, assign_op_ty n) {
     if (!n) { fputs("None", out); return; }
     switch (n) {
     case AssignEq: fputs("AssignEq()", out); break;
@@ -2331,8 +2337,7 @@ static void dump_assign_op(FILE *out, assign_op_ty n)
     }
 }
 
-void Aster_AST_Dump(FILE *f, mod_ty mod)
-{
+void Aster_AST_Dump(FILE *f, mod_ty mod) {
     dump_mod(f, mod);
     fputc('\n', f);
 }

@@ -1,0 +1,282 @@
+/* aster.time.LocalTime: 시간대가 없는 시각 (시/분/초/나노초). */
+
+import aster.time.DateTimeParseException;
+
+extern fn _aster_now_ms() -> int;
+extern fn _aster_format_time(int epochSeconds, str pattern) -> str;
+
+const int NANOS_PER_SECOND = 1000000000;
+const int SECONDS_PER_DAY = 86400;
+const int NANOS_PER_DAY = 86400000000000;
+
+fn _isDigit(str ch) -> bool {
+    if (ch.length() == 0) { return false; }
+    return "0123456789".find(ch) >= 0;
+}
+
+fn _isDigits(str text) -> bool {
+    if (text.length() == 0) { return false; }
+    int i = 0;
+    while (i < text.length()) {
+        if (not _isDigit(text.charAt(i))) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
+fn _pad2(int value) -> str {
+    if (value < 10) { return "0" + str(value); }
+    return str(value);
+}
+
+fn _padNano(int value) -> str {
+    str out = "";
+    int v = value;
+    int i = 0;
+    while (i < 9) {
+        out = str(v % 10) + out;
+        v = v / 10;
+        i = i + 1;
+    }
+    return out;
+}
+
+fn _parseError(str text) -> void {
+    throw ("Text '" + text + "' cannot be parsed as a LocalTime") as DateTimeParseException;
+}
+
+fn _hourFrom(str s) -> int {
+    if (not _isDigits(s) or s.length() > 2) { return -1; }
+    return s.to_int();
+}
+
+export class LocalTime {
+    private int hourValue;
+    private int minuteValue;
+    private int secondValue;
+    private int nanoValue;
+
+    constructor(int hour, int minute, int second, int nano) {
+        if (hour < 0 or hour > 23) {
+            throw ("Invalid value for HourOfDay: " + str(hour)) as ValueError;
+        }
+        if (minute < 0 or minute > 59) {
+            throw ("Invalid value for MinuteOfHour: " + str(minute)) as ValueError;
+        }
+        if (second < 0 or second > 59) {
+            throw ("Invalid value for SecondOfMinute: " + str(second)) as ValueError;
+        }
+        if (nano < 0 or nano > 999999999) {
+            throw ("Invalid value for NanoOfSecond: " + str(nano)) as ValueError;
+        }
+        self->hourValue = hour;
+        self->minuteValue = minute;
+        self->secondValue = second;
+        self->nanoValue = nano;
+    }
+
+    public static fn of(int hour, int minute) -> LocalTime {
+        return new LocalTime(hour, minute, 0, 0);
+    }
+
+    public static fn of(int hour, int minute, int second) -> LocalTime {
+        return new LocalTime(hour, minute, second, 0);
+    }
+
+    public static fn of(int hour, int minute, int second, int nano) -> LocalTime {
+        return new LocalTime(hour, minute, second, nano);
+    }
+
+    public static fn ofSecondOfDay(int secondOfDay) -> LocalTime {
+        if (secondOfDay < 0 or secondOfDay >= SECONDS_PER_DAY) {
+            throw ("Invalid value for SecondOfDay: " + str(secondOfDay)) as ValueError;
+        }
+        int hour = secondOfDay / 3600;
+        int minute = (secondOfDay % 3600) / 60;
+        int second = secondOfDay % 60;
+        return new LocalTime(hour, minute, second, 0);
+    }
+
+    public static fn ofNanoOfDay(int nanoOfDay) -> LocalTime {
+        if (nanoOfDay < 0 or nanoOfDay >= NANOS_PER_DAY) {
+            throw ("Invalid value for NanoOfDay: " + str(nanoOfDay)) as ValueError;
+        }
+        int secondOfDay = nanoOfDay / NANOS_PER_SECOND;
+        int nano = nanoOfDay % NANOS_PER_SECOND;
+        int hour = secondOfDay / 3600;
+        int minute = (secondOfDay % 3600) / 60;
+        int second = secondOfDay % 60;
+        return new LocalTime(hour, minute, second, nano);
+    }
+
+    /* 로컬 시간대의 현재 시각. */
+    public static fn now() -> LocalTime {
+        str text = _aster_format_time(_aster_now_ms() / 1000, "%H %M %S");
+        list<str> parts = text.split(" ");
+        if (len(parts) != 3) {
+            throw "Cannot read the local time" as ValueError;
+        }
+        return LocalTime.of(parts[0].to_int(), parts[1].to_int(), parts[2].to_int());
+    }
+
+    /* "12:30", "12:30:45", "12:30:45.123" 형식. */
+    public static fn parse(str text) -> LocalTime {
+        if (text.length() == 0) { _parseError(text); }
+        str body = text;
+        str fraction = "";
+        int dot = body.find(".");
+        if (dot >= 0) {
+            fraction = body.substring(dot + 1, body.length());
+            body = body.substring(0, dot);
+            if (not _isDigits(fraction) or fraction.length() > 9) { _parseError(text); }
+        }
+        list<str> parts = body.split(":");
+        if (len(parts) != 2 and len(parts) != 3) { _parseError(text); }
+        int hour = _hourFrom(parts[0]);
+        int minute = _hourFrom(parts[1]);
+        int second = 0;
+        if (len(parts) == 3) {
+            second = _hourFrom(parts[2]);
+        }
+        if (hour < 0 or hour > 23 or minute < 0 or minute > 59
+            or second < 0 or second > 59) {
+            _parseError(text);
+        }
+        int nano = 0;
+        if (fraction.length() > 0) {
+            str padded = fraction;
+            while (padded.length() < 9) {
+                padded = padded + "0";
+            }
+            nano = padded.to_int();
+        }
+        return LocalTime.of(hour, minute, second, nano);
+    }
+
+    public fn getHour() -> int {
+        return self->hourValue;
+    }
+
+    public fn getMinute() -> int {
+        return self->minuteValue;
+    }
+
+    public fn getSecond() -> int {
+        return self->secondValue;
+    }
+
+    public fn getNano() -> int {
+        return self->nanoValue;
+    }
+
+    public fn toSecondOfDay() -> int {
+        return (self->hourValue * 3600 + self->minuteValue * 60 + self->secondValue);
+    }
+
+    public fn toNanoOfDay() -> int {
+        return self->toSecondOfDay() * NANOS_PER_SECOND + self->nanoValue;
+    }
+
+    public fn withHour(int hour) -> LocalTime {
+        return new LocalTime(hour, self->minuteValue, self->secondValue, self->nanoValue);
+    }
+
+    public fn withMinute(int minute) -> LocalTime {
+        return new LocalTime(self->hourValue, minute, self->secondValue, self->nanoValue);
+    }
+
+    public fn withSecond(int second) -> LocalTime {
+        return new LocalTime(self->hourValue, self->minuteValue, second, self->nanoValue);
+    }
+
+    public fn withNano(int nano) -> LocalTime {
+        return new LocalTime(self->hourValue, self->minuteValue, self->secondValue, nano);
+    }
+
+    public fn plusHours(int hours) -> LocalTime {
+        return self->plusSeconds(hours * 3600);
+    }
+
+    public fn plusMinutes(int minutes) -> LocalTime {
+        return self->plusSeconds(minutes * 60);
+    }
+
+    public fn plusSeconds(int seconds) -> LocalTime {
+        int total = (self->toNanoOfDay() + seconds * NANOS_PER_SECOND) % NANOS_PER_DAY;
+        if (total < 0) { total = total + NANOS_PER_DAY; }
+        return LocalTime.ofNanoOfDay(total);
+    }
+
+    public fn plusNanos(int nanos) -> LocalTime {
+        int total = (self->toNanoOfDay() + nanos) % NANOS_PER_DAY;
+        if (total < 0) { total = total + NANOS_PER_DAY; }
+        return LocalTime.ofNanoOfDay(total);
+    }
+
+    public fn minusHours(int hours) -> LocalTime {
+        return self->plusHours(-hours);
+    }
+
+    public fn minusMinutes(int minutes) -> LocalTime {
+        return self->plusMinutes(-minutes);
+    }
+
+    public fn minusSeconds(int seconds) -> LocalTime {
+        return self->plusSeconds(-seconds);
+    }
+
+    public fn minusNanos(int nanos) -> LocalTime {
+        return self->plusNanos(-nanos);
+    }
+
+    public fn isBefore(LocalTime other) -> bool {
+        return self->toNanoOfDay() < other.toNanoOfDay();
+    }
+
+    public fn isAfter(LocalTime other) -> bool {
+        return self->toNanoOfDay() > other.toNanoOfDay();
+    }
+
+    public fn isEqual(LocalTime other) -> bool {
+        return self->toNanoOfDay() == other.toNanoOfDay();
+    }
+
+    public fn compareTo(LocalTime other) -> int {
+        int left = self->toNanoOfDay();
+        int right = other.toNanoOfDay();
+        if (left < right) { return -1; }
+        if (left > right) { return 1; }
+        return 0;
+    }
+
+    public fn equals(LocalTime other) -> bool {
+        return self->hourValue == other.hourValue
+            and self->minuteValue == other.minuteValue
+            and self->secondValue == other.secondValue
+            and self->nanoValue == other.nanoValue;
+    }
+
+    public fn hashCode() -> int {
+        return self->toNanoOfDay() % 2147483647;
+    }
+
+    public fn toString() -> str {
+        str out = _pad2(self->hourValue) + ":" + _pad2(self->minuteValue)
+                + ":" + _pad2(self->secondValue);
+        if (self->nanoValue != 0) {
+            str digits = _padNano(self->nanoValue);
+            if (self->nanoValue % 1000000 == 0) {
+                digits = digits.substring(0, 3);
+            }
+            else if (self->nanoValue % 1000 == 0) {
+                digits = digits.substring(0, 6);
+            }
+            out = out + "." + digits;
+        }
+        return out;
+    }
+
+    public fn __str__() -> str {
+        return self->toString();
+    }
+}

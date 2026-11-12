@@ -1,0 +1,177 @@
+/* aster.text.NumberFormat: java.text.NumberFormat 스타일 수치 포매터 기반 클래스.
+   그룹 구분과 소수 자릿수 설정을 담고, 실제 패턴 처리는 DecimalFormat이 맡는다. */
+
+import aster.text.DecimalFormat;
+
+export class NumberFormat {
+    protected bool groupingUsedV;
+    protected int maximumFractionDigitsV;
+    protected int minimumFractionDigitsV;
+    protected int maximumIntegerDigitsV;
+    protected int minimumIntegerDigitsV;
+
+    constructor() {
+        self->groupingUsedV = true;
+        self->maximumFractionDigitsV = 3;
+        self->minimumFractionDigitsV = 0;
+        self->maximumIntegerDigitsV = 40;
+        self->minimumIntegerDigitsV = 1;
+    }
+
+    private static fn _powInt(int n) -> int {
+        int result = 1;
+        int i = 0;
+        while (i < n) {
+            result = result * 10;
+            i = i + 1;
+        }
+        return result;
+    }
+
+    private fn _groupDigits(str raw) -> str {
+        str out = "";
+        int count = 0;
+        int i = raw.length() - 1;
+        while (i >= 0) {
+            out = raw.charAt(i) + out;
+            count = count + 1;
+            if (count % 3 == 0 and i > 0) {
+                out = "," + out;
+            }
+            i = i - 1;
+        }
+        return out;
+    }
+
+    private fn _padLeft(str s, int width) -> str {
+        str out = s;
+        while (out.length() < width) {
+            out = "0" + out;
+        }
+        return out;
+    }
+
+    public fn _formatValue(float value) -> str {
+        bool negative = value < 0.0;
+        float magnitude = value;
+        if (negative) { magnitude = -value; }
+        int factor = NumberFormat._powInt(self->maximumFractionDigitsV);
+        int intPart = int(magnitude);
+        float fracPart = magnitude - float(intPart);
+        int frac = int(fracPart * float(factor) + 0.5);
+        if (frac >= factor) {
+            intPart = intPart + 1;
+            frac = 0;
+        }
+        str intStr = self->_padLeft(str(intPart), self->minimumIntegerDigitsV);
+        if (self->groupingUsedV) {
+            intStr = self->_groupDigits(intStr);
+        }
+        str result = intStr;
+        if (self->maximumFractionDigitsV > 0) {
+            str fracStr = self->_padLeft(str(frac), self->maximumFractionDigitsV);
+            while (fracStr.length() > self->minimumFractionDigitsV
+                   and fracStr.charAt(fracStr.length() - 1) == "0") {
+                fracStr = fracStr.substring(0, fracStr.length() - 1);
+            }
+            if (fracStr.length() > 0) {
+                result = result + "." + fracStr;
+            }
+        }
+        if (negative) { result = "-" + result; }
+        return result;
+    }
+
+    public fn format(int value) -> str {
+        return self->_formatValue(float(value));
+    }
+
+    public fn format(float value) -> str {
+        return self->_formatValue(value);
+    }
+
+    public fn parse(str text) -> float {
+        str t = text.strip();
+        bool percent = false;
+        if (t.endswith("%")) {
+            percent = true;
+            t = t.substring(0, t.length() - 1).strip();
+        }
+        t = t.replace(",", "");
+        t = t.replace("$", "");
+        t = t.strip();
+        float value = t.to_float();
+        if (percent) { value = value / 100.0; }
+        return value;
+    }
+
+    public fn setGroupingUsed(bool used) -> void {
+        self->groupingUsedV = used;
+    }
+
+    public fn isGroupingUsed() -> bool {
+        return self->groupingUsedV;
+    }
+
+    public fn setMaximumFractionDigits(int digits) -> void {
+        if (digits < 0) { digits = 0; }
+        self->maximumFractionDigitsV = digits;
+        if (self->minimumFractionDigitsV > digits) {
+            self->minimumFractionDigitsV = digits;
+        }
+    }
+
+    public fn getMaximumFractionDigits() -> int {
+        return self->maximumFractionDigitsV;
+    }
+
+    public fn setMinimumFractionDigits(int digits) -> void {
+        if (digits < 0) { digits = 0; }
+        self->minimumFractionDigitsV = digits;
+        if (self->maximumFractionDigitsV < digits) {
+            self->maximumFractionDigitsV = digits;
+        }
+    }
+
+    public fn getMinimumFractionDigits() -> int {
+        return self->minimumFractionDigitsV;
+    }
+
+    public fn setMaximumIntegerDigits(int digits) -> void {
+        if (digits < 0) { digits = 0; }
+        self->maximumIntegerDigitsV = digits;
+    }
+
+    public fn getMaximumIntegerDigits() -> int {
+        return self->maximumIntegerDigitsV;
+    }
+
+    public fn setMinimumIntegerDigits(int digits) -> void {
+        if (digits < 0) { digits = 0; }
+        self->minimumIntegerDigitsV = digits;
+    }
+
+    public fn getMinimumIntegerDigits() -> int {
+        return self->minimumIntegerDigitsV;
+    }
+
+    public static fn getInstance() -> DecimalFormat {
+        return new DecimalFormat("#,##0.###");
+    }
+
+    public static fn getNumberInstance() -> DecimalFormat {
+        return new DecimalFormat("#,##0.###");
+    }
+
+    public static fn getIntegerInstance() -> DecimalFormat {
+        return new DecimalFormat("#,##0");
+    }
+
+    public static fn getPercentInstance() -> DecimalFormat {
+        return new DecimalFormat("#,##0%");
+    }
+
+    public static fn getCurrencyInstance() -> DecimalFormat {
+        return new DecimalFormat("$#,##0.00");
+    }
+}

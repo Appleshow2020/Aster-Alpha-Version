@@ -21,6 +21,8 @@ typedef struct AsterString {
 
 AsterString *AsterString_FromUTF8(const char *s, size_t n);
 AsterString *AsterString_FromCStr(const char *s);
+/* 두 문자열을 한 번의 할당으로 잇는다 (코드 포인트 수는 더하기만 한다). */
+AsterString *AsterString_Concat(const AsterString *a, const AsterString *b);
 
 /* UTF-8 코드 포인트 단위 도우미. 잘못된 바이트는 1바이트 문자로 취급한다. */
 uint32_t Aster_UTF8_Decode(const char *s, size_t n, size_t *advance);
@@ -38,5 +40,7 @@ void Aster_Value_Repr(FILE *out, Value v);
 /* 왕복 변환이 되는 가장 짧은 float 표기를 buf에 쓴다. */
 void Aster_FormatDouble(char *buf, size_t size, double value);
 void Aster_StringRepr(FILE *out, const char *s, size_t n);
+/* repr에서 이스케이프가 필요한 코드 포인트인지 판별한다. */
+int Aster_Str_NeedsEscape(uint32_t cp);
 
 #endif

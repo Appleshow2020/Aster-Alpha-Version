@@ -1,0 +1,5 @@
+/* aster.util.function.DoubleUnaryOperator: Java DoubleUnaryOperator shape. */
+
+export interface DoubleUnaryOperator {
+    fn applyAsDouble(float value) -> float;
+}

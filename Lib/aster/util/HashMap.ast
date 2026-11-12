@@ -1,0 +1,138 @@
+/* aster.util.HashMap: Java HashMap 스타일 사전.
+
+   내부는 dict<K,V>이고 삽입 순서를 유지한다. keySet은 HashSet, values는
+   CollectionList(Collection 계약), entrySet은 MapEntry 리스트를 돌려준다.
+   (엔트리는 해시 가능하지 않을 수 있으므로 세트가 아니라 리스트다.) */
+
+import aster.util.Map;
+import aster.util.MapEntry;
+import aster.util.Set;
+import aster.util.HashSet;
+import aster.util.Collection;
+import aster.util.CollectionList;
+
+export class HashMap<K, V> implements Map {
+    private dict<K, V> map;
+
+    constructor() {
+        self->map = {};
+    }
+
+    public fn put(K key, V value) -> V? {
+        V? old = null;
+        if (key in self->map) {
+            old = self->map[key];
+        }
+        self->map[key] = value;
+        return old;
+    }
+
+    public fn get(K key) -> V? {
+        if (not (key in self->map)) {
+            return null;
+        }
+        return self->map[key];
+    }
+
+    public fn remove(K key) -> V? {
+        if (not (key in self->map)) {
+            return null;
+        }
+        return self->map.pop(key);
+    }
+
+    public fn containsKey(K key) -> bool {
+        return key in self->map;
+    }
+
+    public fn containsValue(V value) -> bool {
+        for (V item in self->map.values()) {
+            if (item == value) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    public fn keySet() -> Set<K> {
+        Set<K> keys = new HashSet<K>();
+        for (K key in self->map.keys()) {
+            keys.add(key);
+        }
+        return keys;
+    }
+
+    public fn values() -> Collection {
+        Collection vals = new CollectionList<V>(self->map.values());
+        return vals;
+    }
+
+    public fn entrySet() -> list<MapEntry<K, V>> {
+        list<MapEntry<K, V>> entries = [];
+        for (K key in self->map.keys()) {
+            entries.append(new MapEntry<K, V>(key, self->map[key]));
+        }
+        return entries;
+    }
+
+    public fn size() -> int {
+        return len(self->map);
+    }
+
+    public fn isEmpty() -> bool {
+        return len(self->map) == 0;
+    }
+
+    public fn clear() -> void {
+        self->map.clear();
+    }
+
+    /* dict 또는 entrySet()을 가진 다른 Map에서 복사한다.
+       Map 인터페이스 자체는 타입 이름으로 쓸 수 없어(내장 dict로 해석) any를 받는다. */
+    public fn putAll(any other) -> void {
+        if (typeName(other) == "dict") {
+            for (any key in other.keys()) {
+                self->map[key] = other[key];
+            }
+            return;
+        }
+        for (any entry in other.entrySet()) {
+            self->put(entry.getKey(), entry.getValue());
+        }
+    }
+
+    public fn getOrDefault(K key, V fallback) -> V {
+        if (key in self->map) {
+            if (self->map[key] is not null) {
+                return self->map[key];
+            }
+        }
+        return fallback;
+    }
+
+    public fn putIfAbsent(K key, V value) -> V? {
+        if (key in self->map) {
+            if (self->map[key] is not null) {
+                return self->map[key];
+            }
+        }
+        self->map[key] = value;
+        return null;
+    }
+
+    public fn keys() -> list<K> {
+        return self->map.keys();
+    }
+
+    public fn __len__() -> int {
+        return len(self->map);
+    }
+
+    public fn __str__() -> str {
+        return str(self->map);
+    }
+
+    public fn toString() -> str {
+        return str(self->map);
+    }
+}

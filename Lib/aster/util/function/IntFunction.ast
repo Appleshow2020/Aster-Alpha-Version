@@ -1,0 +1,5 @@
+/* aster.util.function.IntFunction: Java IntFunction<R> shape. */
+
+export interface IntFunction {
+    fn apply(int value) -> any;
+}

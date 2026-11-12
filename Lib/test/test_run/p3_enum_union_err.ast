@@ -1,0 +1,8 @@
+import System.stdout.*;
+
+enum Shape {
+    Circle(float r),
+    Rect(float w, float h)
+}
+
+println(Shape.Circle(1.0, 2.0));

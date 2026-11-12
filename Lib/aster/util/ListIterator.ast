@@ -1,0 +1,15 @@
+/* aster.util.ListIterator: Java ListIterator 계약.
+
+   인터페이스 상속(`extends`)이 없으므로 Iterator의 메서드도 다시 선언한다. */
+
+export interface ListIterator {
+    fn hasNext() -> bool;
+    fn next() -> any;
+    fn remove() -> void;
+    fn hasPrevious() -> bool;
+    fn previous() -> any;
+    fn nextIndex() -> int;
+    fn previousIndex() -> int;
+    fn add(any value) -> void;
+    fn set(any value) -> void;
+}

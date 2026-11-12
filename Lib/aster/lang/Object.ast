@@ -1,0 +1,33 @@
+/* aster.lang.Object: root of the java.lang-style object hierarchy.
+   equals is identity by default; hashCode is derived from the runtime
+   type name so it stays stable across runs. */
+
+export class Object {
+    constructor() {}
+
+    public fn equals(Object? o) -> bool {
+        if (not o) {
+            return false;
+        }
+        return self == o;
+    }
+
+    public fn hashCode() -> int {
+        str name = typeName(self);
+        int h = 0;
+        int i = 0;
+        while (i < name.length()) {
+            h = (h * 31 + ord(name.charAt(i))) % 1000000007;
+            i = i + 1;
+        }
+        return h;
+    }
+
+    public fn toString() -> str {
+        return typeName(self) + "@" + str(self->hashCode());
+    }
+
+    public fn __str__() -> str {
+        return self->toString();
+    }
+}

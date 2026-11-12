@@ -1,0 +1,55 @@
+/* aster.util.OptionalDouble: float 전용 Optional. */
+
+export class OptionalDouble {
+    private float value;
+    private bool present;
+
+    constructor() {
+        self->value = 0.0;
+        self->present = false;
+    }
+
+    public static fn empty() -> OptionalDouble {
+        return new OptionalDouble();
+    }
+
+    public static fn of(float value) -> OptionalDouble {
+        OptionalDouble opt = new OptionalDouble();
+        opt.value = value;
+        opt.present = true;
+        return opt;
+    }
+
+    public fn getAsDouble() -> float {
+        if (not self->present) {
+            throw "no value present" as NoSuchElementError;
+        }
+        return self->value;
+    }
+
+    public fn isPresent() -> bool {
+        return self->present;
+    }
+
+    public fn isEmpty() -> bool {
+        return not self->present;
+    }
+
+    public fn orElse(float other) -> float {
+        if (self->present) {
+            return self->value;
+        }
+        return other;
+    }
+
+    public fn toString() -> str {
+        if (not self->present) {
+            return "OptionalDouble.empty";
+        }
+        return "OptionalDouble[" + str(self->value) + "]";
+    }
+
+    public fn __str__() -> str {
+        return self->toString();
+    }
+}

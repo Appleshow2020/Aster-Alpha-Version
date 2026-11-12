@@ -1,0 +1,5 @@
+import System.stdout.*;
+fn f() -> list { return [1, "a"]; }
+fn main() -> void {
+    println(f());
+}

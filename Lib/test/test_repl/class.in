@@ -1,0 +1,10 @@
+class P {
+    int v;
+    constructor(int n) { self->v = n; }
+    public fn twice() -> int { return self->v * 2; }
+}
+P* p = new P(21)
+p->twice()
+p->v
+p
+:quit

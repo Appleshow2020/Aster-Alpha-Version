@@ -1,0 +1,76 @@
+/* aster.util.Locale: 언어/국가 로케일 값.
+
+   태그는 `언어_국가`(예: "en_US") 형태다. 상수는 문자열이고,
+   인스턴스는 `Locale.of("ko_KR")`로 만든다. */
+
+export class Locale {
+    public static str ENGLISH = "en";
+    public static str US = "en_US";
+    public static str UK = "en_GB";
+    public static str KOREAN = "ko";
+    public static str KOREA = "ko_KR";
+    public static str JAPANESE = "ja";
+    public static str JAPAN = "ja_JP";
+    public static str FRENCH = "fr";
+    public static str FRANCE = "fr_FR";
+    public static str GERMAN = "de";
+    public static str GERMANY = "de_DE";
+    public static str ROOT = "";
+
+    private str language;
+    private str country;
+
+    constructor(str tag) {
+        int cut = tag.find("_");
+        if (cut < 0) {
+            self->language = tag.lower();
+            self->country = "";
+        }
+        else {
+            self->language = tag.substring(0, cut).lower();
+            self->country = tag.substring(cut + 1).upper();
+        }
+    }
+
+    public static fn of(str tag) -> Locale {
+        return new Locale(tag);
+    }
+
+    public fn getLanguage() -> str {
+        return self->language;
+    }
+
+    public fn getCountry() -> str {
+        return self->country;
+    }
+
+    public fn toString() -> str {
+        if (self->country.length() == 0) {
+            return self->language;
+        }
+        return self->language + "_" + self->country;
+    }
+
+    /* BCP-47 형태: "en_US" -> "en-US". */
+    public fn toLanguageTag() -> str {
+        if (self->country.length() == 0) {
+            return self->language;
+        }
+        return self->language + "-" + self->country;
+    }
+
+    public fn equals(Locale* other) -> bool {
+        if (other is null) {
+            return false;
+        }
+        return self->toString() == other->toString();
+    }
+
+    public fn hashCode() -> int {
+        return self->toString().length() * 31 + self->language.length();
+    }
+
+    public fn __str__() -> str {
+        return self->toString();
+    }
+}

@@ -1,0 +1,200 @@
+/* aster.util.Objects: Java Objects 스타일 정적 헬퍼.
+
+   null 안전 비교/해시/문자열화. 비트 연산이 없으므로 해시는 산술로 조합한다.
+   컬렉션 종류는 typeName()으로 판별한다(`is list` 같은 타입 검사는 없다). */
+
+const int HASH_MOD = 2147483647;
+
+fn textHash(str s) -> int {
+    int acc = 7;
+    int i = 0;
+    while (i < s.length()) {
+        acc = (acc * 31 + ord(s.charAt(i))) % HASH_MOD;
+        i = i + 1;
+    }
+    return acc;
+}
+
+export class Objects {
+    public static fn isNull(any value) -> bool {
+        return value is null;
+    }
+
+    public static fn nonNull(any value) -> bool {
+        return value is not null;
+    }
+
+    public static fn equals(any a, any b) -> bool {
+        if (a is null and b is null) {
+            return true;
+        }
+        if (a is null or b is null) {
+            return false;
+        }
+        return a == b;
+    }
+
+    public static fn deepEquals(any a, any b) -> bool {
+        if (a is null and b is null) {
+            return true;
+        }
+        if (a is null or b is null) {
+            return false;
+        }
+        if (typeName(a) == "list" and typeName(b) == "list") {
+            if (len(a) != len(b)) {
+                return false;
+            }
+            int i = 0;
+            while (i < len(a)) {
+                if (not Objects.deepEquals(a[i], b[i])) {
+                    return false;
+                }
+                i = i + 1;
+            }
+            return true;
+        }
+        return a == b;
+    }
+
+    public static fn requireNonNull(any value) -> any {
+        if (value is null) {
+            throw "required value was null" as NullPointerError;
+        }
+        return value;
+    }
+
+    public static fn requireNonNull(any value, str message) -> any {
+        if (value is null) {
+            throw message as NullPointerError;
+        }
+        return value;
+    }
+
+    public static fn toString(any value) -> str {
+        if (value is null) {
+            return "null";
+        }
+        return str(value);
+    }
+
+    public static fn hashCode(any value) -> int {
+        if (value is null) {
+            return 0;
+        }
+        str kind = typeName(value);
+        if (kind == "int") {
+            int n = (int)value % HASH_MOD;
+            if (n < 0) {
+                n = -n;
+            }
+            return n;
+        }
+        if (kind == "bool") {
+            if (bool(value)) {
+                return 1231;
+            }
+            return 1237;
+        }
+        if (kind == "float") {
+            int n = (int)(float(value) * 1000003.0) % HASH_MOD;
+            if (n < 0) {
+                n = -n;
+            }
+            return n;
+        }
+        if (kind == "str") {
+            return textHash((str)value);
+        }
+        if (kind == "list" or kind == "tuple") {
+            int acc = 1;
+            for (any item in value) {
+                acc = (acc * 31 + Objects.hashCode(item)) % HASH_MOD;
+            }
+            return acc;
+        }
+        if (kind == "dict") {
+            int acc = 3;
+            for (any k in value.keys()) {
+                acc = (acc * 31 + Objects.hashCode(k)) % HASH_MOD;
+                acc = (acc * 31 + Objects.hashCode(value[k])) % HASH_MOD;
+            }
+            return acc;
+        }
+        if (kind == "set" or kind == "frozenset") {
+            int acc = 5;
+            for (any item in value) {
+                acc = (acc + Objects.hashCode(item)) % HASH_MOD;
+            }
+            return acc;
+        }
+        return textHash(str(value));
+    }
+
+    public static fn hash(any value) -> int {
+        return Objects.hashCode(value);
+    }
+
+    public static fn hash(any a, any b) -> int {
+        return (Objects.hashCode(a) * 31 + Objects.hashCode(b)) % HASH_MOD;
+    }
+
+    public static fn hashList(list<any> values) -> int {
+        int acc = 1;
+        int i = 0;
+        while (i < len(values)) {
+            acc = (acc * 31 + Objects.hashCode(values[i])) % HASH_MOD;
+            i = i + 1;
+        }
+        return acc;
+    }
+
+    /* int/float/str/bool을 비교한다. 그 밖의 타입은 TypeError. */
+    public static fn compare(any a, any b) -> int {
+        if (a is null and b is null) {
+            return 0;
+        }
+        if (a is null) {
+            return -1;
+        }
+        if (b is null) {
+            return 1;
+        }
+        str ka = typeName(a);
+        str kb = typeName(b);
+        if (ka == "str" and kb == "str") {
+            str x = (str)a;
+            str y = (str)b;
+            if (x == y) {
+                return 0;
+            }
+            if (x < y) {
+                return -1;
+            }
+            return 1;
+        }
+        if ((ka == "int" or ka == "float") and (kb == "int" or kb == "float")) {
+            float x = float(a);
+            float y = float(b);
+            if (x == y) {
+                return 0;
+            }
+            if (x < y) {
+                return -1;
+            }
+            return 1;
+        }
+        if (ka == "bool" and kb == "bool") {
+            bool x = bool(a);
+            bool y = bool(b);
+            if (x == y) {
+                return 0;
+            }
+            if (x == false) {
+                return -1;
+            }
+            return 1;
+        }
+        throw "values are not comparable" as TypeError;
+    }
+}

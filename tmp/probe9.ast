@@ -1,0 +1,8 @@
+import System.stdout.*;
+class C {
+    public str v;
+    constructor(any x) { self->v = str(x); }
+}
+println(new C(3.5)->v);
+println(new C(7)->v);
+println(new C("x")->v);

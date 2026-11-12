@@ -2,9 +2,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include "internal/object.h"
+#include "internal/unicode_ranges.h"
 
-static void *xmalloc(size_t n)
-{
+static void *xmalloc(size_t n) {
     void *p = malloc(n ? n : 1);
     if (!p) {
         fputs("out of memory\n", stderr);
@@ -13,8 +13,7 @@ static void *xmalloc(size_t n)
     return p;
 }
 
-uint32_t Aster_UTF8_Decode(const char *s, size_t n, size_t *advance)
-{
+uint32_t Aster_UTF8_Decode(const char *s, size_t n, size_t *advance) {
     unsigned char c = (unsigned char)s[0];
     uint32_t cp;
 
@@ -49,8 +48,7 @@ uint32_t Aster_UTF8_Decode(const char *s, size_t n, size_t *advance)
     return c;
 }
 
-size_t Aster_UTF8_Encode(uint32_t cp, char out[4])
-{
+size_t Aster_UTF8_Encode(uint32_t cp, char out[4]) {
     if (cp < 0x80) {
         out[0] = (char)cp;
         return 1;
@@ -73,8 +71,7 @@ size_t Aster_UTF8_Encode(uint32_t cp, char out[4])
     return 4;
 }
 
-static size_t count_code_points(const char *s, size_t n)
-{
+static size_t count_code_points(const char *s, size_t n) {
     size_t i = 0, count = 0;
     while (i < n) {
         size_t adv;
@@ -85,8 +82,7 @@ static size_t count_code_points(const char *s, size_t n)
     return count;
 }
 
-size_t AsterString_ByteOffset(const AsterString *s, size_t cp_index)
-{
+size_t AsterString_ByteOffset(const AsterString *s, size_t cp_index) {
     size_t i = 0, cp = 0;
     while (i < s->length && cp < cp_index) {
         size_t adv;
@@ -97,8 +93,7 @@ size_t AsterString_ByteOffset(const AsterString *s, size_t cp_index)
     return i;
 }
 
-size_t AsterString_CodePointIndex(const AsterString *s, size_t byte_offset)
-{
+size_t AsterString_CodePointIndex(const AsterString *s, size_t byte_offset) {
     size_t i = 0, cp = 0;
     if (byte_offset > s->length)
         byte_offset = s->length;
@@ -111,8 +106,7 @@ size_t AsterString_CodePointIndex(const AsterString *s, size_t byte_offset)
     return cp;
 }
 
-uint32_t Aster_ToUpperCP(uint32_t cp)
-{
+uint32_t Aster_ToUpperCP(uint32_t cp) {
     if (cp >= 'a' && cp <= 'z')
         return cp - 0x20;
     if (cp >= 0xE0 && cp <= 0xFE && cp != 0xF7)
@@ -123,6 +117,16 @@ uint32_t Aster_ToUpperCP(uint32_t cp)
         return 'I';
     if (cp == 0x17F)
         return 'S';
+    /* 라틴 확장 B: 이중음자 (대문자/제목/소문자 세 짝) */
+    if (cp >= 0x1C4 && cp <= 0x1CC) {
+        if (cp == 0x1C6 || cp == 0x1C9 || cp == 0x1CC)
+            return cp - 2;
+        if (cp == 0x1C5 || cp == 0x1C8 || cp == 0x1CB)
+            return cp - 1;
+        return cp;
+    }
+    if (cp == 0x1F2 || cp == 0x1F3)
+        return 0x1F1;
     if (cp >= 0x100 && cp <= 0x137)
         return (cp % 2 == 0) ? cp : cp - 1;
     if (cp >= 0x139 && cp <= 0x148)
@@ -141,21 +145,67 @@ uint32_t Aster_ToUpperCP(uint32_t cp)
         return cp - 0x20;
     if (cp >= 0x450 && cp <= 0x45F)
         return cp - 0x50;
+    /* 키릴 확장: 짝수 = 대문자 구간 */
+    if (cp >= 0x460 && cp <= 0x481)
+        return (cp % 2 == 1) ? cp - 1 : cp;
+    if (cp >= 0x48A && cp <= 0x4BF)
+        return (cp % 2 == 1) ? cp - 1 : cp;
+    if (cp == 0x4CF)
+        return 0x4C0;
+    /* 키릴 확장: 홀수 = 대문자 구간 */
+    if (cp >= 0x4C1 && cp <= 0x4CE)
+        return (cp % 2 == 0) ? cp - 1 : cp;
+    if (cp >= 0x4D0 && cp <= 0x52F)
+        return (cp % 2 == 1) ? cp - 1 : cp;
+    /* 라틴 확장 추가 */
+    if (cp >= 0x1CD && cp <= 0x1DC)
+        return (cp % 2 == 0) ? cp : cp - 1;
+    if (cp >= 0x1DE && cp <= 0x1EF)
+        return (cp % 2 == 0) ? cp : cp - 1;
+    if (cp >= 0x1F4 && cp <= 0x1F5)
+        return (cp % 2 == 0) ? cp : cp - 1;
+    if (cp >= 0x1F8 && cp <= 0x21F)
+        return (cp % 2 == 0) ? cp : cp - 1;
+    if (cp >= 0x222 && cp <= 0x233)
+        return (cp % 2 == 0) ? cp : cp - 1;
+    if (cp >= 0x246 && cp <= 0x24F)
+        return (cp % 2 == 0) ? cp : cp - 1;
+    /* 라틴 확장 추가 */
+    if (cp >= 0x1E00 && cp <= 0x1E95)
+        return (cp % 2 == 1) ? cp - 1 : cp;
+    if (cp >= 0x1EA0 && cp <= 0x1EFF)
+        return (cp % 2 == 1) ? cp - 1 : cp;
+    /* 체로키 */
+    if (cp >= 0xAB70 && cp <= 0xABBF)
+        return cp - 0x97D0;
+    /* 키릴 확장 B */
+    if (cp >= 0xA640 && cp <= 0xA66D)
+        return (cp % 2 == 0) ? cp : cp - 1;
+    if (cp >= 0xA680 && cp <= 0xA69B)
+        return (cp % 2 == 0) ? cp : cp - 1;
+    /* 아르메니아 */
+    if (cp >= 0x561 && cp <= 0x586)
+        return cp - 0x30;
+    /* 전각 라틴 */
+    if (cp >= 0xFF41 && cp <= 0xFF5A)
+        return cp - 0x20;
+    /* 데저렛 */
+    if (cp >= 0x10428 && cp <= 0x1044F)
+        return cp - 0x28;
     return cp;
 }
 
-uint32_t Aster_ToLowerCP(uint32_t cp)
-{
+uint32_t Aster_ToLowerCP(uint32_t cp) {
     if (cp >= 'A' && cp <= 'Z')
         return cp + 0x20;
     if (cp >= 0xC0 && cp <= 0xDE && cp != 0xD7)
         return cp + 0x20;
     if (cp == 0x178)
         return 0xFF;
+    if (cp == 0x130 || cp == 0x131)
+        return cp;
     if (cp >= 0x100 && cp <= 0x137)
         return (cp % 2 == 1) ? cp : cp + 1;
-    if (cp == 0x130)
-        return cp;
     if (cp >= 0x139 && cp <= 0x148)
         return (cp % 2 == 0) ? cp : cp + 1;
     if (cp == 0x149 || cp == 0x138)
@@ -164,25 +214,80 @@ uint32_t Aster_ToLowerCP(uint32_t cp)
         return (cp % 2 == 1) ? cp : cp + 1;
     if (cp >= 0x179 && cp <= 0x17E)
         return (cp % 2 == 0) ? cp : cp + 1;
+    /* 라틴 확장 B: 이중음자 (대문자/제목/소문자 세 짝) */
+    if (cp >= 0x1C4 && cp <= 0x1CC) {
+        if (cp == 0x1C4 || cp == 0x1C7 || cp == 0x1CA)
+            return cp + 2;
+        if (cp == 0x1C5 || cp == 0x1C8 || cp == 0x1CB)
+            return cp + 1;
+        return cp;
+    }
+    if (cp == 0x1F1 || cp == 0x1F2)
+        return 0x1F3;
+    if (cp >= 0x1CD && cp <= 0x1DC)
+        return (cp % 2 == 0) ? cp + 1 : cp;
+    if (cp >= 0x1DE && cp <= 0x1EF)
+        return (cp % 2 == 0) ? cp + 1 : cp;
+    if (cp >= 0x1F4 && cp <= 0x1F5)
+        return (cp % 2 == 0) ? cp + 1 : cp;
+    if (cp >= 0x1F8 && cp <= 0x21F)
+        return (cp % 2 == 0) ? cp + 1 : cp;
+    if (cp >= 0x222 && cp <= 0x233)
+        return (cp % 2 == 0) ? cp + 1 : cp;
+    if (cp >= 0x246 && cp <= 0x24F)
+        return (cp % 2 == 0) ? cp + 1 : cp;
     if (cp >= 0x391 && cp <= 0x3A9 && cp != 0x3A2)
         return cp + 0x20;
     if (cp >= 0x410 && cp <= 0x42F)
         return cp + 0x20;
     if (cp >= 0x400 && cp <= 0x40F)
         return cp + 0x50;
+    /* 키릴 확장: 짝수 = 대문자 구간 */
+    if (cp >= 0x460 && cp <= 0x481)
+        return (cp % 2 == 0) ? cp + 1 : cp;
+    if (cp >= 0x48A && cp <= 0x4BF)
+        return (cp % 2 == 0) ? cp + 1 : cp;
+    if (cp == 0x4C0)
+        return 0x4CF;
+    /* 키릴 확장: 홀수 = 대문자 구간 */
+    if (cp >= 0x4C1 && cp <= 0x4CE)
+        return (cp % 2 == 1) ? cp + 1 : cp;
+    if (cp >= 0x4D0 && cp <= 0x52F)
+        return (cp % 2 == 0) ? cp + 1 : cp;
+    /* 라틴 확장 추가 */
+    if (cp >= 0x1E00 && cp <= 0x1E95)
+        return (cp % 2 == 0) ? cp + 1 : cp;
+    if (cp >= 0x1EA0 && cp <= 0x1EFF)
+        return (cp % 2 == 0) ? cp + 1 : cp;
+    /* 체로키 */
+    if (cp >= 0x13A0 && cp <= 0x13F5)
+        return cp + 0x97D0;
+    /* 키릴 확장 B */
+    if (cp >= 0xA640 && cp <= 0xA66D)
+        return (cp % 2 == 0) ? cp + 1 : cp;
+    if (cp >= 0xA680 && cp <= 0xA69B)
+        return (cp % 2 == 0) ? cp + 1 : cp;
+    /* 아르메니아 */
+    if (cp >= 0x531 && cp <= 0x556)
+        return cp + 0x30;
+    /* 전각 라틴 */
+    if (cp >= 0xFF21 && cp <= 0xFF3A)
+        return cp + 0x20;
+    /* 데저렛 */
+    if (cp >= 0x10400 && cp <= 0x10427)
+        return cp + 0x28;
     return cp;
 }
 
-int Aster_IsSpaceCP(uint32_t cp)
-{
-    return (cp >= 0x09 && cp <= 0x0D) || cp == 0x20 || cp == 0x85 ||
+int Aster_IsSpaceCP(uint32_t cp) {
+    return (cp >= 0x09 && cp <= 0x0D) || (cp >= 0x1C && cp <= 0x1F) ||
+           cp == 0x20 || cp == 0x85 ||
            cp == 0xA0 || cp == 0x1680 || (cp >= 0x2000 && cp <= 0x200A) ||
            cp == 0x2028 || cp == 0x2029 || cp == 0x202F || cp == 0x205F ||
            cp == 0x3000;
 }
 
-AsterString *AsterString_FromUTF8(const char *s, size_t n)
-{
+AsterString *AsterString_FromUTF8(const char *s, size_t n) {
     AsterString *o = xmalloc(sizeof(AsterString) + n + 1);
     o->ob.kind = ASTER_OBJ_STRING;
     o->length = n;
@@ -193,13 +298,48 @@ AsterString *AsterString_FromUTF8(const char *s, size_t n)
     return o;
 }
 
-AsterString *AsterString_FromCStr(const char *s)
-{
+AsterString *AsterString_FromCStr(const char *s) {
     return AsterString_FromUTF8(s, strlen(s));
 }
 
-void Aster_StringRepr(FILE *out, const char *s, size_t n)
-{
+AsterString *AsterString_Concat(const AsterString *a, const AsterString *b) {
+    size_t n = a->length + b->length;
+    AsterString *o = xmalloc(sizeof(AsterString) + n + 1);
+
+    o->ob.kind = ASTER_OBJ_STRING;
+    o->length = n;
+    o->cp_length = a->cp_length + b->cp_length;
+    if (a->length)
+        memcpy(o->data, a->data, a->length);
+    if (b->length)
+        memcpy(o->data + a->length, b->data, b->length);
+    o->data[n] = 0;
+    return o;
+}
+
+static int cp_in_ranges(const AsterCPRange *r, size_t n, uint32_t cp) {
+    size_t lo = 0, hi = n;
+    while (lo < hi) {
+        size_t mid = lo + (hi - lo) / 2;
+        if (cp < r[mid].lo)
+            hi = mid;
+        else if (cp > r[mid].hi)
+            lo = mid + 1;
+        else
+            return 1;
+    }
+    return 0;
+}
+
+int Aster_Str_NeedsEscape(uint32_t cp) {
+    if (cp < 0x20 || cp == 0x7f)
+        return 1;
+    return cp_in_ranges(_AsterNonPrintRanges,
+                        sizeof _AsterNonPrintRanges / sizeof _AsterNonPrintRanges[0],
+                        cp);
+}
+
+void Aster_StringRepr(FILE *out, const char *s, size_t n) {
     int quote = '\'';
     int has_single = 0, has_double = 0;
     size_t i;
@@ -214,34 +354,47 @@ void Aster_StringRepr(FILE *out, const char *s, size_t n)
         quote = '"';
 
     fputc(quote, out);
-    for (i = 0; i < n; i++) {
-        unsigned char c = (unsigned char)s[i];
-        if (c == (unsigned char)quote || c == '\\') {
-            fputc('\\', out);
-            fputc(c, out);
+    for (i = 0; i < n;) {
+        size_t adv = 1;
+        uint32_t cp = Aster_UTF8_Decode(s + i, n - i, &adv);
+        if (adv == 1 && (unsigned char)s[i] >= 0x80) {
+            /* 잘못된 UTF-8 바이트는 바이트 단위로 이스케이프한다. */
+            fprintf(out, "\\x%02x", (unsigned char)s[i]);
+            i++;
+            continue;
         }
-        else if (c == '\n') {
+        if (cp == (uint32_t)quote || cp == '\\') {
+            fputc('\\', out);
+            fputc((int)cp, out);
+        }
+        else if (cp == '\n') {
             fputs("\\n", out);
         }
-        else if (c == '\r') {
+        else if (cp == '\r') {
             fputs("\\r", out);
         }
-        else if (c == '\t') {
+        else if (cp == '\t') {
             fputs("\\t", out);
         }
-        else if (c < 0x20 || c == 0x7f) {
-            fprintf(out, "\\x%02x", c);
+        else if (Aster_Str_NeedsEscape(cp)) {
+            /* Python repr과 같이 출력할 수 없는 문자는 이스케이프한다. */
+            if (cp <= 0xff)
+                fprintf(out, "\\x%02x", cp);
+            else if (cp <= 0xffff)
+                fprintf(out, "\\u%04x", cp);
+            else
+                fprintf(out, "\\U%08x", cp);
         }
         else {
-            fputc(c, out);
+            fwrite(s + i, 1, adv, out);
         }
+        i += adv;
     }
     fputc(quote, out);
 }
 
 /* Python repr과 같이 왕복 변환이 되는 가장 짧은 표기를 찾는다. */
-void Aster_FormatDouble(char *buf, size_t size, double value)
-{
+void Aster_FormatDouble(char *buf, size_t size, double value) {
     int precision;
     char *e;
 
@@ -265,8 +418,7 @@ void Aster_FormatDouble(char *buf, size_t size, double value)
         strcat(buf, ".0");
 }
 
-void Aster_Value_Repr(FILE *out, Value v)
-{
+void Aster_Value_Repr(FILE *out, Value v) {
     switch (v.tag) {
     case VT_NULL:
         fputs("None", out);

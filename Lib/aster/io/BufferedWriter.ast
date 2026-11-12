@@ -1,0 +1,40 @@
+/* aster.io.BufferedWriter: 출력을 모았다가 flush할 때 대상 Writer로 보낸다.
+   상속 필드 대신 자체 버퍼를 쓴다. */
+
+import aster.io.Writer;
+
+export class BufferedWriter extends Writer {
+    private Writer target;
+    private str buffer;
+
+    constructor(Writer target) {
+        super();
+        self->target = target;
+        self->buffer = "";
+    }
+
+    public fn write(str text) -> void {
+        self->buffer = self->buffer + text;
+    }
+
+    public fn write(int c) -> void {
+        self->write(chr(c));
+    }
+
+    public fn newLine() -> void {
+        self->write("\n");
+    }
+
+    public fn flush() -> void {
+        if (self->buffer.length() > 0) {
+            self->target.write(self->buffer);
+            self->buffer = "";
+        }
+        self->target.flush();
+    }
+
+    public fn close() -> void {
+        self->flush();
+        self->target.close();
+    }
+}

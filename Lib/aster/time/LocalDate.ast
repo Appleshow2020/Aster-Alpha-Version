@@ -1,0 +1,317 @@
+/* aster.time.LocalDate: 시간대가 없는 날짜 (ISO-8601 yyyy-MM-dd).
+   서기 1..9999년을 안정적으로 다루며, 에포크 일 변환은 Howard Hinnant의
+   civil_from_days / days_from_civil 정수 알고리즘을 쓴다. */
+
+import aster.time.DayOfWeek;
+import aster.time.Month;
+from aster.time.DayOfWeek import dayOfWeekOf;
+from aster.time.Month import monthOf;
+import aster.time.LocalTime;
+import aster.time.LocalDateTime;
+import aster.time.DateTimeParseException;
+
+extern fn _aster_now_ms() -> int;
+extern fn _aster_format_time(int epochSeconds, str pattern) -> str;
+
+fn _isLeap(int year) -> bool {
+    if (year % 4 != 0) { return false; }
+    if (year % 100 != 0) { return true; }
+    return year % 400 == 0;
+}
+
+fn _lengthOfMonth(int year, int month) -> int {
+    if (month == 2) {
+        if (_isLeap(year)) { return 29; }
+        return 28;
+    }
+    if (month == 4 or month == 6 or month == 9 or month == 11) {
+        return 30;
+    }
+    return 31;
+}
+
+fn _isDigit(str ch) -> bool {
+    if (ch.length() == 0) { return false; }
+    return "0123456789".find(ch) >= 0;
+}
+
+fn _isDigits(str text) -> bool {
+    if (text.length() == 0) { return false; }
+    int i = 0;
+    while (i < text.length()) {
+        if (not _isDigit(text.charAt(i))) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
+fn _pad2(int value) -> str {
+    if (value < 10) { return "0" + str(value); }
+    return str(value);
+}
+
+fn _pad4(int value) -> str {
+    if (value < 10) { return "000" + str(value); }
+    if (value < 100) { return "00" + str(value); }
+    if (value < 1000) { return "0" + str(value); }
+    return str(value);
+}
+
+fn _checkDate(int year, int month, int day) -> void {
+    if (year < 1 or year > 9999) {
+        throw ("Invalid value for Year: " + str(year)) as ValueError;
+    }
+    if (month < 1 or month > 12) {
+        throw ("Invalid value for MonthOfYear: " + str(month)) as ValueError;
+    }
+    if (day < 1 or day > _lengthOfMonth(year, month)) {
+        throw ("Invalid date: " + str(year) + "-" + str(month) + "-" + str(day)) as ValueError;
+    }
+}
+
+fn _parseError(str text) -> void {
+    throw ("Text '" + text + "' cannot be parsed as a LocalDate") as DateTimeParseException;
+}
+
+export class LocalDate {
+    private int yearValue;
+    private int monthValue;
+    private int dayValue;
+
+    constructor(int year, int month, int day) {
+        _checkDate(year, month, day);
+        self->yearValue = year;
+        self->monthValue = month;
+        self->dayValue = day;
+    }
+
+    /* 로컬 시간대의 오늘 날짜. */
+    public static fn now() -> LocalDate {
+        str text = _aster_format_time(_aster_now_ms() / 1000, "%Y %m %d");
+        list<str> parts = text.split(" ");
+        if (len(parts) != 3) {
+            throw "Cannot read the local date" as ValueError;
+        }
+        return LocalDate.of(parts[0].to_int(), parts[1].to_int(), parts[2].to_int());
+    }
+
+    public static fn of(int year, int month, int day) -> LocalDate {
+        return new LocalDate(year, month, day);
+    }
+
+    /* 1970-01-01을 0으로 하는 에포크 일. */
+    public static fn ofEpochDay(int epochDay) -> LocalDate {
+        int z = epochDay + 719468;
+        int era = z // 146097;
+        int doe = z - era * 146097;
+        int yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+        int year = yoe + era * 400;
+        int doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+        int mp = (5 * doy + 2) / 153;
+        int day = doy - (153 * mp + 2) / 5 + 1;
+        int month = mp + 3;
+        if (mp >= 10) { month = mp - 9; }
+        if (month <= 2) { year = year + 1; }
+        return new LocalDate(year, month, day);
+    }
+
+    /* yyyy-MM-dd 형식. */
+    public static fn parse(str text) -> LocalDate {
+        if (text.length() != 10) { _parseError(text); }
+        if (text.charAt(4) != "-" or text.charAt(7) != "-") { _parseError(text); }
+        str ys = text.substring(0, 4);
+        str ms = text.substring(5, 7);
+        str ds = text.substring(8, 10);
+        if (not _isDigits(ys) or not _isDigits(ms) or not _isDigits(ds)) {
+            _parseError(text);
+        }
+        int year = ys.to_int();
+        int month = ms.to_int();
+        int day = ds.to_int();
+        if (year < 1 or year > 9999 or month < 1 or month > 12
+            or day < 1 or day > _lengthOfMonth(year, month)) {
+            _parseError(text);
+        }
+        return new LocalDate(year, month, day);
+    }
+
+    public static fn isLeapYear(int year) -> bool {
+        return _isLeap(year);
+    }
+
+    public fn getYear() -> int {
+        return self->yearValue;
+    }
+
+    public fn getMonthValue() -> int {
+        return self->monthValue;
+    }
+
+    public fn getMonth() -> Month {
+        return monthOf(self->monthValue);
+    }
+
+    public fn getDayOfMonth() -> int {
+        return self->dayValue;
+    }
+
+    public fn getDayOfYear() -> int {
+        return self->toEpochDay() - LocalDate.of(self->yearValue, 1, 1).toEpochDay() + 1;
+    }
+
+    public fn getDayOfWeek() -> DayOfWeek {
+        int value = (self->toEpochDay() + 3) % 7 + 1;
+        return dayOfWeekOf(value);
+    }
+
+    public fn lengthOfMonth() -> int {
+        return _lengthOfMonth(self->yearValue, self->monthValue);
+    }
+
+    public fn lengthOfYear() -> int {
+        if (_isLeap(self->yearValue)) { return 366; }
+        return 365;
+    }
+
+    public fn isLeapYear() -> bool {
+        return _isLeap(self->yearValue);
+    }
+
+    public fn toEpochDay() -> int {
+        int year = self->yearValue;
+        int month = self->monthValue;
+        int day = self->dayValue;
+        if (month <= 2) { year = year - 1; }
+        int era = year // 400;
+        int yoe = year - era * 400;
+        int mp = month + 9;
+        if (month > 2) { mp = month - 3; }
+        int doy = (153 * mp + 2) / 5 + day - 1;
+        int doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+        return era * 146097 + doe - 719468;
+    }
+
+    public fn plusDays(int days) -> LocalDate {
+        return LocalDate.ofEpochDay(self->toEpochDay() + days);
+    }
+
+    public fn plusWeeks(int weeks) -> LocalDate {
+        return self->plusDays(weeks * 7);
+    }
+
+    public fn plusMonths(int months) -> LocalDate {
+        int total = self->yearValue * 12 + (self->monthValue - 1) + months;
+        int year = total // 12;
+        int month = total % 12 + 1;
+        int day = self->dayValue;
+        int limit = _lengthOfMonth(year, month);
+        if (day > limit) { day = limit; }
+        return new LocalDate(year, month, day);
+    }
+
+    public fn plusYears(int years) -> LocalDate {
+        int year = self->yearValue + years;
+        int day = self->dayValue;
+        if (self->monthValue == 2 and day == 29 and not _isLeap(year)) {
+            day = 28;
+        }
+        return new LocalDate(year, self->monthValue, day);
+    }
+
+    public fn minusDays(int days) -> LocalDate {
+        return self->plusDays(-days);
+    }
+
+    public fn minusWeeks(int weeks) -> LocalDate {
+        return self->plusWeeks(-weeks);
+    }
+
+    public fn minusMonths(int months) -> LocalDate {
+        return self->plusMonths(-months);
+    }
+
+    public fn minusYears(int years) -> LocalDate {
+        return self->plusYears(-years);
+    }
+
+    public fn withYear(int year) -> LocalDate {
+        int day = self->dayValue;
+        if (self->monthValue == 2 and day == 29 and not _isLeap(year)) {
+            day = 28;
+        }
+        return new LocalDate(year, self->monthValue, day);
+    }
+
+    public fn withMonth(int month) -> LocalDate {
+        if (month < 1 or month > 12) {
+            throw ("Invalid value for MonthOfYear: " + str(month)) as ValueError;
+        }
+        int day = self->dayValue;
+        int limit = _lengthOfMonth(self->yearValue, month);
+        if (day > limit) { day = limit; }
+        return new LocalDate(self->yearValue, month, day);
+    }
+
+    public fn withDayOfMonth(int day) -> LocalDate {
+        return new LocalDate(self->yearValue, self->monthValue, day);
+    }
+
+    public fn isBefore(LocalDate other) -> bool {
+        return self->toEpochDay() < other.toEpochDay();
+    }
+
+    public fn isAfter(LocalDate other) -> bool {
+        return self->toEpochDay() > other.toEpochDay();
+    }
+
+    public fn isEqual(LocalDate other) -> bool {
+        return self->toEpochDay() == other.toEpochDay();
+    }
+
+    public fn compareTo(LocalDate other) -> int {
+        if (self->yearValue != other.yearValue) {
+            if (self->yearValue < other.yearValue) { return -1; }
+            return 1;
+        }
+        if (self->monthValue != other.monthValue) {
+            if (self->monthValue < other.monthValue) { return -1; }
+            return 1;
+        }
+        if (self->dayValue != other.dayValue) {
+            if (self->dayValue < other.dayValue) { return -1; }
+            return 1;
+        }
+        return 0;
+    }
+
+    public fn equals(LocalDate other) -> bool {
+        return self->yearValue == other.yearValue
+            and self->monthValue == other.monthValue
+            and self->dayValue == other.dayValue;
+    }
+
+    public fn hashCode() -> int {
+        return self->yearValue * 10000 + self->monthValue * 100 + self->dayValue;
+    }
+
+    public fn toString() -> str {
+        return _pad4(self->yearValue) + "-" + _pad2(self->monthValue)
+             + "-" + _pad2(self->dayValue);
+    }
+
+    public fn __str__() -> str {
+        return self->toString();
+    }
+
+    public fn atStartOfDay() -> LocalDateTime {
+        return LocalDateTime.of(self, LocalTime.of(0, 0));
+    }
+
+    public fn atTime(LocalTime time) -> LocalDateTime {
+        return LocalDateTime.of(self, time);
+    }
+
+    public fn atTime(int hour, int minute) -> LocalDateTime {
+        return LocalDateTime.of(self, LocalTime.of(hour, minute));
+    }
+}

@@ -1,0 +1,179 @@
+/* aster.util.BitSet: bool 리스트 위의 비트 집합.
+
+   set/clear/flip은 인덱스를 필요할 때까지 false로 늘린 뒤 동작한다.
+   and/or/xor/andNot은 자기 자신을 제자리에서 바꾼다. */
+
+export class BitSet {
+    private list<bool> bits;
+
+    constructor() {
+        self->bits = [];
+    }
+
+    private fn ensure(int index) -> void {
+        while (len(self->bits) <= index) {
+            self->bits.append(false);
+        }
+    }
+
+    public fn set(int index) -> void {
+        if (index < 0) {
+            throw "negative bit index" as IndexError;
+        }
+        self->ensure(index);
+        self->bits[index] = true;
+    }
+
+    public fn set(int index, bool value) -> void {
+        if (index < 0) {
+            throw "negative bit index" as IndexError;
+        }
+        self->ensure(index);
+        self->bits[index] = value;
+    }
+
+    public fn clear(int index) -> void {
+        if (index < 0) {
+            throw "negative bit index" as IndexError;
+        }
+        if (index < len(self->bits)) {
+            self->bits[index] = false;
+        }
+    }
+
+    public fn clear() -> void {
+        self->bits.clear();
+    }
+
+    public fn get(int index) -> bool {
+        if (index < 0 or index >= len(self->bits)) {
+            return false;
+        }
+        return self->bits[index];
+    }
+
+    public fn flip(int index) -> void {
+        if (index < 0) {
+            throw "negative bit index" as IndexError;
+        }
+        self->ensure(index);
+        self->bits[index] = not self->bits[index];
+    }
+
+    public fn cardinality() -> int {
+        int count = 0;
+        int i = 0;
+        while (i < len(self->bits)) {
+            if (self->bits[i]) {
+                count = count + 1;
+            }
+            i = i + 1;
+        }
+        return count;
+    }
+
+    public fn length() -> int {
+        int i = len(self->bits) - 1;
+        while (i >= 0) {
+            if (self->bits[i]) {
+                return i + 1;
+            }
+            i = i - 1;
+        }
+        return 0;
+    }
+
+    public fn isEmpty() -> bool {
+        return self->length() == 0;
+    }
+
+    public fn size() -> int {
+        return len(self->bits);
+    }
+
+    public fn intersects(BitSet* other) -> bool {
+        int n = len(self->bits);
+        if (len(other->bits) < n) {
+            n = len(other->bits);
+        }
+        int i = 0;
+        while (i < n) {
+            if (self->bits[i] and other->bits[i]) {
+                return true;
+            }
+            i = i + 1;
+        }
+        return false;
+    }
+
+    private fn combine(BitSet* other, int mode) -> void {
+        int n = len(self->bits);
+        if (len(other->bits) > n) {
+            n = len(other->bits);
+        }
+        self->ensure(n);
+        int i = 0;
+        while (i < n) {
+            bool a = self->bits[i];
+            bool b = i < len(other->bits) and other->bits[i];
+            if (mode == 0) {
+                self->bits[i] = a and b;
+            }
+            else if (mode == 1) {
+                self->bits[i] = a or b;
+            }
+            else if (mode == 2) {
+                self->bits[i] = a != b;
+            }
+            else {
+                self->bits[i] = a and (not b);
+            }
+            i = i + 1;
+        }
+    }
+
+    /* and 연산(자바의 and). `and`는 예약어라 andWith로 둔다. */
+    public fn andWith(BitSet* other) -> void {
+        self->combine(other, 0);
+    }
+
+    public fn orWith(BitSet* other) -> void {
+        self->combine(other, 1);
+    }
+
+    public fn xorWith(BitSet* other) -> void {
+        self->combine(other, 2);
+    }
+
+    public fn andNotWith(BitSet* other) -> void {
+        self->combine(other, 3);
+    }
+
+    /* from 이상에서 켜진 첫 비트. 없으면 -1. */
+    public fn nextSetBit(int start) -> int {
+        int i = start;
+        while (i < len(self->bits)) {
+            if (self->bits[i]) {
+                return i;
+            }
+            i = i + 1;
+        }
+        return -1;
+    }
+
+    public fn toString() -> str {
+        list<str> parts = [];
+        int i = 0;
+        while (i < len(self->bits)) {
+            if (self->bits[i]) {
+                parts.append(str(i));
+            }
+            i = i + 1;
+        }
+        return "{" + ", ".join(parts) + "}";
+    }
+
+    public fn __str__() -> str {
+        return self->toString();
+    }
+}

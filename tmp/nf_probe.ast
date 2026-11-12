@@ -1,0 +1,6 @@
+import System.stdout.*;
+import aster.text.NumberFormat;
+NumberFormat nf = NumberFormat.getInstance();
+println(nf.format(3.14159));
+NumberFormat ni = NumberFormat.getIntegerInstance();
+println(ni.format(1234567.891));

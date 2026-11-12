@@ -1,0 +1,38 @@
+import System.stdout.*;
+
+enum Mode { A, B, C }
+
+class Big {
+    private int sign;
+    private list<int> digits;
+    constructor(int v) { self->sign = 1; self->digits = []; self->_init(v); }
+    private fn _init(int v) -> void {
+        int x = v;
+        if (x < 0) { self->sign = -1; x = -x; }
+        while (x > 0) { self->digits.append(x % 10); x = x / 10; }
+        if (len(self->digits) == 0) { self->sign = 0; }
+    }
+    private static fn _mk(int s) -> Big {
+        Big b = new Big(0);
+        b->_init(s);
+        return b;
+    }
+    public static fn of(int v) -> Big { return Big._mk(v); }
+    public fn value() -> int {
+        int out = 0;
+        int i = len(self->digits) - 1;
+        while (i >= 0) { out = out * 10 + self->digits[i]; i = i - 1; }
+        if (self->sign < 0) { return -out; }
+        return out;
+    }
+    public fn toString() -> str { return "Big(" + str(self->value()) + ")"; }
+    public fn toString(int radix) -> str { return str(self->value()) + "@" + str(radix); }
+}
+
+fn modeName(Mode m) -> str { return m.name; }
+
+println(Big.of(-42).toString());
+println(Big.of(-42).toString(16));
+println(modeName(Mode.C));
+Big b = Big.of(7);
+println(b.value());

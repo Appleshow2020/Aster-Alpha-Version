@@ -1,0 +1,225 @@
+/* aster.text.DecimalFormat: java.text.DecimalFormat 스타일 패턴 수치 포매터.
+   패턴 문자 0, #, ., ,, %와 앞뒤 리터럴(예: "$")을 지원한다.
+   반올림은 HALF_UP(사사오입)이다. */
+
+import aster.text.NumberFormat;
+
+export class DecimalFormat extends NumberFormat {
+    private str patternText;
+    private bool myGrouping;
+    private int myMaxFrac;
+    private int myMinFrac;
+    private int myMinInt;
+
+    constructor(str pattern) {
+        super();
+        self->patternText = pattern;
+        self->_applySettings();
+    }
+
+    public fn applyPattern(str pattern) -> void {
+        self->patternText = pattern;
+        self->_applySettings();
+    }
+
+    public fn toPattern() -> str {
+        return self->patternText;
+    }
+
+    private fn _numStart() -> int {
+        str p = self->patternText;
+        int i = 0;
+        while (i < p.length()) {
+            str c = p.charAt(i);
+            if (c == "0" or c == "#") { return i; }
+            i = i + 1;
+        }
+        return p.length();
+    }
+
+    private fn _numEnd() -> int {
+        str p = self->patternText;
+        int i = p.length() - 1;
+        while (i >= 0) {
+            str c = p.charAt(i);
+            if (c == "0" or c == "#" or c == "." or c == ",") { return i; }
+            i = i - 1;
+        }
+        return -1;
+    }
+
+    private fn _core() -> str {
+        int start = self->_numStart();
+        int end = self->_numEnd();
+        if (end < start) { return ""; }
+        return self->patternText.substring(start, end + 1);
+    }
+
+    private fn _countChar(str s, str ch) -> int {
+        int count = 0;
+        int i = 0;
+        while (i < s.length()) {
+            if (s.charAt(i) == ch) { count = count + 1; }
+            i = i + 1;
+        }
+        return count;
+    }
+
+    private fn _applySettings() -> void {
+        str core = self->_core();
+        int dot = core.find(".");
+        str intPat = core;
+        str fracPat = "";
+        if (dot >= 0) {
+            intPat = core.substring(0, dot);
+            fracPat = core.substring(dot + 1);
+        }
+        self->myGrouping = intPat.find(",") >= 0;
+        self->myMinInt = self->_countChar(intPat, "0");
+        if (self->myMinInt < 1) { self->myMinInt = 1; }
+        self->myMinFrac = self->_countChar(fracPat, "0");
+        self->myMaxFrac = self->_countChar(fracPat, "0")
+            + self->_countChar(fracPat, "#");
+    }
+
+    private fn _prefix() -> str {
+        int start = self->_numStart();
+        return self->patternText.substring(0, start);
+    }
+
+    private fn _suffix() -> str {
+        int end = self->_numEnd();
+        if (end < 0) { return ""; }
+        return self->patternText.substring(end + 1);
+    }
+
+    private fn _isPercent() -> bool {
+        return self->patternText.find("%") >= 0;
+    }
+
+    private fn _groupEnabled() -> bool {
+        str core = self->_core();
+        int dot = core.find(".");
+        str intPat = core;
+        if (dot >= 0) { intPat = core.substring(0, dot); }
+        return intPat.find(",") >= 0 and self->myGrouping;
+    }
+
+    public fn _formatValue(float value) -> str {
+        bool percent = self->_isPercent();
+        float scaled = value;
+        if (percent) { scaled = scaled * 100.0; }
+        bool negative = scaled < 0.0;
+        float magnitude = scaled;
+        if (negative) { magnitude = -scaled; }
+
+        int factor = 1;
+        int k = 0;
+        while (k < self->myMaxFrac) {
+            factor = factor * 10;
+            k = k + 1;
+        }
+        int intPart = int(magnitude);
+        float fracPart = magnitude - float(intPart);
+        int frac = int(fracPart * float(factor) + 0.5);
+        if (frac >= factor) {
+            intPart = intPart + 1;
+            frac = 0;
+        }
+
+        str intStr = str(intPart);
+        while (intStr.length() < self->myMinInt) {
+            intStr = "0" + intStr;
+        }
+        str grouped = "";
+        int count = 0;
+        int i = intStr.length() - 1;
+        while (i >= 0) {
+            grouped = intStr.charAt(i) + grouped;
+            count = count + 1;
+            if (self->_groupEnabled() and count % 3 == 0 and i > 0) {
+                grouped = "," + grouped;
+            }
+            i = i - 1;
+        }
+
+        str result = self->_prefix() + grouped;
+        if (self->myMaxFrac > 0) {
+            str fracStr = str(frac);
+            while (fracStr.length() < self->myMaxFrac) {
+                fracStr = "0" + fracStr;
+            }
+            while (fracStr.length() > self->myMinFrac
+                   and fracStr.charAt(fracStr.length() - 1) == "0") {
+                fracStr = fracStr.substring(0, fracStr.length() - 1);
+            }
+            if (fracStr.length() > 0) {
+                result = result + "." + fracStr;
+            }
+        }
+        result = result + self->_suffix();
+        if (negative) { result = "-" + result; }
+        return result;
+    }
+
+    public fn parse(str text) -> float {
+        str t = text.strip();
+        bool negative = false;
+        if (t.startswith("-")) {
+            negative = true;
+            t = t.substring(1);
+        }
+        str prefix = self->_prefix();
+        str suffix = self->_suffix();
+        if (prefix.length() > 0 and t.startswith(prefix)) {
+            t = t.substring(prefix.length());
+        }
+        if (suffix.length() > 0 and t.endswith(suffix)) {
+            t = t.substring(0, t.length() - suffix.length());
+        }
+        t = t.replace(",", "");
+        t = t.replace("$", "");
+        t = t.strip();
+        float value = t.to_float();
+        if (self->_isPercent()) { value = value / 100.0; }
+        if (negative) { return -value; }
+        return value;
+    }
+
+    public fn setGroupingUsed(bool used) -> void {
+        self->myGrouping = used;
+    }
+
+    public fn isGroupingUsed() -> bool {
+        return self->myGrouping;
+    }
+
+    public fn setMaximumFractionDigits(int digits) -> void {
+        if (digits < 0) { digits = 0; }
+        self->myMaxFrac = digits;
+        if (self->myMinFrac > digits) { self->myMinFrac = digits; }
+    }
+
+    public fn getMaximumFractionDigits() -> int {
+        return self->myMaxFrac;
+    }
+
+    public fn setMinimumFractionDigits(int digits) -> void {
+        if (digits < 0) { digits = 0; }
+        self->myMinFrac = digits;
+        if (self->myMaxFrac < digits) { self->myMaxFrac = digits; }
+    }
+
+    public fn getMinimumFractionDigits() -> int {
+        return self->myMinFrac;
+    }
+
+    public fn setMinimumIntegerDigits(int digits) -> void {
+        if (digits < 1) { digits = 1; }
+        self->myMinInt = digits;
+    }
+
+    public fn getMinimumIntegerDigits() -> int {
+        return self->myMinInt;
+    }
+}

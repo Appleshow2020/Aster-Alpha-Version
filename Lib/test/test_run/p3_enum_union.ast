@@ -1,0 +1,96 @@
+import System.stdout.*;
+
+/* --- 페이로드 없는 enum (기존 동작 유지) --- */
+enum Color {
+    Red = 1,
+    Green = 2,
+    Blue
+}
+
+Color c = Color.Green;
+println(c);
+println(c.name);
+println(c.ordinal);
+println(c.value);
+println(Color.Blue.value);
+
+/* --- 페이로드 enum --- */
+enum Shape {
+    Circle(float r),
+    Rect(float w, float h),
+    Empty
+}
+
+Shape circle = Shape.Circle(1.5);
+Shape rect = Shape.Rect(2.0, 3.0);
+Shape empty = Shape.Empty;
+
+println(circle);
+println(rect);
+println(empty);
+println(circle.variant);
+println(circle.arity);
+println(circle.payload);
+println(rect.payload);
+println(empty.arity);
+println(empty.payload);
+
+println(circle == Shape.Circle(1.5));
+println(circle == Shape.Circle(2.0));
+println(circle == rect);
+
+/* hashable: 페이로드까지 비교하는 dict 키 */
+dict<Shape, str> names = {};
+names[Shape.Circle(1.5)] = "unit circle";
+names[Shape.Circle(2.0)] = "big circle";
+println(names[Shape.Circle(1.5)]);
+println(names[Shape.Circle(2.0)]);
+
+/* --- enum 생성자를 함수 인자로 --- */
+fn area(Shape s) -> float {
+    if (s.variant == "Circle") {
+        float r = s.payload[0];
+        return 3.0 * r * r;
+    }
+    if (s.variant == "Rect") {
+        return s.payload[0] * s.payload[1];
+    }
+    return 0.0;
+}
+
+println(area(Shape.Circle(2.0)));
+println(area(Shape.Rect(2.0, 3.0)));
+println(area(Shape.Empty));
+
+/* --- union 타입 --- */
+int | str u = 42;
+println(u);
+println(typeName(u));
+u = "now a string";
+println(u);
+println(typeName(u));
+
+int | str | null maybe = null;
+println(maybe);
+maybe = 7;
+println(maybe);
+
+fn label(int | str v) -> str {
+    if (typeName(v) == "int") {
+        return "int:" + v;
+    }
+    return "str:" + v;
+}
+
+println(label(10));
+println(label("ten"));
+
+fn passThrough(int | str v) -> int | str {
+    return v;
+}
+
+println(passThrough(1));
+println(passThrough("one"));
+
+list<int | str> mixed = [1, "two", 3];
+println(mixed);

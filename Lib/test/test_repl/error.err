@@ -1,0 +1,2 @@
+Error: NameError: name 'undefined_name' is not defined
+Error: ValueError: kaboom

@@ -1,0 +1,124 @@
+/* aster.util.Random: 결정론적 31비트 LCG 난수기.
+
+   Java의 48비트 LCG와 달리, Aster에는 비트 연산이 없으므로 31비트 LCG
+   (state = (state * 1103515245 + 12345) mod 2^31)를 쓴다. 곱셈은 2^31 * 1.1e9
+   정도라 64비트 정수 범위 안에 들어간다.
+
+   생성자 오버로드가 없으므로 시드 없는 생성은 `new Random()`(시계 시드),
+   고정 시드는 `Random.withSeed(n)`을 쓴다. */
+
+extern fn _aster_now_ms() -> int;
+extern fn sqrt(float x) -> float;
+extern fn log(float x) -> float;
+extern fn cos(float x) -> float;
+extern fn sin(float x) -> float;
+
+const int RAND_MOD = 2147483648;
+const float PI2 = 6.283185307179586;
+
+export class Random {
+    private int state;
+    private bool hasGaussian;
+    private float savedGaussian;
+
+    constructor() {
+        self->state = _aster_now_ms() % RAND_MOD;
+        if (self->state < 0) {
+            self->state = self->state + RAND_MOD;
+        }
+        self->hasGaussian = false;
+        self->savedGaussian = 0.0;
+    }
+
+    public static fn withSeed(int seed) -> Random {
+        Random rng = new Random();
+        rng.setSeed(seed);
+        return rng;
+    }
+
+    public fn setSeed(int seed) -> void {
+        int s = seed % RAND_MOD;
+        if (s < 0) {
+            s = s + RAND_MOD;
+        }
+        self->state = s;
+        self->hasGaussian = false;
+        self->savedGaussian = 0.0;
+    }
+
+    /* 다음 31비트 상태(0 .. 2^31-1). */
+    private fn advance() -> int {
+        self->state = (self->state * 1103515245 + 12345) % RAND_MOD;
+        return self->state;
+    }
+
+    public fn nextInt() -> int {
+        return self->advance();
+    }
+
+    public fn nextInt(int bound) -> int {
+        if (bound <= 0) {
+            throw "bound must be positive" as ValueError;
+        }
+        return self->advance() % bound;
+    }
+
+    public fn nextInt(int origin, int bound) -> int {
+        if (origin >= bound) {
+            throw "origin must be less than bound" as ValueError;
+        }
+        int span = bound - origin;
+        return origin + self->advance() % span;
+    }
+
+    /* 두 개의 31비트 값을 합쳐 62비트 음이 아닌 정수를 만든다. */
+    public fn nextLong() -> int {
+        int hi = self->advance();
+        int lo = self->advance();
+        return hi * RAND_MOD + lo;
+    }
+
+    public fn nextDouble() -> float {
+        int hi = self->advance();
+        int lo = self->advance();
+        float combined = float(hi) * float(RAND_MOD) + float(lo);
+        return combined / 4611686018427387904.0;
+    }
+
+    public fn nextFloat() -> float {
+        return float(self->advance()) / float(RAND_MOD);
+    }
+
+    public fn nextBoolean() -> bool {
+        return self->advance() % 2 == 1;
+    }
+
+    /* Box-Muller 변환. 두 번째 값을 캐시해 다음 호출에 재사용한다. */
+    public fn nextGaussian() -> float {
+        if (self->hasGaussian) {
+            self->hasGaussian = false;
+            return self->savedGaussian;
+        }
+        float u1 = (float(self->advance()) + 1.0) / 2147483649.0;
+        float u2 = float(self->advance()) / 2147483648.0;
+        float radius = sqrt(-2.0 * log(u1));
+        float z0 = radius * cos(PI2 * u2);
+        self->savedGaussian = radius * sin(PI2 * u2);
+        self->hasGaussian = true;
+        return z0;
+    }
+
+    /* 0..255 바이트 n개. */
+    public fn nextBytes(int count) -> list<int> {
+        if (count < 0) {
+            throw "count must not be negative" as ValueError;
+        }
+        list<int> out = [];
+        int i = 0;
+        while (i < count) {
+            out.append(self->advance() % 256);
+            i = i + 1;
+        }
+        return out;
+    }
+}

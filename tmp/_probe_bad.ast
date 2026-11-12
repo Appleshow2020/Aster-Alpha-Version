@@ -1,0 +1,12 @@
+enum Shape {
+    Circle(float r),
+    Empty
+}
+
+fn f(Shape s) -> int {
+    switch (s) {
+        case Shape.Circle(a, b) { return 1; }
+        case Shape.Nope { return 2; }
+        default { return 3; }
+    }
+}

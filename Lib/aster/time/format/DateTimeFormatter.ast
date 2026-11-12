@@ -1,0 +1,464 @@
+/* aster.time.format.DateTimeFormatter: Java 패턴 문자를 strftime 패턴으로 옮겨
+   출력하고, 같은 패턴으로 날짜/시각을 파싱한다.
+
+   지원 패턴 문자: y(연), M/MM/MMM/MMMM(월), d(일), H(시), m(분), s(초),
+   E/EEE/EEEE(요일), a(오전/오후), Z(오프셋), z(시간대 이름). 그 밖의 문자는
+   리터럴로 취급하고, 작은따옴표로 묶은 부분도 리터럴이다. */
+
+import aster.time.LocalDate;
+import aster.time.LocalTime;
+import aster.time.LocalDateTime;
+import aster.time.Month;
+from aster.time.Month import monthOf;
+from aster.time.Month import monthFullName;
+from aster.time.Month import monthShortName;
+from aster.time.Month import monthLength;
+import aster.time.DayOfWeek;
+from aster.time.DayOfWeek import dayOfWeekFullName;
+from aster.time.DayOfWeek import dayOfWeekShortName;
+import aster.time.DateTimeParseException;
+
+extern fn _aster_format_time(int epochSeconds, str pattern) -> str;
+
+const str FORMAT_LETTERS = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
+const str FORMAT_DIGITS = "0123456789";
+
+fn _fmtIsLetter(str ch) -> bool {
+    if (ch.length() == 0) { return false; }
+    return FORMAT_LETTERS.find(ch) >= 0;
+}
+
+fn _fmtIsDigit(str ch) -> bool {
+    if (ch.length() == 0) { return false; }
+    return FORMAT_DIGITS.find(ch) >= 0;
+}
+
+fn _fmtParseError(str text) -> void {
+    throw ("Text '" + text + "' cannot be parsed with the requested pattern")
+        as DateTimeParseException;
+}
+
+fn _lit(str ch) -> str {
+    if (ch == "%") { return "%%"; }
+    return ch;
+}
+
+fn _translateField(str ch, int count) -> str {
+    if (ch == "y") {
+        if (count == 2) { return "%y"; }
+        return "%Y";
+    }
+    if (ch == "M") {
+        if (count >= 4) { return "%B"; }
+        if (count == 3) { return "%b"; }
+        return "%m";
+    }
+    if (ch == "d") { return "%d"; }
+    if (ch == "H") { return "%H"; }
+    if (ch == "m") { return "%M"; }
+    if (ch == "s") { return "%S"; }
+    if (ch == "E") {
+        if (count >= 4) { return "%A"; }
+        return "%a";
+    }
+    if (ch == "a") { return "%p"; }
+    if (ch == "Z") { return "%z"; }
+    if (ch == "z") { return "%Z"; }
+    return _lit(ch);
+}
+
+/* Java 패턴을 strftime 패턴으로 옮긴다. */
+fn _translate(str pattern) -> str {
+    str out = "";
+    int i = 0;
+    int n = pattern.length();
+    while (i < n) {
+        str c = pattern.charAt(i);
+        if (c == "'") {
+            i = i + 1;
+            if (i < n and pattern.charAt(i) == "'") {
+                out = out + "'";
+                i = i + 1;
+                continue;
+            }
+            bool closed = false;
+            while (i < n and not closed) {
+                str q = pattern.charAt(i);
+                if (q == "'") {
+                    if (i + 1 < n and pattern.charAt(i + 1) == "'") {
+                        out = out + "'";
+                        i = i + 2;
+                    }
+                    else {
+                        i = i + 1;
+                        closed = true;
+                    }
+                }
+                else {
+                    out = out + _lit(q);
+                    i = i + 1;
+                }
+            }
+            continue;
+        }
+        if (not _fmtIsLetter(c)) {
+            out = out + _lit(c);
+            i = i + 1;
+            continue;
+        }
+        int count = 1;
+        while (i + count < n and pattern.charAt(i + count) == c) {
+            count = count + 1;
+        }
+        out = out + _translateField(c, count);
+        i = i + count;
+    }
+    return out;
+}
+
+fn _fmtDigitRun(str text, int start, int maxDigits) -> int {
+    int n = 0;
+    while (start + n < text.length() and n < maxDigits
+           and _fmtIsDigit(text.charAt(start + n))) {
+        n = n + 1;
+    }
+    return n;
+}
+
+fn _fmtMonthNameLength(str text, int start, bool full) -> int {
+    int m = 1;
+    while (m <= 12) {
+        str name = monthShortName(monthOf(m));
+        if (full) { name = monthFullName(monthOf(m)); }
+        if (start + name.length() <= text.length()
+            and text.substring(start, start + name.length()).lower() == name.lower()) {
+            return name.length();
+        }
+        m = m + 1;
+    }
+    return 0;
+}
+
+fn _fmtMonthNameValue(str name) -> int {
+    str low = name.lower();
+    int m = 1;
+    while (m <= 12) {
+        if (monthFullName(monthOf(m)).lower() == low) { return m; }
+        if (monthShortName(monthOf(m)).lower() == low) { return m; }
+        m = m + 1;
+    }
+    return 0;
+}
+
+fn _fmtDayNameLength(str text, int start, bool full) -> int {
+    int d = 1;
+    while (d <= 7) {
+        DayOfWeek day = dayOfWeekOfValue(d);
+        str name = dayOfWeekShortName(day);
+        if (full) { name = dayOfWeekFullName(day); }
+        if (start + name.length() <= text.length()
+            and text.substring(start, start + name.length()).lower() == name.lower()) {
+            return name.length();
+        }
+        d = d + 1;
+    }
+    return 0;
+}
+
+/* dayOfWeekOf가 from-import로 들어오지 않았으므로 값으로 직접 고른다. */
+fn dayOfWeekOfValue(int value) -> DayOfWeek {
+    if (value == 1) { return DayOfWeek.MONDAY; }
+    if (value == 2) { return DayOfWeek.TUESDAY; }
+    if (value == 3) { return DayOfWeek.WEDNESDAY; }
+    if (value == 4) { return DayOfWeek.THURSDAY; }
+    if (value == 5) { return DayOfWeek.FRIDAY; }
+    if (value == 6) { return DayOfWeek.SATURDAY; }
+    return DayOfWeek.SUNDAY;
+}
+
+fn _fmtOffsetEnd(str text, int start) -> int {
+    if (start >= text.length()) { return -1; }
+    str c = text.charAt(start);
+    if (c == "Z" or c == "z") { return start + 1; }
+    if (c != "+" and c != "-") { return -1; }
+    int i = start + 1;
+    while (i < text.length()) {
+        str d = text.charAt(i);
+        if (d == ":" or _fmtIsDigit(d)) {
+            i = i + 1;
+        }
+        else {
+            break;
+        }
+    }
+    return i;
+}
+
+class _Fields {
+    public int year;
+    public int month;
+    public int day;
+    public int hour;
+    public int minute;
+    public int second;
+    public int nano;
+    public int ampm;
+
+    public bool hasYear;
+    public bool hasMonth;
+    public bool hasDay;
+    public bool hasHour;
+    public bool hasMinute;
+    public bool hasSecond;
+
+    constructor() {
+    }
+}
+
+fn _scan(str text, str pattern) -> _Fields {
+    _Fields f = new _Fields();
+    int ti = 0;
+    int pi = 0;
+    int n = pattern.length();
+    while (pi < n) {
+        str c = pattern.charAt(pi);
+        if (c == "'") {
+            pi = pi + 1;
+            if (pi < n and pattern.charAt(pi) == "'") {
+                if (ti >= text.length() or text.charAt(ti) != "'") { _fmtParseError(text); }
+                ti = ti + 1;
+                pi = pi + 1;
+                continue;
+            }
+            bool closed = false;
+            while (pi < n and not closed) {
+                str q = pattern.charAt(pi);
+                if (q == "'") {
+                    if (pi + 1 < n and pattern.charAt(pi + 1) == "'") {
+                        if (ti >= text.length() or text.charAt(ti) != "'") {
+                            _fmtParseError(text);
+                        }
+                        ti = ti + 1;
+                        pi = pi + 2;
+                    }
+                    else {
+                        pi = pi + 1;
+                        closed = true;
+                    }
+                }
+                else {
+                    if (ti >= text.length()
+                        or text.charAt(ti).lower() != q.lower()) {
+                        _fmtParseError(text);
+                    }
+                    ti = ti + 1;
+                    pi = pi + 1;
+                }
+            }
+            continue;
+        }
+        if (not _fmtIsLetter(c)) {
+            if (ti >= text.length() or text.charAt(ti) != c) { _fmtParseError(text); }
+            ti = ti + 1;
+            pi = pi + 1;
+            continue;
+        }
+        int count = 1;
+        while (pi + count < n and pattern.charAt(pi + count) == c) {
+            count = count + 1;
+        }
+        if (c == "y") {
+            int used = _fmtDigitRun(text, ti, count);
+            if (used == 0) { _fmtParseError(text); }
+            f.year = text.substring(ti, ti + used).to_int();
+            f.hasYear = true;
+            ti = ti + used;
+        }
+        else if (c == "M") {
+            if (count >= 3) {
+                int len = _fmtMonthNameLength(text, ti, count >= 4);
+                if (len == 0) { _fmtParseError(text); }
+                f.month = _fmtMonthNameValue(text.substring(ti, ti + len));
+                ti = ti + len;
+            }
+            else {
+                int used = _fmtDigitRun(text, ti, 2);
+                if (used == 0) { _fmtParseError(text); }
+                f.month = text.substring(ti, ti + used).to_int();
+                ti = ti + used;
+            }
+            f.hasMonth = true;
+        }
+        else if (c == "d") {
+            int used = _fmtDigitRun(text, ti, 2);
+            if (used == 0) { _fmtParseError(text); }
+            f.day = text.substring(ti, ti + used).to_int();
+            f.hasDay = true;
+            ti = ti + used;
+        }
+        else if (c == "H") {
+            int used = _fmtDigitRun(text, ti, 2);
+            if (used == 0) { _fmtParseError(text); }
+            f.hour = text.substring(ti, ti + used).to_int();
+            f.hasHour = true;
+            ti = ti + used;
+        }
+        else if (c == "m") {
+            int used = _fmtDigitRun(text, ti, 2);
+            if (used == 0) { _fmtParseError(text); }
+            f.minute = text.substring(ti, ti + used).to_int();
+            f.hasMinute = true;
+            ti = ti + used;
+        }
+        else if (c == "s") {
+            int used = _fmtDigitRun(text, ti, 2);
+            if (used == 0) { _fmtParseError(text); }
+            f.second = text.substring(ti, ti + used).to_int();
+            f.hasSecond = true;
+            ti = ti + used;
+        }
+        else if (c == "S") {
+            int used = _fmtDigitRun(text, ti, count);
+            if (used == 0) { _fmtParseError(text); }
+            str digits = text.substring(ti, ti + used);
+            while (digits.length() < 9) { digits = digits + "0"; }
+            f.nano = digits.to_int();
+            ti = ti + used;
+        }
+        else if (c == "E") {
+            int len = _fmtDayNameLength(text, ti, count >= 4);
+            if (len == 0) { _fmtParseError(text); }
+            ti = ti + len;
+        }
+        else if (c == "a") {
+            if (ti + 2 > text.length()) { _fmtParseError(text); }
+            str marker = text.substring(ti, ti + 2).lower();
+            if (marker == "am") { f.ampm = 1; }
+            else if (marker == "pm") { f.ampm = 2; }
+            else { _fmtParseError(text); }
+            ti = ti + 2;
+        }
+        else if (c == "Z") {
+            int end = _fmtOffsetEnd(text, ti);
+            if (end < 0) { _fmtParseError(text); }
+            ti = end;
+        }
+        else if (c == "z") {
+            int start = ti;
+            while (ti < text.length() and _fmtIsLetter(text.charAt(ti))) {
+                ti = ti + 1;
+            }
+            if (ti == start) { _fmtParseError(text); }
+        }
+        else {
+            if (ti >= text.length() or text.charAt(ti) != c) { _fmtParseError(text); }
+            ti = ti + 1;
+        }
+        pi = pi + count;
+    }
+    if (ti != text.length()) { _fmtParseError(text); }
+    if (f.ampm == 1 and f.hour == 12) { f.hour = 0; }
+    if (f.ampm == 2 and f.hour < 12) { f.hour = f.hour + 12; }
+    return f;
+}
+
+/* 로컬 시간대에서 epochDay/secondOfDay에 해당하는 순간을 찾는다.
+   _aster_format_time이 로컬 시간으로 해석하므로, 목표 벽시계 값과의 차이를
+   반복해서 보정한다. */
+fn _localEpoch(int epochDay, int secondOfDay) -> int {
+    int guess = epochDay * 86400 + secondOfDay;
+    int i = 0;
+    while (i < 4) {
+        str text = _aster_format_time(guess, "%Y %m %d %H %M %S");
+        list<str> p = text.split(" ");
+        if (len(p) != 6) { return guess; }
+        int localDay = LocalDate.of(p[0].to_int(), p[1].to_int(),
+                                    p[2].to_int()).toEpochDay();
+        int localSecond = p[3].to_int() * 3600 + p[4].to_int() * 60
+                        + p[5].to_int();
+        int delta = (epochDay - localDay) * 86400 + (secondOfDay - localSecond);
+        if (delta == 0) { return guess; }
+        guess = guess + delta;
+        i = i + 1;
+    }
+    return guess;
+}
+
+export class DateTimeFormatter {
+    private str patternValue;
+    private str strftimeValue;
+
+    constructor(str pattern) {
+        self->patternValue = pattern;
+        self->strftimeValue = _translate(pattern);
+    }
+
+    public static fn ofPattern(str pattern) -> DateTimeFormatter {
+        return new DateTimeFormatter(pattern);
+    }
+
+    public fn pattern() -> str {
+        return self->patternValue;
+    }
+
+    public fn format(LocalDate date) -> str {
+        int seconds = _localEpoch(date.toEpochDay(), 0);
+        return _aster_format_time(seconds, self->strftimeValue);
+    }
+
+    public fn format(LocalTime time) -> str {
+        int seconds = _localEpoch(0, time.toSecondOfDay());
+        return _aster_format_time(seconds, self->strftimeValue);
+    }
+
+    public fn format(LocalDateTime dateTime) -> str {
+        int seconds = _localEpoch(dateTime.toLocalDate().toEpochDay(),
+                                  dateTime.toLocalTime().toSecondOfDay());
+        return _aster_format_time(seconds, self->strftimeValue);
+    }
+
+    public fn parseDate(str text) -> LocalDate {
+        _Fields f = _scan(text, self->patternValue);
+        if (not f.hasYear or not f.hasMonth or not f.hasDay) {
+            throw "Pattern has no date fields" as DateTimeParseException;
+        }
+        if (f.year < 1 or f.year > 9999 or f.month < 1 or f.month > 12
+            or f.day < 1
+            or f.day > monthLength(monthOf(f.month), LocalDate.isLeapYear(f.year))) {
+            _fmtParseError(text);
+        }
+        return LocalDate.of(f.year, f.month, f.day);
+    }
+
+    public fn parseTime(str text) -> LocalTime {
+        _Fields f = _scan(text, self->patternValue);
+        if (not f.hasHour or not f.hasMinute) {
+            throw "Pattern has no time fields" as DateTimeParseException;
+        }
+        if (f.hour < 0 or f.hour > 23 or f.minute < 0 or f.minute > 59
+            or f.second < 0 or f.second > 59
+            or f.nano < 0 or f.nano > 999999999) {
+            _fmtParseError(text);
+        }
+        return LocalTime.of(f.hour, f.minute, f.second, f.nano);
+    }
+
+    public fn parseDateTime(str text) -> LocalDateTime {
+        _Fields f = _scan(text, self->patternValue);
+        if (not f.hasYear or not f.hasMonth or not f.hasDay
+            or not f.hasHour or not f.hasMinute) {
+            throw "Pattern has no date and time fields" as DateTimeParseException;
+        }
+        if (f.year < 1 or f.year > 9999 or f.month < 1 or f.month > 12
+            or f.day < 1
+            or f.day > monthLength(monthOf(f.month), LocalDate.isLeapYear(f.year))
+            or f.hour < 0 or f.hour > 23 or f.minute < 0 or f.minute > 59
+            or f.second < 0 or f.second > 59
+            or f.nano < 0 or f.nano > 999999999) {
+            _fmtParseError(text);
+        }
+        LocalDate date = LocalDate.of(f.year, f.month, f.day);
+        LocalTime time = LocalTime.of(f.hour, f.minute, f.second, f.nano);
+        return LocalDateTime.of(date, time);
+    }
+}

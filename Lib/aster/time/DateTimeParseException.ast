@@ -1,0 +1,3 @@
+/* aster.time.DateTimeParseException: 잘못된 날짜/시간 문자열을 파싱할 때 던진다. */
+
+export exception DateTimeParseException extends Exception;

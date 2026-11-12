@@ -1,0 +1,8 @@
+import System.stdout.*;
+import aster.text.DecimalFormat;
+DecimalFormat df = new DecimalFormat("#,##0.00");
+println("before");
+println(df.format(0.0));
+println("float ok");
+println(df.format(0));
+println("int ok");

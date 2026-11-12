@@ -19,25 +19,21 @@ typedef struct {
     size_t ndeps, cap;
 } Manifest;
 
-static int file_exists(const char *path)
-{
+static int file_exists(const char *path) {
     struct stat st;
     return path && stat(path, &st) == 0 && S_ISREG(st.st_mode);
 }
 
-static int dir_exists(const char *path)
-{
+static int dir_exists(const char *path) {
     struct stat st;
     return path && stat(path, &st) == 0 && S_ISDIR(st.st_mode);
 }
 
-static char *xstrndup(Arena *arena, const char *s, size_t n)
-{
+static char *xstrndup(Arena *arena, const char *s, size_t n) {
     return Arena_Strndup(arena, s, n);
 }
 
-static char *join_path(Arena *arena, const char *a, const char *b)
-{
+static char *join_path(Arena *arena, const char *a, const char *b) {
     size_t la = strlen(a), lb = strlen(b);
     char *p = Arena_Alloc(arena, la + lb + 2);
     memcpy(p, a, la);
@@ -49,8 +45,7 @@ static char *join_path(Arena *arena, const char *a, const char *b)
 }
 
 /* 경로의 부모 디렉터리. 위가 없으면 NULL. */
-static char *parent_dir(Arena *arena, const char *path)
-{
+static char *parent_dir(Arena *arena, const char *path) {
     size_t n = strlen(path);
     while (n > 0 && (path[n - 1] == '/' || path[n - 1] == '\\'))
         n--;
@@ -63,16 +58,14 @@ static char *parent_dir(Arena *arena, const char *path)
     return xstrndup(arena, path, n);
 }
 
-static const char *base_name(const char *path)
-{
+static const char *base_name(const char *path) {
     const char *slash = strrchr(path, '/');
     const char *bslash = strrchr(path, '\\');
     const char *cut = slash > bslash ? slash : bslash;
     return cut ? cut + 1 : path;
 }
 
-static int is_absolute(const char *path)
-{
+static int is_absolute(const char *path) {
     if (!path || !path[0])
         return 0;
     if (path[0] == '/' || path[0] == '\\')
@@ -80,8 +73,7 @@ static int is_absolute(const char *path)
     return path[1] == ':';
 }
 
-static char *trim(char *s)
-{
+static char *trim(char *s) {
     char *end;
     while (*s == ' ' || *s == '\t' || *s == '\r' || *s == '\n')
         s++;
@@ -92,8 +84,7 @@ static char *trim(char *s)
     return s;
 }
 
-static char *read_text(Arena *arena, const char *path)
-{
+static char *read_text(Arena *arena, const char *path) {
     FILE *f = fopen(path, "rb");
     long size;
     char *buf;
@@ -117,8 +108,7 @@ static char *read_text(Arena *arena, const char *path)
 }
 
 static void manifest_push_dep(Arena *arena, Manifest *m, const char *alias,
-                              const char *path)
-{
+                              const char *path) {
     size_t i;
     for (i = 0; i < m->ndeps; i++) {
         if (!strcmp(m->deps[i].alias, alias)) {
@@ -139,8 +129,7 @@ static void manifest_push_dep(Arena *arena, Manifest *m, const char *alias,
     m->ndeps++;
 }
 
-static int manifest_remove_dep(Manifest *m, const char *alias)
-{
+static int manifest_remove_dep(Manifest *m, const char *alias) {
     size_t i;
     for (i = 0; i < m->ndeps; i++) {
         if (!strcmp(m->deps[i].alias, alias)) {
@@ -153,8 +142,7 @@ static int manifest_remove_dep(Manifest *m, const char *alias)
     return 0;
 }
 
-static void parse_manifest(Arena *arena, const char *text, Manifest *m)
-{
+static void parse_manifest(Arena *arena, const char *text, Manifest *m) {
     const char *p = text;
     int in_deps = 0;
 
@@ -211,8 +199,7 @@ static void parse_manifest(Arena *arena, const char *text, Manifest *m)
     }
 }
 
-static int load_manifest_at(Arena *arena, const char *dir, Manifest *m)
-{
+static int load_manifest_at(Arena *arena, const char *dir, Manifest *m) {
     char *path = join_path(arena, dir, MANIFEST);
     char *text = read_text(arena, path);
     if (!text)
@@ -221,8 +208,7 @@ static int load_manifest_at(Arena *arena, const char *dir, Manifest *m)
     return 1;
 }
 
-static int write_manifest(const char *dir, const Manifest *m)
-{
+static int write_manifest(const char *dir, const Manifest *m) {
     size_t len = strlen(dir) + strlen(MANIFEST) + 2;
     char *path = malloc(len);
     FILE *f;
@@ -248,8 +234,7 @@ static int write_manifest(const char *dir, const Manifest *m)
 }
 
 /* dep 경로가 import alias를 실제로 찾을 수 있는지 검사한다. */
-static int dep_resolvable(const char *root, const char *alias)
-{
+static int dep_resolvable(const char *root, const char *alias) {
     char buf[1024];
     snprintf(buf, sizeof buf, "%s/%s.ast", root, alias);
     if (file_exists(buf))
@@ -258,8 +243,7 @@ static int dep_resolvable(const char *root, const char *alias)
     return file_exists(buf);
 }
 
-static void print_usage(void)
-{
+static void print_usage(void) {
     puts("usage: aster pkg <command> [args]");
     puts("  init [name]        create aster.pkg in the current directory");
     puts("  add NAME PATH      add a dependency (PATH is the package's parent directory)");
@@ -268,8 +252,7 @@ static void print_usage(void)
     puts("  check              verify that dependencies exist");
 }
 
-static int pkg_init(Arena *arena, int argc, char **argv)
-{
+static int pkg_init(Arena *arena, int argc, char **argv) {
     Manifest m;
     const char *name = argc > 0 ? argv[0] : NULL;
     if (file_exists(MANIFEST)) {
@@ -288,8 +271,7 @@ static int pkg_init(Arena *arena, int argc, char **argv)
     return 0;
 }
 
-static int pkg_add(Arena *arena, int argc, char **argv)
-{
+static int pkg_add(Arena *arena, int argc, char **argv) {
     Manifest m;
     const char *alias;
     const char *path;
@@ -338,8 +320,7 @@ static int pkg_add(Arena *arena, int argc, char **argv)
     return 0;
 }
 
-static int pkg_remove(Arena *arena, int argc, char **argv)
-{
+static int pkg_remove(Arena *arena, int argc, char **argv) {
     Manifest m;
     if (argc != 1) {
         fputs("usage: aster pkg remove NAME\n", stderr);
@@ -361,8 +342,7 @@ static int pkg_remove(Arena *arena, int argc, char **argv)
     return 0;
 }
 
-static int pkg_list(Arena *arena, int argc, char **argv)
-{
+static int pkg_list(Arena *arena, int argc, char **argv) {
     Manifest m;
     size_t i;
     (void)argc;
@@ -382,8 +362,7 @@ static int pkg_list(Arena *arena, int argc, char **argv)
     return 0;
 }
 
-static int pkg_check(Arena *arena, int argc, char **argv)
-{
+static int pkg_check(Arena *arena, int argc, char **argv) {
     Manifest m;
     size_t i;
     int failed = 0;
@@ -407,8 +386,7 @@ static int pkg_check(Arena *arena, int argc, char **argv)
     return failed ? 1 : 0;
 }
 
-int Pkg_Main(int argc, char **argv)
-{
+int Pkg_Main(int argc, char **argv) {
     Arena *arena = Arena_New();
     int code;
 
@@ -438,8 +416,7 @@ int Pkg_Main(int argc, char **argv)
 
 /* ---- 로더 연결 ---- */
 
-static const char *find_manifest_dir(Arena *arena, const char *base_dir)
-{
+static const char *find_manifest_dir(Arena *arena, const char *base_dir) {
     const char *start = base_dir && base_dir[0] ? base_dir : ".";
     char *dir = xstrndup(arena, start, strlen(start));
     int depth;
@@ -451,8 +428,7 @@ static const char *find_manifest_dir(Arena *arena, const char *base_dir)
     return NULL;
 }
 
-void Pkg_LoadDeps(Arena *arena, const char *base_dir, Interp *in)
-{
+void Pkg_LoadDeps(Arena *arena, const char *base_dir, Interp *in) {
     const char *dir = find_manifest_dir(arena, base_dir);
     Manifest m;
     size_t i;

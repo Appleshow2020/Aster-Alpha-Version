@@ -1,0 +1,62 @@
+/* aster.util.CollectionList: Collection 계약만 노출하는 리스트 래퍼.
+
+   Map.values()가 Collection<V>를 돌려줘야 하는데 ArrayList는 List 계약만
+   구현하므로(오버로드 시그니처 충돌 회피) 이 얇은 뷰를 쓴다. */
+
+import aster.util.Collection;
+import aster.util.Iterator;
+import aster.util.ListIteratorImpl;
+
+export class CollectionList<E> implements Collection {
+    private list<E> items;
+
+    constructor(list<E> items) {
+        self->items = items;
+    }
+
+    public fn size() -> int {
+        return len(self->items);
+    }
+
+    public fn isEmpty() -> bool {
+        return len(self->items) == 0;
+    }
+
+    public fn contains(E value) -> bool {
+        return value in self->items;
+    }
+
+    public fn add(E value) -> bool {
+        self->items.append(value);
+        return true;
+    }
+
+    public fn remove(E value) -> bool {
+        int i = self->items.index(value);
+        if (i < 0) {
+            return false;
+        }
+        self->items.pop(i);
+        return true;
+    }
+
+    public fn clear() -> void {
+        self->items.clear();
+    }
+
+    public fn iterator() -> Iterator {
+        return new ListIteratorImpl<E>(self->items.copy());
+    }
+
+    public fn toArray() -> list<E> {
+        return self->items.copy();
+    }
+
+    public fn __len__() -> int {
+        return len(self->items);
+    }
+
+    public fn __str__() -> str {
+        return str(self->items);
+    }
+}

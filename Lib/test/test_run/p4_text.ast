@@ -1,0 +1,107 @@
+import System.stdout.*;
+
+import aster.text.ParseException;
+import aster.text.DateFormat;
+import aster.text.SimpleDateFormat;
+import aster.text.NumberFormat;
+import aster.text.DecimalFormat;
+import aster.text.MessageFormat;
+
+/* --- SimpleDateFormat: 패턴 변환과 결정적 속성 검사 --- */
+
+SimpleDateFormat f = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS");
+assert f.toPattern() == "yyyy-MM-dd HH:mm:ss.SSS";
+println(f.toPattern());
+
+/* epoch 1e12 = 2001-09-09 01:46:40 UTC; 어떤 시간대에서도 연도는 2001이다. */
+str full = f.format(1000000000000);
+println(full.length());
+println(full.startswith("2001-"));
+println(full.substring(20, 23));
+
+/* epoch 0은 지역 시간대에 따라 날짜가 달라지므로 길이/밀리초만 확인한다. */
+println(f.format(0).length());
+println(f.format(0).endswith(".000"));
+println(f.format(1234).endswith(".234"));
+
+SimpleDateFormat yearFmt = new SimpleDateFormat("yyyy");
+println(yearFmt.format(1000000000000));
+yearFmt.applyPattern("MM/yyyy");
+println(yearFmt.toPattern());
+
+/* 상수와 팩터리 */
+println(DateFormat.SHORT, DateFormat.MEDIUM, DateFormat.LONG, DateFormat.FULL);
+SimpleDateFormat d = DateFormat.getDateInstance();
+println(d.toPattern());
+println(d.format(1000000000000).length());
+println(d.getDateStyle(), d.getTimeStyle());
+SimpleDateFormat dt = DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT);
+println(dt.toPattern());
+println(dt.getDateStyle(), dt.getTimeStyle());
+
+/* parse는 UTC 기준 epoch 밀리초를 돌려준다. */
+SimpleDateFormat parser = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+println(parser.parse("2001-09-09 01:46:40"));
+println((new SimpleDateFormat("MM/dd/yyyy")).parse("01/02/2020"));
+println((new SimpleDateFormat("h:mm a")).parse("1:30 PM"));
+
+try {
+    (new SimpleDateFormat("yyyy-MM-dd")).parse("oops");
+} catch (ParseException e) {
+    println("caught: " + e.name);
+}
+
+/* --- DecimalFormat: 그룹핑, 소수 자릿수, 퍼센트 --- */
+
+DecimalFormat df = new DecimalFormat("#,##0.00");
+println(df.toPattern());
+println(df.format(1234567.891));
+println(df.format(-1234.5));
+println(df.format(0));
+DecimalFormat df2 = new DecimalFormat("0.###");
+println(df2.format(3.14159));
+println(df2.format(2.0));
+DecimalFormat df3 = new DecimalFormat("0.00%");
+println(df3.format(0.25));
+println(df3.parse("25.00%"));
+DecimalFormat df4 = new DecimalFormat("$#,##0.00");
+println(df4.format(1234.5));
+println(df4.format(-1234.5));
+println(df4.parse("-$1,234.50"));
+df4.applyPattern("#,##0");
+println(df4.toPattern());
+println(df4.format(1234.5));
+
+/* --- NumberFormat: 기본/정수/퍼센트/통화 인스턴스 --- */
+
+NumberFormat nf = NumberFormat.getInstance();
+println(nf.format(1234567.891));
+println(nf.format(42));
+println(nf.getMaximumFractionDigits(), nf.isGroupingUsed());
+nf.setGroupingUsed(false);
+println(nf.format(1234567.891));
+nf.setMaximumFractionDigits(1);
+println(nf.format(3.14159));
+
+NumberFormat ni = NumberFormat.getIntegerInstance();
+println(ni.format(1234567.891));
+NumberFormat np = NumberFormat.getPercentInstance();
+println(np.format(0.125));
+println(np.parse("12.5%"));
+NumberFormat nc = NumberFormat.getCurrencyInstance();
+println(nc.format(1234.5));
+println(nc.parse("$1,234.50"));
+
+/* --- MessageFormat --- */
+
+MessageFormat mf = new MessageFormat("Hello, {0}! You have {1} messages.");
+println(mf.toPattern());
+list<var> args = [];
+args.append("Aster");
+args.append(3);
+println(mf.format(args));
+println(MessageFormat.format("It''s {0} at {1}", args));
+mf.applyPattern("{0} -> {1}");
+println(mf.format(args));
+
+println("p4_text ok");

@@ -30,8 +30,11 @@ SRCS = Programs/aster.c \
        Python/arena.c \
        Python/Aster-ast.c \
        Python/runtime.c \
+       Python/regex.c \
        Python/interp.c \
        Python/typecheck.c \
+       Python/formatter.c \
+       Python/linter.c \
        Objects/object.c
 
 HEADERS = Include/internal/token.h \
@@ -43,8 +46,13 @@ HEADERS = Include/internal/token.h \
           Include/internal/value.h \
           Include/internal/object.h \
           Include/internal/runtime.h \
+          Include/internal/regex.h \
           Include/internal/interp.h \
           Include/internal/typecheck.h \
+          Include/internal/formatter.h \
+          Include/internal/linter.h \
+          Include/internal/regex.h \
+          Include/internal/unicode_ranges.h \
           Include/internal/pkg.h
 
 $(BIN): $(SRCS) $(HEADERS)
@@ -53,6 +61,8 @@ $(BIN): $(SRCS) $(HEADERS)
 check: $(BIN)
 	$(PYTHON) Tools/check_frontend.py
 	$(PYTHON) Tools/check_runtime.py
+	$(PYTHON) Tools/check_repl.py
+	$(PYTHON) Tools/check_tools.py
 
 regen:
 	$(PYTHON) Tools/build/generate_token.py Grammar/Tokens Include/internal/token.h Parser/token.c

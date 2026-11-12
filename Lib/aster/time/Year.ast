@@ -1,0 +1,136 @@
+/* aster.time.Year: ISO-8601 연도. */
+
+import aster.time.Month;
+from aster.time.Month import monthOf;
+from aster.time.Month import monthLength;
+from aster.time.Month import monthValue;
+import aster.time.YearMonth;
+import aster.time.MonthDay;
+import aster.time.LocalDate;
+import aster.time.DateTimeParseException;
+
+fn _yearParseError(str text) -> void {
+    throw ("Text '" + text + "' cannot be parsed as a Year") as DateTimeParseException;
+}
+
+fn _yearIsDigits(str text) -> bool {
+    if (text.length() == 0) { return false; }
+    int i = 0;
+    while (i < text.length()) {
+        if ("0123456789".find(text.charAt(i)) < 0) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
+export class Year {
+    private int yearValue;
+
+    constructor(int year) {
+        if (year < 1 or year > 9999) {
+            throw ("Invalid value for Year: " + str(year)) as ValueError;
+        }
+        self->yearValue = year;
+    }
+
+    public static fn now() -> Year {
+        return new Year(LocalDate.now().getYear());
+    }
+
+    public static fn of(int year) -> Year {
+        return new Year(year);
+    }
+
+    public static fn parse(str text) -> Year {
+        if (text.length() != 4 or not _yearIsDigits(text)) { _yearParseError(text); }
+        return new Year(text.to_int());
+    }
+
+    public fn getValue() -> int {
+        return self->yearValue;
+    }
+
+    public fn isLeap() -> bool {
+        return LocalDate.isLeapYear(self->yearValue);
+    }
+
+    public fn length() -> int {
+        if (self->isLeap()) { return 366; }
+        return 365;
+    }
+
+    public fn isValidMonthDay(MonthDay monthDay) -> bool {
+        return monthDay.isValidYear(self->yearValue);
+    }
+
+    public fn plusYears(int years) -> Year {
+        return new Year(self->yearValue + years);
+    }
+
+    public fn minusYears(int years) -> Year {
+        return new Year(self->yearValue - years);
+    }
+
+    public fn atDay(int dayOfYear) -> LocalDate {
+        if (dayOfYear < 1 or dayOfYear > self->length()) {
+            throw ("Invalid value for DayOfYear: " + str(dayOfYear)) as ValueError;
+        }
+        int month = 1;
+        int remaining = dayOfYear;
+        while (month <= 12) {
+            int len = monthLength(monthOf(month), self->isLeap());
+            if (remaining <= len) {
+                return LocalDate.of(self->yearValue, month, remaining);
+            }
+            remaining = remaining - len;
+            month = month + 1;
+        }
+        throw ("Invalid value for DayOfYear: " + str(dayOfYear)) as ValueError;
+    }
+
+    /* enum 오버로드를 먼저 선언해야 인터프리터 폴백이 올바르게 동작한다. */
+    public fn atMonth(Month month) -> YearMonth {
+        return YearMonth.of(self->yearValue, monthValue(month));
+    }
+
+    public fn atMonth(int month) -> YearMonth {
+        return YearMonth.of(self->yearValue, month);
+    }
+
+    public fn atMonthDay(MonthDay monthDay) -> LocalDate {
+        return monthDay.atYear(self->yearValue);
+    }
+
+    public fn isBefore(Year other) -> bool {
+        return self->yearValue < other.yearValue;
+    }
+
+    public fn isAfter(Year other) -> bool {
+        return self->yearValue > other.yearValue;
+    }
+
+    public fn compareTo(Year other) -> int {
+        if (self->yearValue < other.yearValue) { return -1; }
+        if (self->yearValue > other.yearValue) { return 1; }
+        return 0;
+    }
+
+    public fn equals(Year other) -> bool {
+        return self->yearValue == other.yearValue;
+    }
+
+    public fn hashCode() -> int {
+        return self->yearValue;
+    }
+
+    public fn toString() -> str {
+        if (self->yearValue < 10) { return "000" + str(self->yearValue); }
+        if (self->yearValue < 100) { return "00" + str(self->yearValue); }
+        if (self->yearValue < 1000) { return "0" + str(self->yearValue); }
+        return str(self->yearValue);
+    }
+
+    public fn __str__() -> str {
+        return self->toString();
+    }
+}

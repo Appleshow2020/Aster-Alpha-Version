@@ -28,6 +28,15 @@ typedef struct {
     identifier alias;
 } TypedefAlias;
 
+/* 같은 철자의 식별자를 한 벌만 두어 이름 비교를 포인터 비교로 빠르게 한다. */
+typedef struct InternEntry {
+    const char *s;
+    size_t len;
+    struct InternEntry *next;
+} InternEntry;
+
+#define INTERN_BUCKETS 256
+
 typedef struct Parser {
     AsterTokenList list;
     size_t n;
@@ -46,6 +55,7 @@ typedef struct Parser {
     size_t n_type_params, cap_type_params;
     NameSet *struct_stack;
     size_t n_structs, cap_structs;
+    InternEntry *intern[INTERN_BUCKETS];
     jmp_buf jmp;
 } Parser;
 
@@ -53,6 +63,7 @@ static const char *const HARD_KEYWORDS[] = {
     "package", "import", "from", "as", "fn", "class", "extends", "implements",
     "interface", "new", "self", "public", "protected", "private", "internal",
     "if", "else", "while", "for", "break", "continue", "return", "throw",
+    "switch", "case", "default",
     "try", "catch", "finally", "typedef", "struct", "and", "or", "not", "is",
     "in", "true", "false", "sizeof", "int", "float", "bool", "str", "null", "void",
     "super", "exception", "export", "yield",
@@ -60,8 +71,7 @@ static const char *const HARD_KEYWORDS[] = {
 
 /* ------------------------------------------------------------- 기본 도우미 */
 
-static void *xrealloc(void *p, size_t n)
-{
+static void *xrealloc(void *p, size_t n) {
     void *q = realloc(p, n ? n : 1);
     if (!q) {
         fputs("out of memory\n", stderr);
@@ -70,8 +80,7 @@ static void *xrealloc(void *p, size_t n)
     return q;
 }
 
-static void seq_push(Seq *s, const void *item)
-{
+static void seq_push(Seq *s, const void *item) {
     if (s->count == s->cap) {
         s->cap = s->cap ? s->cap * 2 : 8;
         s->items = xrealloc(s->items, s->cap * sizeof *s->items);
@@ -79,15 +88,13 @@ static void seq_push(Seq *s, const void *item)
     s->items[s->count++] = (void *)item;
 }
 
-static void seq_clear(Seq *s)
-{
+static void seq_clear(Seq *s) {
     free(s->items);
     s->items = NULL;
     s->count = s->cap = 0;
 }
 
-static asdl_seq *seq_make(Seq *s, Arena *arena)
-{
+static asdl_seq *seq_make(Seq *s, Arena *arena) {
     asdl_seq *r = _Aster_seq_new(s->count, arena);
     size_t i;
     for (i = 0; i < s->count; i++)
@@ -96,13 +103,11 @@ static asdl_seq *seq_make(Seq *s, Arena *arena)
     return r;
 }
 
-static asdl_seq *empty_seq(Parser *p)
-{
+static asdl_seq *empty_seq(Parser *p) {
     return _Aster_seq_new(0, p->arena);
 }
 
-static void ns_add(NameSet *s, identifier id)
-{
+static void ns_add(NameSet *s, identifier id) {
     if (s->count == s->cap) {
         s->cap = s->cap ? s->cap * 2 : 8;
         s->items = xrealloc(s->items, s->cap * sizeof *s->items);
@@ -110,8 +115,7 @@ static void ns_add(NameSet *s, identifier id)
     s->items[s->count++] = id;
 }
 
-static int ns_has_token(const NameSet *s, const AsterToken *t)
-{
+static int ns_has_token(const NameSet *s, const AsterToken *t) {
     size_t i;
     for (i = 0; i < s->count; i++) {
         size_t len = strlen(s->items[i]);
@@ -121,11 +125,10 @@ static int ns_has_token(const NameSet *s, const AsterToken *t)
     return 0;
 }
 
-static int ns_has_name(const NameSet *s, identifier name)
-{
+static int ns_has_name(const NameSet *s, identifier name) {
     size_t i;
     for (i = 0; i < s->count; i++) {
-        if (!strcmp(s->items[i], name))
+        if (s->items[i] == name || !strcmp(s->items[i], name))
             return 1;
     }
     return 0;
@@ -133,8 +136,7 @@ static int ns_has_name(const NameSet *s, identifier name)
 
 /* 중괄호 초기화({1, 2})는 구조체 타입에서만 쓴다. 그 밖에는 세트/딕셔너리
  * 리터럴 식으로 읽는다. 그렇지 않으면 'var s = {1, 2};'가 구조체 초기화가 된다. */
-static int type_is_struct(Parser *p, typeref_ty ty)
-{
+static int type_is_struct(Parser *p, typeref_ty ty) {
     if (!ty)
         return 0;
     if (ty->kind == StructRef_kind)
@@ -144,25 +146,21 @@ static int type_is_struct(Parser *p, typeref_ty ty)
     return 0;
 }
 
-static AsterToken *cur(Parser *p)
-{
+static AsterToken *cur(Parser *p) {
     return &p->list.items[p->pos];
 }
 
-static AsterToken *tok_at(Parser *p, size_t i)
-{
+static AsterToken *tok_at(Parser *p, size_t i) {
     return &p->list.items[i];
 }
 
-static int tok_eq(const AsterToken *t, const char *text)
-{
+static int tok_eq(const AsterToken *t, const char *text) {
     size_t len = strlen(text);
     return t->type != TOK_STRING && (size_t)t->length == len &&
            memcmp(t->start, text, len) == 0;
 }
 
-static int is_hard_token(const AsterToken *t)
-{
+static int is_hard_token(const AsterToken *t) {
     size_t i;
     if (t->type != TOK_NAME)
         return 0;
@@ -172,13 +170,30 @@ static int is_hard_token(const AsterToken *t)
     return 0;
 }
 
-static identifier intern_token(Parser *p, const AsterToken *t)
-{
-    return Arena_Strndup(p->arena, t->start, (size_t)t->length);
+static identifier intern_token(Parser *p, const AsterToken *t) {
+    size_t len = (size_t)t->length;
+    const char *s = t->start;
+    uint32_t h = 2166136261u;
+    InternEntry *e;
+    size_t i;
+
+    for (i = 0; i < len; i++) {
+        h ^= (unsigned char)s[i];
+        h *= 16777619u;
+    }
+    for (e = p->intern[h % INTERN_BUCKETS]; e; e = e->next) {
+        if (e->len == len && memcmp(e->s, s, len) == 0)
+            return (identifier)e->s;
+    }
+    e = Arena_Alloc(p->arena, sizeof(InternEntry));
+    e->s = Arena_Strndup(p->arena, s, len);
+    e->len = len;
+    e->next = p->intern[h % INTERN_BUCKETS];
+    p->intern[h % INTERN_BUCKETS] = e;
+    return (identifier)e->s;
 }
 
-static void expect_text(Parser *p, const char *what)
-{
+static void expect_text(Parser *p, const char *what) {
     int i;
     if (p->pos > p->farthest) {
         p->farthest = p->pos;
@@ -196,20 +211,17 @@ static void expect_text(Parser *p, const char *what)
     }
 }
 
-static void expect_quoted(Parser *p, const char *text)
-{
+static void expect_quoted(Parser *p, const char *text) {
     char buf[64];
     snprintf(buf, sizeof buf, "'%s'", text);
     expect_text(p, buf);
 }
 
-static int at(Parser *p, const char *text)
-{
+static int at(Parser *p, const char *text) {
     return tok_eq(cur(p), text);
 }
 
-static int accept(Parser *p, const char *text)
-{
+static int accept(Parser *p, const char *text) {
     if (at(p, text)) {
         p->pos++;
         return 1;
@@ -218,8 +230,7 @@ static int accept(Parser *p, const char *text)
     return 0;
 }
 
-static identifier p_name(Parser *p)
-{
+static identifier p_name(Parser *p) {
     AsterToken *t = cur(p);
     if (t->type == TOK_NAME && !is_hard_token(t)) {
         p->pos++;
@@ -229,8 +240,7 @@ static identifier p_name(Parser *p)
     return NULL;
 }
 
-static identifier p_attr_name(Parser *p)
-{
+static identifier p_attr_name(Parser *p) {
     AsterToken *t = cur(p);
     if (t->type == TOK_NAME) {
         p->pos++;
@@ -240,8 +250,7 @@ static identifier p_attr_name(Parser *p)
     return NULL;
 }
 
-static int is_declared_type_name(Parser *p, const AsterToken *t)
-{
+static int is_declared_type_name(Parser *p, const AsterToken *t) {
     size_t i;
     if (t->type != TOK_NAME || is_hard_token(t))
         return 0;
@@ -253,8 +262,7 @@ static int is_declared_type_name(Parser *p, const AsterToken *t)
     return 0;
 }
 
-static void syntax_error_at(Parser *p, size_t index, const char *fmt, ...)
-{
+static void syntax_error_at(Parser *p, size_t index, const char *fmt, ...) {
     AsterToken *t = tok_at(p, index);
     int width = t->end_line == t->line ? t->end_col - t->col : 1;
     va_list ap;
@@ -276,8 +284,7 @@ static int end_col(Parser *p) { return p->pos ? tok_at(p, p->pos - 1)->end_col :
 
 /* --------------------------------------------------------------- 미리 훑기 */
 
-static void prescan(Parser *p)
-{
+static void prescan(Parser *p) {
     size_t i;
     for (i = 0; i < p->n; i++) {
         AsterToken *t = tok_at(p, i);
@@ -327,8 +334,7 @@ static void prescan(Parser *p)
     }
 }
 
-static void push_type_params(Parser *p, asdl_seq *params)
-{
+static void push_type_params(Parser *p, asdl_seq *params) {
     NameSet ns = {0};
     size_t i;
     for (i = 0; i < asdl_seq_LEN(params); i++)
@@ -341,16 +347,14 @@ static void push_type_params(Parser *p, asdl_seq *params)
     p->type_param_stack[p->n_type_params++] = ns;
 }
 
-static void pop_type_params(Parser *p)
-{
+static void pop_type_params(Parser *p) {
     NameSet *ns = &p->type_param_stack[--p->n_type_params];
     free(ns->items);
     ns->items = NULL;
     ns->count = ns->cap = 0;
 }
 
-static void push_struct_names(Parser *p, NameSet ns)
-{
+static void push_struct_names(Parser *p, NameSet ns) {
     if (p->n_structs == p->cap_structs) {
         p->cap_structs = p->cap_structs ? p->cap_structs * 2 : 4;
         p->struct_stack = xrealloc(p->struct_stack,
@@ -359,8 +363,7 @@ static void push_struct_names(Parser *p, NameSet ns)
     p->struct_stack[p->n_structs++] = ns;
 }
 
-static void pop_struct_names(Parser *p)
-{
+static void pop_struct_names(Parser *p) {
     NameSet *ns = &p->struct_stack[--p->n_structs];
     free(ns->items);
     ns->items = NULL;
@@ -378,8 +381,7 @@ static typeref_ty p_declared_named_type(Parser *p);
 static asdl_seq *p_type_args(Parser *p);
 static ret_ty p_return_type(Parser *p);
 
-static int p_pointer_suffix(Parser *p)
-{
+static int p_pointer_suffix(Parser *p) {
     if (tok_eq(cur(p), "*")) {
         p->pos++;
         return 1;
@@ -391,8 +393,7 @@ static int p_pointer_suffix(Parser *p)
     return 0;
 }
 
-static typeref_ty p_pointer_suffixes(Parser *p, typeref_ty base)
-{
+static typeref_ty p_pointer_suffixes(Parser *p, typeref_ty base) {
     int count;
     while ((count = p_pointer_suffix(p)) != 0) {
         int i;
@@ -402,8 +403,7 @@ static typeref_ty p_pointer_suffixes(Parser *p, typeref_ty base)
     return base;
 }
 
-static typeref_ty p_primitive_type(Parser *p)
-{
+static typeref_ty p_primitive_type(Parser *p) {
     AsterToken *t = cur(p);
     prim_ty kind;
     if (t->type != TOK_NAME) {
@@ -428,8 +428,7 @@ static typeref_ty p_primitive_type(Parser *p)
     return _Aster_Primitive(kind, p->arena);
 }
 
-static typeref_ty p_function_type(Parser *p)
-{
+static typeref_ty p_function_type(Parser *p) {
     size_t start = p->pos;
     Seq params = {0};
     ret_ty ret;
@@ -480,8 +479,7 @@ static typeref_ty p_function_type(Parser *p)
     return _Aster_FunctionTy(seq_make(&params, p->arena), ret, p->arena);
 }
 
-static typeref_ty p_type_base(Parser *p)
-{
+static typeref_ty p_type_base(Parser *p) {
     typeref_ty base = p_function_type(p);
     if (base)
         return base;
@@ -504,8 +502,7 @@ static typeref_ty p_type_base(Parser *p)
     }
 }
 
-static typeref_ty p_type(Parser *p)
-{
+static typeref_ty p_union_arm(Parser *p) {
     size_t start = p->pos;
     typeref_ty base = p_type_base(p);
     if (!base) {
@@ -518,8 +515,30 @@ static typeref_ty p_type(Parser *p)
     return base;
 }
 
-static asdl_seq *p_type_args(Parser *p)
-{
+static typeref_ty p_type(Parser *p) {
+    size_t start = p->pos;
+    typeref_ty first = p_union_arm(p);
+    Seq arms = {0};
+    if (!first) {
+        p->pos = start;
+        return NULL;
+    }
+    if (!at(p, "|"))
+        return first;
+    seq_push(&arms, first);
+    while (accept(p, "|")) {
+        typeref_ty arm = p_union_arm(p);
+        if (!arm) {
+            seq_clear(&arms);
+            p->pos = start;
+            return NULL;
+        }
+        seq_push(&arms, arm);
+    }
+    return _Aster_UnionTy(seq_make(&arms, p->arena), p->arena);
+}
+
+static asdl_seq *p_type_args(Parser *p) {
     size_t start = p->pos;
     Seq args = {0};
     if (!accept(p, "<")) {
@@ -545,8 +564,7 @@ static asdl_seq *p_type_args(Parser *p)
     return seq_make(&args, p->arena);
 }
 
-static typeref_ty p_named_type(Parser *p)
-{
+static typeref_ty p_named_type(Parser *p) {
     size_t start = p->pos;
     identifier name = p_name(p);
     asdl_seq *args;
@@ -558,8 +576,7 @@ static typeref_ty p_named_type(Parser *p)
     return _Aster_Named(name, args ? args : empty_seq(p), p->arena);
 }
 
-static ret_ty p_return_type(Parser *p)
-{
+static ret_ty p_return_type(Parser *p) {
     if (accept(p, "void"))
         return _Aster_VoidRet(p->arena);
     {
@@ -568,8 +585,7 @@ static ret_ty p_return_type(Parser *p)
     }
 }
 
-static typeref_ty p_declared_named_type(Parser *p)
-{
+static typeref_ty p_declared_named_type(Parser *p) {
     AsterToken *t = cur(p);
     identifier name;
     asdl_seq *args;
@@ -583,8 +599,7 @@ static typeref_ty p_declared_named_type(Parser *p)
     return _Aster_Named(name, args ? args : empty_seq(p), p->arena);
 }
 
-static typeref_ty p_cast_type(Parser *p)
-{
+static typeref_ty p_cast_type(Parser *p) {
     typeref_ty base = p_primitive_type(p);
     if (!base) {
         if (accept(p, "struct")) {
@@ -605,8 +620,7 @@ static typeref_ty p_cast_type(Parser *p)
     return base;
 }
 
-static typeref_ty p_sized_type(Parser *p)
-{
+static typeref_ty p_sized_type(Parser *p) {
     typeref_ty base = p_primitive_type(p);
     if (!base) {
         if (accept(p, "struct")) {
@@ -634,8 +648,7 @@ static expr_ty p_primary(Parser *p);
 static asdl_seq *p_arguments(Parser *p);
 static asdl_seq *p_parameters(Parser *p);
 
-static int64_t token_int(Parser *p, size_t index)
-{
+static int64_t token_int(Parser *p, size_t index) {
     AsterToken *t = tok_at(p, index);
     char small[64];
     char *buf = small;
@@ -653,8 +666,7 @@ static int64_t token_int(Parser *p, size_t index)
     return (int64_t)v;
 }
 
-static double token_float(Parser *p, size_t index)
-{
+static double token_float(Parser *p, size_t index) {
     AsterToken *t = tok_at(p, index);
     char small[64];
     char *buf = small;
@@ -669,8 +681,7 @@ static double token_float(Parser *p, size_t index)
     return v;
 }
 
-static asdl_seq *p_call_arguments(Parser *p)
-{
+static asdl_seq *p_call_arguments(Parser *p) {
     size_t start = p->pos;
     int saved = p->no_arrow;
     asdl_seq *args;
@@ -685,8 +696,7 @@ static asdl_seq *p_call_arguments(Parser *p)
     return args;
 }
 
-static expr_ty p_new_expr(Parser *p)
-{
+static expr_ty p_new_expr(Parser *p) {
     size_t start = p->pos;
     identifier cls;
     asdl_seq *type_args, *args;
@@ -710,8 +720,7 @@ static expr_ty p_new_expr(Parser *p)
                       ATTRS(p, start), p->arena);
 }
 
-static expr_ty p_sizeof_expr(Parser *p)
-{
+static expr_ty p_sizeof_expr(Parser *p) {
     size_t start = p->pos;
     int saved = p->no_arrow;
     typeref_ty ty;
@@ -730,8 +739,7 @@ static expr_ty p_sizeof_expr(Parser *p)
     return _Aster_SizeOf(ty, ATTRS(p, start), p->arena);
 }
 
-static expr_ty p_list_display(Parser *p)
-{
+static expr_ty p_list_display(Parser *p) {
     size_t start = p->pos;
     Seq elements = {0};
     p->pos++;                                   /* '[' */
@@ -800,8 +808,7 @@ static expr_ty p_list_display(Parser *p)
     return _Aster_List(seq_make(&elements, p->arena), ATTRS(p, start), p->arena);
 }
 
-static expr_ty p_dict_or_set_display(Parser *p)
-{
+static expr_ty p_dict_or_set_display(Parser *p) {
     size_t start = p->pos;
     Seq keys = {0}, values = {0}, elements = {0};
     expr_ty first;
@@ -1012,8 +1019,7 @@ static expr_ty p_dict_or_set_display(Parser *p)
 }
 
 /* f"..." 리터럴. {식}과 {{ }} 이스케이프를 처리한다. 'f'는 이미 확인했다. */
-static void fstr_push_char(char **buf, size_t *len, size_t *cap, char c)
-{
+static void fstr_push_char(char **buf, size_t *len, size_t *cap, char c) {
     if (*len + 1 > *cap) {
         *cap = *cap ? *cap * 2 : 32;
         *buf = xrealloc(*buf, *cap);
@@ -1021,8 +1027,7 @@ static void fstr_push_char(char **buf, size_t *len, size_t *cap, char c)
     (*buf)[(*len)++] = c;
 }
 
-static expr_ty p_fstring(Parser *p)
-{
+static expr_ty p_fstring(Parser *p) {
     size_t start = p->pos;
     Seq parts = {0};
     char *lit = NULL;
@@ -1160,8 +1165,7 @@ static expr_ty p_fstring(Parser *p)
 }
 
 /* int(x), str(x) 같은 기본 타입 변환 호출. 인자가 없으면 기본값으로 바꾼다. */
-static expr_ty p_conversion_expr(Parser *p)
-{
+static expr_ty p_conversion_expr(Parser *p) {
     size_t start = p->pos;
     typeref_ty ty = p_primitive_type(p);
     asdl_seq *args;
@@ -1201,15 +1205,13 @@ static expr_ty p_conversion_expr(Parser *p)
     return _Aster_Cast(ty, (expr_ty)asdl_seq_GET(args, 0), ATTRS(p, start), p->arena);
 }
 
-static int is_conversion_type(const AsterToken *t)
-{
+static int is_conversion_type(const AsterToken *t) {
     return t->type == TOK_NAME &&
            (tok_eq(t, "int") || tok_eq(t, "float") || tok_eq(t, "bool") ||
             tok_eq(t, "str"));
 }
 
-static expr_ty p_primary(Parser *p)
-{
+static expr_ty p_primary(Parser *p) {
     size_t start = p->pos;
     AsterToken *t = cur(p);
 
@@ -1325,8 +1327,7 @@ static expr_ty p_primary(Parser *p)
 }
 
 /* '['와 ']' 사이. 인덱스 또는 슬라이스(경계 생략 가능)를 읽는다. */
-static expr_ty p_subscript_index(Parser *p)
-{
+static expr_ty p_subscript_index(Parser *p) {
     size_t start = p->pos;
     expr_ty lower = NULL, upper = NULL, step = NULL;
 
@@ -1349,8 +1350,7 @@ static expr_ty p_subscript_index(Parser *p)
     return _Aster_Slice(lower, upper, step, ATTRS(p, start), p->arena);
 }
 
-static expr_ty p_postfix_expr(Parser *p)
-{
+static expr_ty p_postfix_expr(Parser *p) {
     size_t start = p->pos;
     expr_ty value = p_primary(p);
     if (!value) {
@@ -1426,8 +1426,7 @@ static expr_ty p_postfix_expr(Parser *p)
     }
 }
 
-static expr_ty p_cast(Parser *p)
-{
+static expr_ty p_cast(Parser *p) {
     size_t start = p->pos;
     typeref_ty ty;
     expr_ty operand;
@@ -1448,8 +1447,7 @@ static expr_ty p_cast(Parser *p)
     return _Aster_Cast(ty, operand, ATTRS(p, start), p->arena);
 }
 
-static expr_ty p_power(Parser *p)
-{
+static expr_ty p_power(Parser *p) {
     size_t start = p->pos;
     expr_ty left = p_postfix_expr(p);
     size_t mark;
@@ -1467,8 +1465,7 @@ static expr_ty p_power(Parser *p)
     return left;
 }
 
-static expr_ty p_unary(Parser *p)
-{
+static expr_ty p_unary(Parser *p) {
     size_t start = p->pos;
     if (tok_eq(cur(p), "++") || tok_eq(cur(p), "--")) {
         int is_inc = tok_eq(cur(p), "++");
@@ -1539,8 +1536,7 @@ static expr_ty p_unary(Parser *p)
     }
 }
 
-static expr_ty p_term(Parser *p)
-{
+static expr_ty p_term(Parser *p) {
     size_t start = p->pos;
     expr_ty left = p_unary(p);
     if (!left) {
@@ -1571,8 +1567,7 @@ static expr_ty p_term(Parser *p)
     }
 }
 
-static expr_ty p_arith(Parser *p)
-{
+static expr_ty p_arith(Parser *p) {
     size_t start = p->pos;
     expr_ty left = p_term(p);
     if (!left) {
@@ -1599,8 +1594,7 @@ static expr_ty p_arith(Parser *p)
     }
 }
 
-static int p_comp_op(Parser *p)
-{
+static int p_comp_op(Parser *p) {
     static const struct { const char *text; cmpop_ty op; } ops[] = {
         {"==", Eq}, {"!=", NotEq}, {"<=", LtE}, {">=", GtE}, {"<", Lt}, {">", Gt},
     };
@@ -1613,8 +1607,7 @@ static int p_comp_op(Parser *p)
 }
 
 /* 일반 식 수준의 포함 범위: 1..5, 1..n+1, 1..5..2 */
-static expr_ty p_range_value(Parser *p)
-{
+static expr_ty p_range_value(Parser *p) {
     size_t start = p->pos;
     expr_ty lo = p_arith(p);
     expr_ty hi, step = NULL;
@@ -1638,8 +1631,7 @@ static expr_ty p_range_value(Parser *p)
     return _Aster_Range(lo, hi, step, ATTRS(p, start), p->arena);
 }
 
-static expr_ty p_comparison(Parser *p)
-{
+static expr_ty p_comparison(Parser *p) {
     size_t start = p->pos;
     expr_ty left = p_range_value(p);
     size_t mark;
@@ -1686,8 +1678,7 @@ static expr_ty p_comparison(Parser *p)
     return left;
 }
 
-static expr_ty p_not_expr(Parser *p)
-{
+static expr_ty p_not_expr(Parser *p) {
     size_t start = p->pos;
     if (accept(p, "not")) {
         expr_ty operand = p_not_expr(p);
@@ -1705,8 +1696,7 @@ static expr_ty p_not_expr(Parser *p)
     }
 }
 
-static expr_ty p_and_expr(Parser *p)
-{
+static expr_ty p_and_expr(Parser *p) {
     size_t start = p->pos;
     expr_ty left = p_not_expr(p);
     if (!left) {
@@ -1727,8 +1717,7 @@ static expr_ty p_and_expr(Parser *p)
     }
 }
 
-static expr_ty p_or_expr(Parser *p)
-{
+static expr_ty p_or_expr(Parser *p) {
     size_t start = p->pos;
     expr_ty left = p_and_expr(p);
     if (!left) {
@@ -1749,8 +1738,7 @@ static expr_ty p_or_expr(Parser *p)
     }
 }
 
-static expr_ty p_coalesce_expr(Parser *p)
-{
+static expr_ty p_coalesce_expr(Parser *p) {
     size_t start = p->pos;
     expr_ty left = p_or_expr(p);
     size_t mark;
@@ -1768,8 +1756,7 @@ static expr_ty p_coalesce_expr(Parser *p)
     return left;
 }
 
-static expr_ty p_pipe_expr(Parser *p)
-{
+static expr_ty p_pipe_expr(Parser *p) {
     size_t start = p->pos;
     expr_ty left = p_coalesce_expr(p);
     if (!left) {
@@ -1790,8 +1777,7 @@ static expr_ty p_pipe_expr(Parser *p)
     }
 }
 
-static expr_ty p_lambda_body(Parser *p)
-{
+static expr_ty p_lambda_body(Parser *p) {
     int saved = p->no_arrow;
     expr_ty e;
     p->no_arrow = 1;
@@ -1801,8 +1787,7 @@ static expr_ty p_lambda_body(Parser *p)
 }
 
 /* 람다 매개변수: '타입 이름' 또는 '이름' 둘 다 허용한다. */
-static asdl_seq *p_lambda_params(Parser *p)
-{
+static asdl_seq *p_lambda_params(Parser *p) {
     size_t start = p->pos;
     Seq out = {0};
     for (;;) {
@@ -1826,8 +1811,7 @@ static asdl_seq *p_lambda_params(Parser *p)
     return seq_make(&out, p->arena);
 }
 
-static expr_ty p_lambda_expr(Parser *p)
-{
+static expr_ty p_lambda_expr(Parser *p) {
     size_t start = p->pos;
     AsterToken *t = cur(p);
     Seq params = {0};
@@ -1921,8 +1905,7 @@ static expr_ty p_lambda_expr(Parser *p)
                          ATTRS(p, start), p->arena);
 }
 
-static expr_ty p_expression(Parser *p)
-{
+static expr_ty p_expression(Parser *p) {
     size_t start = p->pos;
     expr_ty e = p_lambda_expr(p);
     if (e)
@@ -1931,8 +1914,7 @@ static expr_ty p_expression(Parser *p)
     return p_pipe_expr(p);
 }
 
-static asdl_seq *p_arguments(Parser *p)
-{
+static asdl_seq *p_arguments(Parser *p) {
     size_t start = p->pos;
     Seq out = {0};
     for (;;) {
@@ -1951,8 +1933,7 @@ static asdl_seq *p_arguments(Parser *p)
 
 /* -------------------------------------------------------------- 매개변수 */
 
-static param_ty p_parameter(Parser *p)
-{
+static param_ty p_parameter(Parser *p) {
     size_t start = p->pos;
     typeref_ty ty = p_type(p);
     identifier name;
@@ -1968,8 +1949,7 @@ static param_ty p_parameter(Parser *p)
     return _Aster_param(ty, name, p->arena);
 }
 
-static asdl_seq *p_parameters(Parser *p)
-{
+static asdl_seq *p_parameters(Parser *p) {
     size_t start = p->pos;
     Seq out = {0};
     for (;;) {
@@ -1986,8 +1966,7 @@ static asdl_seq *p_parameters(Parser *p)
     return seq_make(&out, p->arena);
 }
 
-static asdl_seq *p_type_params(Parser *p)
-{
+static asdl_seq *p_type_params(Parser *p) {
     size_t start = p->pos;
     Seq out = {0};
     if (!accept(p, "<")) {
@@ -2013,8 +1992,7 @@ static asdl_seq *p_type_params(Parser *p)
     return seq_make(&out, p->arena);
 }
 
-static int p_function_signature(Parser *p, asdl_seq **params_out, ret_ty *ret_out)
-{
+static int p_function_signature(Parser *p, asdl_seq **params_out, ret_ty *ret_out) {
     size_t start = p->pos;
     asdl_seq *params;
     ret_ty returns;
@@ -2043,8 +2021,7 @@ static stmt_ty p_statement(Parser *p);
 static stmt_ty p_var_decl_core(Parser *p, int is_const);
 static stmt_ty p_assign_core(Parser *p);
 
-static asdl_seq *p_block(Parser *p)
-{
+static asdl_seq *p_block(Parser *p) {
     size_t start = p->pos;
     Seq body = {0};
     stmt_ty s;
@@ -2062,8 +2039,7 @@ static asdl_seq *p_block(Parser *p)
     return seq_make(&body, p->arena);
 }
 
-static asdl_seq *p_package_stmt(Parser *p)
-{
+static asdl_seq *p_package_stmt(Parser *p) {
     size_t start = p->pos;
     asdl_seq *path;
     if (!accept(p, "package")) {
@@ -2101,8 +2077,7 @@ fail:
     return NULL;
 }
 
-static asdl_seq *p_dotted_name(Parser *p)
-{
+static asdl_seq *p_dotted_name(Parser *p) {
     size_t start = p->pos;
     Seq parts = {0};
     identifier first = p_name(p);
@@ -2126,8 +2101,7 @@ static asdl_seq *p_dotted_name(Parser *p)
     return seq_make(&parts, p->arena);
 }
 
-static stmt_ty p_import_stmt(Parser *p)
-{
+static stmt_ty p_import_stmt(Parser *p) {
     size_t start = p->pos;
     if (accept(p, "import")) {
         asdl_seq *path = p_dotted_name(p);
@@ -2187,8 +2161,7 @@ static stmt_ty p_import_stmt(Parser *p)
     return NULL;
 }
 
-static stmt_ty p_return_stmt(Parser *p)
-{
+static stmt_ty p_return_stmt(Parser *p) {
     size_t start = p->pos;
     expr_ty value = NULL;
     if (!accept(p, "return")) {
@@ -2209,8 +2182,7 @@ static stmt_ty p_return_stmt(Parser *p)
     return _Aster_Return(value, ATTRS(p, start), p->arena);
 }
 
-static stmt_ty p_yield_stmt(Parser *p)
-{
+static stmt_ty p_yield_stmt(Parser *p) {
     size_t start = p->pos;
     expr_ty value = NULL;
     if (!accept(p, "yield")) {
@@ -2231,8 +2203,7 @@ static stmt_ty p_yield_stmt(Parser *p)
     return _Aster_Yield(value, ATTRS(p, start), p->arena);
 }
 
-static stmt_ty p_throw_stmt(Parser *p)
-{
+static stmt_ty p_throw_stmt(Parser *p) {
     size_t start = p->pos;
     expr_ty value;
     identifier exc_type = NULL;
@@ -2259,8 +2230,7 @@ static stmt_ty p_throw_stmt(Parser *p)
     return _Aster_Throw(value, exc_type, ATTRS(p, start), p->arena);
 }
 
-static stmt_ty p_break_stmt(Parser *p)
-{
+static stmt_ty p_break_stmt(Parser *p) {
     size_t start = p->pos;
     if (!(accept(p, "break") && accept(p, ";"))) {
         p->pos = start;
@@ -2269,8 +2239,7 @@ static stmt_ty p_break_stmt(Parser *p)
     return _Aster_Break(ATTRS(p, start), p->arena);
 }
 
-static stmt_ty p_continue_stmt(Parser *p)
-{
+static stmt_ty p_continue_stmt(Parser *p) {
     size_t start = p->pos;
     if (!(accept(p, "continue") && accept(p, ";"))) {
         p->pos = start;
@@ -2279,8 +2248,7 @@ static stmt_ty p_continue_stmt(Parser *p)
     return _Aster_Continue(ATTRS(p, start), p->arena);
 }
 
-static stmt_ty p_expr_stmt(Parser *p)
-{
+static stmt_ty p_expr_stmt(Parser *p) {
     size_t start = p->pos;
     expr_ty value = p_expression(p);
     if (!value || !accept(p, ";")) {
@@ -2295,8 +2263,7 @@ static stmt_ty p_expr_stmt(Parser *p)
 static initializer_ty p_initializer(Parser *p, int allow_brace);
 static designation_ty p_designated_init(Parser *p);
 
-static initializer_ty p_brace_init(Parser *p)
-{
+static initializer_ty p_brace_init(Parser *p) {
     size_t start = p->pos;
     if (!accept(p, "{")) {
         p->pos = start;
@@ -2354,8 +2321,7 @@ static initializer_ty p_brace_init(Parser *p)
     }
 }
 
-static designation_ty p_designated_init(Parser *p)
-{
+static designation_ty p_designated_init(Parser *p) {
     size_t start = p->pos;
     identifier field;
     expr_ty value;
@@ -2376,8 +2342,7 @@ static designation_ty p_designated_init(Parser *p)
     return _Aster_designation(field, value, p->arena);
 }
 
-static initializer_ty p_initializer(Parser *p, int allow_brace)
-{
+static initializer_ty p_initializer(Parser *p, int allow_brace) {
     size_t start = p->pos;
     expr_ty value;
     if (allow_brace) {
@@ -2394,8 +2359,7 @@ static initializer_ty p_initializer(Parser *p, int allow_brace)
     return _Aster_ExprInit(value, p->arena);
 }
 
-static stmt_ty p_var_decl_core(Parser *p, int is_const)
-{
+static stmt_ty p_var_decl_core(Parser *p, int is_const) {
     size_t start = p->pos;
     typeref_ty ty = p_type(p);
     identifier name;
@@ -2451,8 +2415,7 @@ static stmt_ty p_var_decl_core(Parser *p, int is_const)
                           ATTRS(p, start), p->arena);
 }
 
-static stmt_ty p_var_decl(Parser *p)
-{
+static stmt_ty p_var_decl(Parser *p) {
     size_t start = p->pos;
     int is_const = 0;
     stmt_ty core;
@@ -2469,8 +2432,7 @@ static stmt_ty p_var_decl(Parser *p)
                           core->v.VarDecl.init, is_const, ATTRS(p, start), p->arena);
 }
 
-static int p_assign_op(Parser *p)
-{
+static int p_assign_op(Parser *p) {
     static const char *const ops[] = {
         "=", "+=", "-=", "*=", "/=", "//=", "%=", "**=",
     };
@@ -2482,8 +2444,7 @@ static int p_assign_op(Parser *p)
     return 0;
 }
 
-static expr_ty p_assign_target(Parser *p)
-{
+static expr_ty p_assign_target(Parser *p) {
     size_t start = p->pos;
     if (tok_eq(cur(p), "*")) {
         expr_ty inner;
@@ -2522,8 +2483,7 @@ static expr_ty p_assign_target(Parser *p)
     }
 }
 
-static stmt_ty p_assign_core(Parser *p)
-{
+static stmt_ty p_assign_core(Parser *p) {
     size_t start = p->pos;
     expr_ty target = p_assign_target(p);
     int op;
@@ -2545,8 +2505,7 @@ static stmt_ty p_assign_core(Parser *p)
     return _Aster_Assign(target, (assign_op_ty)op, value, ATTRS(p, start), p->arena);
 }
 
-static stmt_ty p_assign_stmt(Parser *p)
-{
+static stmt_ty p_assign_stmt(Parser *p) {
     size_t start = p->pos;
     stmt_ty core = p_assign_core(p);
     if (!core || !accept(p, ";")) {
@@ -2559,8 +2518,7 @@ static stmt_ty p_assign_stmt(Parser *p)
 
 /* --------------------------------------------------------------- enum */
 
-static stmt_ty p_enum_def(Parser *p)
-{
+static stmt_ty p_enum_def(Parser *p) {
     size_t start = p->pos;
     identifier name;
     Seq members = {0};
@@ -2575,11 +2533,36 @@ static stmt_ty p_enum_def(Parser *p)
     }
     while (!at(p, "}")) {
         identifier mname = p_name(p);
+        asdl_seq *params = empty_seq(p);
         expr_ty value = NULL;
         if (!mname) {
             seq_clear(&members);
             p->pos = start;
             return NULL;
+        }
+        if (accept(p, "(")) {
+            Seq ps = {0};
+            if (!accept(p, ")")) {
+                for (;;) {
+                    param_ty pr = p_parameter(p);
+                    if (!pr) {
+                        seq_clear(&ps);
+                        seq_clear(&members);
+                        p->pos = start;
+                        return NULL;
+                    }
+                    seq_push(&ps, pr);
+                    if (!accept(p, ","))
+                        break;
+                }
+                if (!accept(p, ")")) {
+                    seq_clear(&ps);
+                    seq_clear(&members);
+                    p->pos = start;
+                    return NULL;
+                }
+            }
+            params = seq_make(&ps, p->arena);
         }
         if (accept(p, "=")) {
             value = p_expression(p);
@@ -2589,7 +2572,7 @@ static stmt_ty p_enum_def(Parser *p)
                 return NULL;
             }
         }
-        seq_push(&members, _Aster_enum_member(mname, value, p->arena));
+        seq_push(&members, _Aster_enum_member(mname, params, value, p->arena));
         if (!accept(p, ","))
             break;
     }
@@ -2602,8 +2585,7 @@ static stmt_ty p_enum_def(Parser *p)
     return _Aster_EnumDef(name, seq_make(&members, p->arena), ATTRS(p, start), p->arena);
 }
 
-static stmt_ty p_assert_stmt(Parser *p)
-{
+static stmt_ty p_assert_stmt(Parser *p) {
     size_t start = p->pos;
     expr_ty test, message = NULL;
     if (!accept(p, "assert")) {
@@ -2631,8 +2613,7 @@ static stmt_ty p_assert_stmt(Parser *p)
 
 /* ---------------------------------------------------------------- 함수 */
 
-static stmt_ty p_function_def(Parser *p)
-{
+static stmt_ty p_function_def(Parser *p) {
     size_t start = p->pos;
     identifier name;
     asdl_seq *type_params, *params;
@@ -2667,8 +2648,7 @@ static stmt_ty p_function_def(Parser *p)
 }
 
 /* extern fn name(params) -> T;  — 본문 없이 선언만 한다. */
-static stmt_ty p_extern_def(Parser *p)
-{
+static stmt_ty p_extern_def(Parser *p) {
     size_t start = p->pos;
     identifier name;
     asdl_seq *type_params, *params;
@@ -2702,8 +2682,7 @@ static stmt_ty p_extern_def(Parser *p)
 
 /* --------------------------------------------------------------- 클래스 */
 
-static access_ty p_access_modifier(Parser *p)
-{
+static access_ty p_access_modifier(Parser *p) {
     if (accept(p, "public"))
         return Public;
     if (accept(p, "protected"))
@@ -2715,8 +2694,7 @@ static access_ty p_access_modifier(Parser *p)
     return (access_ty)0;
 }
 
-static member_ty p_field_decl(Parser *p)
-{
+static member_ty p_field_decl(Parser *p) {
     size_t start = p->pos;
     access_ty access = p_access_modifier(p);
     int is_static = accept(p, "static");
@@ -2747,8 +2725,7 @@ static member_ty p_field_decl(Parser *p)
     return _Aster_Field(access, ty, name, value, is_static, ATTRS(p, start), p->arena);
 }
 
-static member_ty p_method_def(Parser *p)
-{
+static member_ty p_method_def(Parser *p) {
     size_t start = p->pos;
     access_ty access = p_access_modifier(p);
     int is_static = accept(p, "static");
@@ -2783,8 +2760,7 @@ static member_ty p_method_def(Parser *p)
                          ATTRS(p, start), p->arena);
 }
 
-static member_ty p_constructor_def(Parser *p)
-{
+static member_ty p_constructor_def(Parser *p) {
     size_t start = p->pos;
     asdl_seq *params, *body;
     if (!(accept(p, "constructor") && accept(p, "("))) {
@@ -2804,8 +2780,7 @@ static member_ty p_constructor_def(Parser *p)
     return _Aster_Constructor(params, body, ATTRS(p, start), p->arena);
 }
 
-static member_ty p_property_decl(Parser *p)
-{
+static member_ty p_property_decl(Parser *p) {
     size_t start = p->pos;
     access_ty access = p_access_modifier(p);
     typeref_ty ty;
@@ -2827,8 +2802,7 @@ static member_ty p_property_decl(Parser *p)
     return _Aster_Property(access, ty, name, ATTRS(p, start), p->arena);
 }
 
-static member_ty p_getter_def(Parser *p)
-{
+static member_ty p_getter_def(Parser *p) {
     size_t start = p->pos;
     identifier name;
     asdl_seq *body;
@@ -2849,8 +2823,7 @@ static member_ty p_getter_def(Parser *p)
     return _Aster_Getter(name, body, ATTRS(p, start), p->arena);
 }
 
-static member_ty p_setter_def(Parser *p)
-{
+static member_ty p_setter_def(Parser *p) {
     size_t start = p->pos;
     identifier name;
     typeref_ty ty;
@@ -2889,8 +2862,7 @@ static member_ty p_setter_def(Parser *p)
                          ATTRS(p, start), p->arena);
 }
 
-static member_ty p_class_member(Parser *p)
-{
+static member_ty p_class_member(Parser *p) {
     member_ty m = p_constructor_def(p);
     if (m)
         return m;
@@ -2909,8 +2881,7 @@ static member_ty p_class_member(Parser *p)
     return p_field_decl(p);
 }
 
-static stmt_ty p_class_def(Parser *p)
-{
+static stmt_ty p_class_def(Parser *p) {
     size_t start = p->pos;
     identifier name;
     asdl_seq *type_params, *interfaces;
@@ -2971,8 +2942,7 @@ static stmt_ty p_class_def(Parser *p)
 
 /* ------------------------------------------------------------- 인터페이스 */
 
-static signature_ty p_interface_method(Parser *p)
-{
+static signature_ty p_interface_method(Parser *p) {
     size_t start = p->pos;
     access_ty access = p_access_modifier(p);
     identifier name;
@@ -2994,8 +2964,7 @@ static signature_ty p_interface_method(Parser *p)
     return _Aster_signature(access, name, params, returns, p->arena);
 }
 
-static stmt_ty p_interface_def(Parser *p)
-{
+static stmt_ty p_interface_def(Parser *p) {
     size_t start = p->pos;
     identifier name;
     Seq methods = {0};
@@ -3022,8 +2991,7 @@ static stmt_ty p_interface_def(Parser *p)
 
 /* --------------------------------------------------------------- 구조체 */
 
-static struct_member_ty p_struct_field(Parser *p)
-{
+static struct_member_ty p_struct_field(Parser *p) {
     size_t start = p->pos;
     typeref_ty ty = p_type(p);
     identifier name;
@@ -3039,8 +3007,7 @@ static struct_member_ty p_struct_field(Parser *p)
     return _Aster_StructField(ty, name, p->arena);
 }
 
-static member_init_ty p_member_init(Parser *p)
-{
+static member_init_ty p_member_init(Parser *p) {
     size_t start = p->pos;
     identifier field;
     expr_ty value;
@@ -3057,8 +3024,7 @@ static member_init_ty p_member_init(Parser *p)
     return _Aster_member_init(field, value, p->arena);
 }
 
-static struct_member_ty p_struct_constructor(Parser *p)
-{
+static struct_member_ty p_struct_constructor(Parser *p) {
     size_t start = p->pos;
     size_t name_index = p->pos;
     identifier name;
@@ -3109,8 +3075,7 @@ static struct_member_ty p_struct_constructor(Parser *p)
     return _Aster_StructCtor(params, seq_make(&inits, p->arena), body, p->arena);
 }
 
-static stmt_ty p_exception_def(Parser *p)
-{
+static stmt_ty p_exception_def(Parser *p) {
     size_t start = p->pos;
     identifier name, base = NULL;
     if (!accept(p, "exception")) {
@@ -3136,16 +3101,14 @@ static stmt_ty p_exception_def(Parser *p)
     return _Aster_ExceptionDef(name, base, ATTRS(p, start), p->arena);
 }
 
-static struct_member_ty p_struct_member(Parser *p)
-{
+static struct_member_ty p_struct_member(Parser *p) {
     struct_member_ty m = p_struct_constructor(p);
     if (m)
         return m;
     return p_struct_field(p);
 }
 
-static asdl_seq *p_struct_body(Parser *p)
-{
+static asdl_seq *p_struct_body(Parser *p) {
     size_t start = p->pos;
     Seq members = {0};
     struct_member_ty m;
@@ -3163,8 +3126,7 @@ static asdl_seq *p_struct_body(Parser *p)
     return seq_make(&members, p->arena);
 }
 
-static stmt_ty p_struct_def(Parser *p)
-{
+static stmt_ty p_struct_def(Parser *p) {
     size_t start = p->pos;
     identifier tag;
     NameSet ns = {0};
@@ -3189,8 +3151,7 @@ static stmt_ty p_struct_def(Parser *p)
     return _Aster_StructDef(tag, NULL, members, ATTRS(p, start), p->arena);
 }
 
-static stmt_ty p_typedef_struct(Parser *p)
-{
+static stmt_ty p_typedef_struct(Parser *p) {
     size_t start = p->pos;
     size_t tag_index;
     identifier tag, alias = NULL;
@@ -3235,8 +3196,7 @@ static stmt_ty p_typedef_struct(Parser *p)
 static stmt_ty p_if_stmt(Parser *p);
 static asdl_seq *p_else_body(Parser *p);
 
-static stmt_ty p_if_stmt(Parser *p)
-{
+static stmt_ty p_if_stmt(Parser *p) {
     size_t start = p->pos;
     expr_ty test;
     asdl_seq *body, *orelse;
@@ -3268,8 +3228,7 @@ static stmt_ty p_if_stmt(Parser *p)
     return _Aster_If(test, body, orelse, ATTRS(p, start), p->arena);
 }
 
-static asdl_seq *p_else_body(Parser *p)
-{
+static asdl_seq *p_else_body(Parser *p) {
     size_t start = p->pos;
     asdl_seq *body = p_block(p);
     if (body)
@@ -3287,8 +3246,7 @@ static asdl_seq *p_else_body(Parser *p)
     }
 }
 
-static stmt_ty p_while_stmt(Parser *p)
-{
+static stmt_ty p_while_stmt(Parser *p) {
     size_t start = p->pos;
     expr_ty test;
     asdl_seq *body;
@@ -3309,8 +3267,7 @@ static stmt_ty p_while_stmt(Parser *p)
     return _Aster_While(test, body, ATTRS(p, start), p->arena);
 }
 
-static range_expr_ty p_range_expr(Parser *p)
-{
+static range_expr_ty p_range_expr(Parser *p) {
     size_t start = p->pos;
     expr_ty lo = p_arith(p);
     expr_ty hi, step = NULL;
@@ -3334,8 +3291,7 @@ static range_expr_ty p_range_expr(Parser *p)
     return _Aster_range_expr(lo, hi, step, p->arena);
 }
 
-static stmt_ty p_range_for_stmt(Parser *p)
-{
+static stmt_ty p_range_for_stmt(Parser *p) {
     size_t start = p->pos;
     typeref_ty ty;
     identifier name, target;
@@ -3379,16 +3335,14 @@ static stmt_ty p_range_for_stmt(Parser *p)
     return _Aster_ForRange(ty, name, iter, body, ATTRS(p, start), p->arena);
 }
 
-static stmt_ty p_for_init(Parser *p)
-{
+static stmt_ty p_for_init(Parser *p) {
     stmt_ty s = p_var_decl_core(p, 0);
     if (s)
         return s;
     return p_assign_core(p);
 }
 
-static stmt_ty p_for_step(Parser *p)
-{
+static stmt_ty p_for_step(Parser *p) {
     size_t start = p->pos;
     stmt_ty s = p_assign_core(p);
     expr_ty e;
@@ -3402,8 +3356,7 @@ static stmt_ty p_for_step(Parser *p)
     return _Aster_ExprStmt(e, ATTRS(p, start), p->arena);
 }
 
-static stmt_ty p_for_in_stmt(Parser *p)
-{
+static stmt_ty p_for_in_stmt(Parser *p) {
     size_t start = p->pos;
     typeref_ty ty;
     identifier name;
@@ -3436,8 +3389,7 @@ static stmt_ty p_for_in_stmt(Parser *p)
     return _Aster_ForIn(ty, name, iter, body, ATTRS(p, start), p->arena);
 }
 
-static stmt_ty p_c_for_stmt(Parser *p)
-{
+static stmt_ty p_c_for_stmt(Parser *p) {
     size_t start = p->pos;
     stmt_ty init, step;
     expr_ty test;
@@ -3469,8 +3421,7 @@ static stmt_ty p_c_for_stmt(Parser *p)
     return _Aster_For(init, test, step, body, ATTRS(p, start), p->arena);
 }
 
-static stmt_ty p_for_stmt(Parser *p)
-{
+static stmt_ty p_for_stmt(Parser *p) {
     stmt_ty s = p_range_for_stmt(p);
     if (s)
         return s;
@@ -3480,8 +3431,159 @@ static stmt_ty p_for_stmt(Parser *p)
     return p_c_for_stmt(p);
 }
 
-static handler_ty p_catch_clause(Parser *p)
-{
+static match_pattern_ty p_match_pattern(Parser *p) {
+    size_t start = p->pos;
+    AsterToken *t = cur(p);
+
+    if (t->type == TOK_INT) {
+        int64_t v = token_int(p, start);
+        p->pos++;
+        return _Aster_PLiteral(_Aster_Constant(Value_Int(v), ATTRS(p, start), p->arena),
+                               p->arena);
+    }
+    if (t->type == TOK_FLOAT) {
+        double v = token_float(p, start);
+        p->pos++;
+        return _Aster_PLiteral(_Aster_Constant(Value_Float(v), ATTRS(p, start), p->arena),
+                               p->arena);
+    }
+    if (t->type == TOK_STRING) {
+        int len = 0;
+        AsterError e;
+        char *decoded = Aster_DecodeString(t->start, t->length, &len, &e);
+        Value v;
+        if (!decoded)
+            syntax_error_at(p, start, "invalid string literal: %s", e.message);
+        v = Value_Obj((Object *)AsterString_FromUTF8(decoded, (size_t)len));
+        free(decoded);
+        p->pos++;
+        return _Aster_PLiteral(_Aster_Constant(v, ATTRS(p, start), p->arena), p->arena);
+    }
+    if (tok_eq(t, "true") || tok_eq(t, "false") || tok_eq(t, "null")) {
+        Value v = tok_eq(t, "true") ? Value_Bool(1)
+                : tok_eq(t, "false") ? Value_Bool(0) : Value_Null();
+        p->pos++;
+        return _Aster_PLiteral(_Aster_Constant(v, ATTRS(p, start), p->arena), p->arena);
+    }
+    if (tok_eq(t, "-") && tok_at(p, start + 1)->type == TOK_INT) {
+        int64_t v;
+        p->pos++;
+        v = token_int(p, p->pos);
+        p->pos++;
+        return _Aster_PLiteral(_Aster_Constant(Value_Int(-v), ATTRS(p, start), p->arena),
+                               p->arena);
+    }
+    if (t->type == TOK_NAME && !is_hard_token(t)) {
+        identifier first = intern_token(p, t);
+        expr_ty path;
+        int dotted = 0;
+        p->pos++;
+        path = _Aster_Name(first, ATTRS(p, start), p->arena);
+        while (accept(p, ".")) {
+            identifier part = p_name(p);
+            if (!part) {
+                p->pos = start;
+                return NULL;
+            }
+            path = _Aster_Attribute(path, part, ATTRS(p, start), p->arena);
+            dotted = 1;
+        }
+        if (accept(p, "(")) {
+            Seq items = {0};
+            if (!at(p, ")")) {
+                for (;;) {
+                    match_pattern_ty item = p_match_pattern(p);
+                    if (!item) {
+                        seq_clear(&items);
+                        p->pos = start;
+                        return NULL;
+                    }
+                    seq_push(&items, item);
+                    if (!accept(p, ","))
+                        break;
+                }
+            }
+            if (!accept(p, ")")) {
+                seq_clear(&items);
+                p->pos = start;
+                return NULL;
+            }
+            return _Aster_PVariant(path, seq_make(&items, p->arena), p->arena);
+        }
+        if (!dotted)
+            return _Aster_PBind(first, p->arena);
+        return _Aster_PVariant(path, empty_seq(p), p->arena);
+    }
+    expect_text(p, "a literal, name, or Type.Variant(...) pattern");
+    p->pos = start;
+    return NULL;
+}
+
+static stmt_ty p_switch_stmt(Parser *p) {
+    size_t start = p->pos;
+    expr_ty subject;
+    Seq cases = {0};
+    int have_default = 0;
+
+    if (!(accept(p, "switch") && accept(p, "("))) {
+        p->pos = start;
+        return NULL;
+    }
+    subject = p_expression(p);
+    if (!subject || !accept(p, ")")) {
+        p->pos = start;
+        return NULL;
+    }
+    if (!accept(p, "{")) {
+        p->pos = start;
+        return NULL;
+    }
+    for (;;) {
+        size_t mark = p->pos;
+        if (accept(p, "case")) {
+            match_pattern_ty pat;
+            asdl_seq *body;
+            if (have_default)
+                syntax_error_at(p, mark, "case cannot follow default");
+            pat = p_match_pattern(p);
+            if (!pat) {
+                p->pos = mark;
+                goto fail;
+            }
+            body = p_block(p);
+            if (!body) {
+                p->pos = mark;
+                goto fail;
+            }
+            seq_push(&cases, _Aster_match_case(pat, body, p->arena));
+            continue;
+        }
+        if (accept(p, "default")) {
+            asdl_seq *body;
+            if (have_default)
+                syntax_error_at(p, mark, "duplicate default case");
+            have_default = 1;
+            body = p_block(p);
+            if (!body) {
+                p->pos = mark;
+                goto fail;
+            }
+            seq_push(&cases, _Aster_match_case(_Aster_PBind("_", p->arena), body,
+                                               p->arena));
+            continue;
+        }
+        break;
+    }
+    if (!accept(p, "}"))
+        goto fail;
+    return _Aster_Switch(subject, seq_make(&cases, p->arena), ATTRS(p, start), p->arena);
+fail:
+    seq_clear(&cases);
+    p->pos = start;
+    return NULL;
+}
+
+static handler_ty p_catch_clause(Parser *p) {
     size_t start = p->pos;
     typeref_ty ty;
     identifier name;
@@ -3508,8 +3610,7 @@ static handler_ty p_catch_clause(Parser *p)
     return _Aster_handler(ty, name, body, p->arena);
 }
 
-static stmt_ty p_try_stmt(Parser *p)
-{
+static stmt_ty p_try_stmt(Parser *p) {
     size_t start = p->pos;
     asdl_seq *body;
     Seq handlers = {0};
@@ -3561,8 +3662,7 @@ static stmt_ty p_try_stmt(Parser *p)
 
 /* ---------------------------------------------------------------- 문장 */
 
-static stmt_ty p_simple_stmt(Parser *p)
-{
+static stmt_ty p_simple_stmt(Parser *p) {
     stmt_ty s = p_import_stmt(p);
     if (s)
         return s;
@@ -3593,8 +3693,7 @@ static stmt_ty p_simple_stmt(Parser *p)
     return p_expr_stmt(p);
 }
 
-static stmt_ty p_export_decl(Parser *p)
-{
+static stmt_ty p_export_decl(Parser *p) {
     size_t start = p->pos;
     stmt_ty inner;
     if (!accept(p, "export")) {
@@ -3623,8 +3722,7 @@ static stmt_ty p_export_decl(Parser *p)
     return _Aster_Export(inner, ATTRS(p, start), p->arena);
 }
 
-static stmt_ty p_compound_stmt(Parser *p)
-{
+static stmt_ty p_compound_stmt(Parser *p) {
     stmt_ty s = p_export_decl(p);
     if (s)
         return s;
@@ -3661,11 +3759,13 @@ static stmt_ty p_compound_stmt(Parser *p)
     s = p_for_stmt(p);
     if (s)
         return s;
+    s = p_switch_stmt(p);
+    if (s)
+        return s;
     return p_try_stmt(p);
 }
 
-static stmt_ty p_statement(Parser *p)
-{
+static stmt_ty p_statement(Parser *p) {
     stmt_ty s = p_compound_stmt(p);
     if (s)
         return s;
@@ -3674,8 +3774,7 @@ static stmt_ty p_statement(Parser *p)
 
 /* ------------------------------------------------------------ 파일과 오류 */
 
-static mod_ty p_file(Parser *p)
-{
+static mod_ty p_file(Parser *p) {
     size_t start = p->pos;
     asdl_seq *package = p_package_stmt(p);
     Seq body = {0};
@@ -3693,8 +3792,7 @@ static mod_ty p_file(Parser *p)
     return _Aster_Module(package, seq_make(&body, p->arena), p->arena);
 }
 
-static int expected_has(Parser *p, const char *text)
-{
+static int expected_has(Parser *p, const char *text) {
     int i;
     for (i = 0; i < p->nexp; i++)
         if (strcmp(p->expected[i], text) == 0)
@@ -3702,8 +3800,7 @@ static int expected_has(Parser *p, const char *text)
     return 0;
 }
 
-static void generic_error(Parser *p)
-{
+static void generic_error(Parser *p) {
     size_t idx = p->farthest < p->n ? p->farthest : p->n - 1;
     AsterToken *t = tok_at(p, idx);
 
@@ -3764,8 +3861,7 @@ static void generic_error(Parser *p)
     }
 }
 
-static void parser_free(Parser *p)
-{
+static void parser_free(Parser *p) {
     size_t i;
     Aster_TokenList_Clear(&p->list);
     free(p->type_names.items);
@@ -3779,8 +3875,7 @@ static void parser_free(Parser *p)
     free(p);
 }
 
-mod_ty Aster_ParseFile(const char *source, size_t length, Arena *arena, AsterError *err)
-{
+mod_ty Aster_ParseFile(const char *source, size_t length, Arena *arena, AsterError *err) {
     Parser *p = xrealloc(NULL, sizeof *p);
     mod_ty mod;
 
@@ -3812,8 +3907,7 @@ mod_ty Aster_ParseFile(const char *source, size_t length, Arena *arena, AsterErr
 }
 
 expr_ty Aster_ParseExpression(const char *source, size_t length, Arena *arena,
-                              AsterError *err)
-{
+                              AsterError *err) {
     Parser *p = xrealloc(NULL, sizeof *p);
     expr_ty e;
 

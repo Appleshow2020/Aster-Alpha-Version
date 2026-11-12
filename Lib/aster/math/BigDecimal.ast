@@ -1,0 +1,372 @@
+/* aster.math.BigDecimal: 임의 정밀도 십진수.
+   unscaled(BigInteger) * 10^(-scale) 로 값을 표현한다.
+   add/subtract/multiply/divide/setScale/pow/toString을 구현하고,
+   HALF_UP/HALF_DOWN/HALF_EVEN/UP/DOWN/CEILING/FLOOR 반올림을 지원한다.
+
+   Aster 타입 검사기는 생성자 오버로드를 지원하지 않으므로 생성자는
+   int | float | str 하나이고, 정적 팩터리 valueOf가 형별 진입점이다. */
+
+import aster.math.BigInteger;
+import aster.math.RoundingMode;
+
+export class BigDecimal {
+    private BigInteger unscaled;
+    private int scaleValue;
+
+    /* Java의 BigDecimal.ZERO/ONE/TEN (모듈 끝에서 채운다). */
+    public static BigDecimal ZERO;
+    public static BigDecimal ONE;
+    public static BigDecimal TEN;
+
+    constructor(any value) {
+        self->unscaled = BigInteger.zero();
+        self->scaleValue = 0;
+        self->_parse(str(value));
+    }
+
+    public static fn valueOf(int value) -> BigDecimal {
+        return new BigDecimal(value);
+    }
+
+    public static fn valueOf(float value) -> BigDecimal {
+        return new BigDecimal(value);
+    }
+
+    private static fn _make(BigInteger unscaled, int newScale) -> BigDecimal {
+        BigDecimal result = new BigDecimal(0);
+        result->unscaled = unscaled;
+        result->scaleValue = newScale;
+        return result;
+    }
+
+    private static fn _pow10(int n) -> BigInteger {
+        return BigInteger.ten()->pow(n);
+    }
+
+    private fn _parse(str text) -> void {
+        str s = text.strip();
+        if (s.length() == 0) {
+            throw "empty BigDecimal string" as ValueError;
+        }
+        int index = 0;
+        int newSign = 1;
+        str first = s.charAt(0);
+        if (first == "-") {
+            newSign = -1;
+            index = 1;
+        }
+        else if (first == "+") {
+            index = 1;
+        }
+        list<str> digitChars = [];
+        int fracDigits = 0;
+        bool seenPoint = false;
+        int expValue = 0;
+        bool inExponent = false;
+        while (index < s.length()) {
+            str c = s.charAt(index);
+            if (c == "e" or c == "E") {
+                inExponent = true;
+                index = index + 1;
+                break;
+            }
+            if (c == ".") {
+                if (seenPoint) {
+                    throw "malformed BigDecimal string: \"" + text + "\"" as ValueError;
+                }
+                seenPoint = true;
+            }
+            else if (c.isdigit()) {
+                digitChars.append(c);
+                if (seenPoint) { fracDigits = fracDigits + 1; }
+            }
+            else {
+                throw "malformed BigDecimal string: \"" + text + "\"" as ValueError;
+            }
+            index = index + 1;
+        }
+        if (inExponent) {
+            if (index >= s.length()) {
+                throw "malformed BigDecimal string: \"" + text + "\"" as ValueError;
+            }
+            expValue = s.substring(index).to_int();
+        }
+        str digits = "".join(digitChars);
+        if (digits.length() == 0) {
+            throw "malformed BigDecimal string: \"" + text + "\"" as ValueError;
+        }
+        str signedDigits = digits;
+        if (newSign < 0) { signedDigits = "-" + digits; }
+        self->unscaled = new BigInteger(signedDigits);
+        self->scaleValue = fracDigits - expValue;
+    }
+
+    /* --- 기본 접근자 --- */
+
+    public fn scale() -> int {
+        return self->scaleValue;
+    }
+
+    public fn unscaledValue() -> BigInteger {
+        return self->unscaled;
+    }
+
+    public fn precision() -> int {
+        if (self->unscaled->signum() == 0) { return 1; }
+        return self->unscaled->abs()->toString().length();
+    }
+
+    /* --- 산술 --- */
+
+    public fn add(BigDecimal other) -> BigDecimal {
+        int s = self->scaleValue;
+        if (other->scaleValue > s) { s = other->scaleValue; }
+        BigInteger a = self->unscaled->multiply(BigDecimal._pow10(s - self->scaleValue));
+        BigInteger b = other->unscaled->multiply(BigDecimal._pow10(s - other->scaleValue));
+        return BigDecimal._make(a->add(b), s);
+    }
+
+    public fn subtract(BigDecimal other) -> BigDecimal {
+        int s = self->scaleValue;
+        if (other->scaleValue > s) { s = other->scaleValue; }
+        BigInteger a = self->unscaled->multiply(BigDecimal._pow10(s - self->scaleValue));
+        BigInteger b = other->unscaled->multiply(BigDecimal._pow10(s - other->scaleValue));
+        return BigDecimal._make(a->subtract(b), s);
+    }
+
+    public fn multiply(BigDecimal other) -> BigDecimal {
+        return BigDecimal._make(self->unscaled->multiply(other->unscaled),
+                                self->scaleValue + other->scaleValue);
+    }
+
+    /* 정확한 나눗셈. 무한소수면 ArithmeticError. */
+    public fn divide(BigDecimal other) -> BigDecimal {
+        if (other->unscaled->signum() == 0) {
+            throw "BigDecimal divide by zero" as ArithmeticError;
+        }
+        int preferred = self->scaleValue - other->scaleValue;
+        BigInteger num = self->unscaled;
+        BigInteger den = other->unscaled;
+        int k = 0;
+        while (k <= 100) {
+            list<BigInteger> qr = num->divideAndRemainder(den);
+            if (qr[1]->signum() == 0) {
+                BigInteger q = qr[0];
+                int s = preferred + k;
+                int floorScale = preferred;
+                if (floorScale < 0) { floorScale = 0; }
+                while (s > floorScale and q->remainder(BigInteger.ten())->signum() == 0) {
+                    q = q->divide(BigInteger.ten());
+                    s = s - 1;
+                }
+                return BigDecimal._normalize(q, s);
+            }
+            num = num->multiply(BigInteger.ten());
+            k = k + 1;
+        }
+        throw "Non-terminating decimal expansion" as ArithmeticError;
+    }
+
+    private static fn _normalize(BigInteger q, int s) -> BigDecimal {
+        if (s >= 0) {
+            return BigDecimal._make(q, s);
+        }
+        return BigDecimal._make(q->multiply(BigDecimal._pow10(-s)), 0);
+    }
+
+    /* 부호 있는 num/den을 mode에 따라 정수로 반올림한다. den != 0. */
+    private static fn _roundQuotient(BigInteger num, BigInteger den,
+                                     RoundingMode mode) -> BigInteger {
+        if (den->signum() == 0) {
+            throw "BigDecimal divide by zero" as ArithmeticError;
+        }
+        int s = num->signum() * den->signum();
+        BigInteger na = num->abs();
+        BigInteger da = den->abs();
+        list<BigInteger> qr = na->divideAndRemainder(da);
+        BigInteger q = qr[0];
+        BigInteger r = qr[1];
+        bool inc = false;
+        if (r->signum() != 0) {
+            if (mode == RoundingMode.UP) {
+                inc = true;
+            }
+            else if (mode == RoundingMode.DOWN) {
+                inc = false;
+            }
+            else if (mode == RoundingMode.CEILING) {
+                inc = s > 0;
+            }
+            else if (mode == RoundingMode.FLOOR) {
+                inc = s < 0;
+            }
+            else if (mode == RoundingMode.UNNECESSARY) {
+                throw "Rounding necessary" as ArithmeticError;
+            }
+            else {
+                int cmp = r->shiftLeft(1)->compareTo(da);
+                if (cmp > 0) {
+                    inc = true;
+                }
+                else if (cmp == 0) {
+                    if (mode == RoundingMode.HALF_UP) {
+                        inc = true;
+                    }
+                    else if (mode == RoundingMode.HALF_DOWN) {
+                        inc = false;
+                    }
+                    else {
+                        inc = q->testBit(0);
+                    }
+                }
+            }
+            if (inc) { q = q->add(BigInteger.one()); }
+        }
+        if (s < 0) { return q->negate(); }
+        return q;
+    }
+
+    public fn divide(BigDecimal other, int targetScale, RoundingMode mode) -> BigDecimal {
+        int m = targetScale + other->scaleValue - self->scaleValue;
+        BigInteger num = self->unscaled;
+        BigInteger den = other->unscaled;
+        if (m >= 0) {
+            num = num->multiply(BigDecimal._pow10(m));
+        }
+        else {
+            den = den->multiply(BigDecimal._pow10(-m));
+        }
+        BigInteger q = BigDecimal._roundQuotient(num, den, mode);
+        return BigDecimal._make(q, targetScale);
+    }
+
+    public fn setScale(int newScale) -> BigDecimal {
+        int diff = newScale - self->scaleValue;
+        if (diff >= 0) {
+            return BigDecimal._make(
+                self->unscaled->multiply(BigDecimal._pow10(diff)), newScale);
+        }
+        list<BigInteger> qr = self->unscaled->divideAndRemainder(BigDecimal._pow10(-diff));
+        if (qr[1]->signum() != 0) {
+            throw "Rounding necessary" as ArithmeticError;
+        }
+        return BigDecimal._make(qr[0], newScale);
+    }
+
+    public fn setScale(int newScale, RoundingMode mode) -> BigDecimal {
+        int diff = newScale - self->scaleValue;
+        if (diff >= 0) {
+            return BigDecimal._make(
+                self->unscaled->multiply(BigDecimal._pow10(diff)), newScale);
+        }
+        BigInteger q = BigDecimal._roundQuotient(
+            self->unscaled, BigDecimal._pow10(-diff), mode);
+        return BigDecimal._make(q, newScale);
+    }
+
+    public fn pow(int exponent) -> BigDecimal {
+        if (exponent < 0) {
+            throw "negative exponent" as ArithmeticError;
+        }
+        return BigDecimal._make(self->unscaled->pow(exponent),
+                                self->scaleValue * exponent);
+    }
+
+    public fn abs() -> BigDecimal {
+        return BigDecimal._make(self->unscaled->abs(), self->scaleValue);
+    }
+
+    public fn negate() -> BigDecimal {
+        return BigDecimal._make(self->unscaled->negate(), self->scaleValue);
+    }
+
+    public fn signum() -> int {
+        return self->unscaled->signum();
+    }
+
+    public fn stripTrailingZeros() -> BigDecimal {
+        BigInteger u = self->unscaled;
+        int s = self->scaleValue;
+        if (u->signum() == 0) {
+            return BigDecimal._make(u, 0);
+        }
+        while (s > 0 and u->remainder(BigInteger.ten())->signum() == 0) {
+            u = u->divide(BigInteger.ten());
+            s = s - 1;
+        }
+        return BigDecimal._make(u, s);
+    }
+
+    public fn movePointLeft(int n) -> BigDecimal {
+        return BigDecimal._make(self->unscaled, self->scaleValue + n);
+    }
+
+    public fn movePointRight(int n) -> BigDecimal {
+        return BigDecimal._make(self->unscaled, self->scaleValue - n);
+    }
+
+    public fn compareTo(BigDecimal other) -> int {
+        int s = self->scaleValue;
+        if (other->scaleValue > s) { s = other->scaleValue; }
+        BigInteger a = self->unscaled->multiply(BigDecimal._pow10(s - self->scaleValue));
+        BigInteger b = other->unscaled->multiply(BigDecimal._pow10(s - other->scaleValue));
+        return a->compareTo(b);
+    }
+
+    public fn equals(BigDecimal other) -> bool {
+        return self->scaleValue == other->scaleValue
+            and self->unscaled->equals(other->unscaled);
+    }
+
+    public fn hashCode() -> int {
+        int h = (self->unscaled->hashCode() * 31 + self->scaleValue) % 1000000007;
+        return h;
+    }
+
+    private fn _zeroDigits(int n) -> str {
+        str out = "";
+        int i = 0;
+        while (i < n) {
+            out = out + "0";
+            i = i + 1;
+        }
+        return out;
+    }
+
+    public fn toString() -> str {
+        str digits = self->unscaled->abs()->toString();
+        str prefix = "";
+        if (self->unscaled->signum() < 0) { prefix = "-"; }
+        if (self->scaleValue == 0) {
+            return prefix + digits;
+        }
+        if (self->scaleValue > 0) {
+            if (digits.length() <= self->scaleValue) {
+                return prefix + "0." + self->_zeroDigits(self->scaleValue - digits.length()) + digits;
+            }
+            int cut = digits.length() - self->scaleValue;
+            return prefix + digits.substring(0, cut) + "." + digits.substring(cut);
+        }
+        return prefix + digits + self->_zeroDigits(-self->scaleValue);
+    }
+
+    public fn doubleValue() -> float {
+        return self->toString().to_float();
+    }
+
+    public fn intValue() -> int {
+        return self->setScale(0, RoundingMode.DOWN)->unscaled->intValue();
+    }
+
+    public fn longValue() -> int {
+        return self->setScale(0, RoundingMode.DOWN)->unscaled->longValue();
+    }
+
+    public fn __str__() -> str {
+        return self->toString();
+    }
+}
+
+BigDecimal.ZERO = BigDecimal.valueOf(0);
+BigDecimal.ONE = BigDecimal.valueOf(1);
+BigDecimal.TEN = BigDecimal.valueOf(10);

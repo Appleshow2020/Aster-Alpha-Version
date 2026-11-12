@@ -1,0 +1,53 @@
+/* aster.util.MapEntry: Java Map.Entry 대응.
+
+   HashMap.entrySet()이 돌려주는 리스트의 원소다. 엔트리 자체를 딕셔너리 키로
+   쓰지 않도록(해시 가능 보장이 없으므로) 리스트로 돌려준다. */
+
+import aster.util.Objects;
+
+export class MapEntry<K, V> {
+    private K key;
+    private V value;
+
+    constructor(K key, V value) {
+        self->key = key;
+        self->value = value;
+    }
+
+    public fn getKey() -> K {
+        return self->key;
+    }
+
+    public fn getValue() -> V {
+        return self->value;
+    }
+
+    public fn setValue(V value) -> V {
+        V old = self->value;
+        self->value = value;
+        return old;
+    }
+
+    public fn equals(MapEntry* other) -> bool {
+        if (other == null) {
+            return false;
+        }
+        return self->key == other->key and self->value == other->value;
+    }
+
+    public fn hashCode() -> int {
+        return Objects.hash(self->key, self->value);
+    }
+
+    public fn __eq__(MapEntry* other) -> bool {
+        return self->equals(other);
+    }
+
+    public fn __str__() -> str {
+        return str(self->key) + "=" + str(self->value);
+    }
+
+    public fn toString() -> str {
+        return self->__str__();
+    }
+}

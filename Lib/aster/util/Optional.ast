@@ -1,0 +1,117 @@
+/* aster.util.Optional: 값이 있을 수도 없을 수도 있는 컨테이너.
+
+   Aster는 생성자 오버로드를 지원하지 않으므로 빈 값은 `Optional.empty()`,
+   값이 있는 경우는 `Optional.of(v)` / `Optional.ofNullable(v)` 정적 팩토리로 만든다.
+   콜백은 인터페이스가 아니라 함수 타입(fn(...) -> T) 매개변수로 받는다. */
+
+export class Optional<T> {
+    private T value;
+    private bool present;
+
+    constructor() {
+        self->value = null;
+        self->present = false;
+    }
+
+    public static fn empty() -> Optional<T> {
+        return new Optional<T>();
+    }
+
+    public static fn of(any value) -> Optional<T> {
+        if (value is null) {
+            throw "value must not be null" as NullPointerError;
+        }
+        Optional<T> opt = new Optional<T>();
+        opt.value = value;
+        opt.present = true;
+        return opt;
+    }
+
+    public static fn ofNullable(any value) -> Optional<T> {
+        Optional<T> opt = new Optional<T>();
+        if (value is not null) {
+            opt.value = value;
+            opt.present = true;
+        }
+        return opt;
+    }
+
+    public fn isPresent() -> bool {
+        return self->present;
+    }
+
+    public fn isEmpty() -> bool {
+        return not self->present;
+    }
+
+    public fn get() -> T {
+        if (not self->present) {
+            throw "no value present" as NoSuchElementError;
+        }
+        return self->value;
+    }
+
+    public fn orElse(T other) -> T {
+        if (self->present) {
+            return self->value;
+        }
+        return other;
+    }
+
+    public fn orElseGet(fn() -> any supplier) -> T {
+        if (self->present) {
+            return self->value;
+        }
+        return supplier();
+    }
+
+    public fn orElseThrow() -> T {
+        if (not self->present) {
+            throw "no value present" as NoSuchElementError;
+        }
+        return self->value;
+    }
+
+    public fn map(fn(any) -> any mapper) -> Optional<any> {
+        if (not self->present) {
+            return Optional.empty();
+        }
+        return Optional.ofNullable(mapper(self->value));
+    }
+
+    public fn filter(fn(any) -> bool predicate) -> Optional<T> {
+        if (not self->present) {
+            return Optional.empty();
+        }
+        if (predicate(self->value)) {
+            return self;
+        }
+        return Optional.empty();
+    }
+
+    public fn ifPresent(fn(any) -> void action) -> void {
+        if (self->present) {
+            action(self->value);
+        }
+    }
+
+    public fn ifPresentOrElse(fn(any) -> void action, fn() -> void other) -> void {
+        if (self->present) {
+            action(self->value);
+        }
+        else {
+            other();
+        }
+    }
+
+    public fn toString() -> str {
+        if (not self->present) {
+            return "Optional.empty";
+        }
+        return "Optional[" + str(self->value) + "]";
+    }
+
+    public fn __str__() -> str {
+        return self->toString();
+    }
+}

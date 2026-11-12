@@ -1,0 +1,56 @@
+import System.stdout.*;
+
+class Node {
+    public int value;
+    constructor(int v) { self->value = v; }
+    public fn get() -> int { return self->value; }
+}
+
+fn find(int k) -> Node? {
+    if (k > 0) {
+        return new Node(k);
+    }
+    return null;
+}
+
+fn describe(int k) -> str {
+    Node? node = find(k);
+    if (node == null) {
+        return "none";
+    }
+    return "node " + str(node->get());
+}
+
+fn shrink(int k) -> str {
+    Node? node = find(k);
+    if (node != null) {
+        return "value " + str(node->value);
+    }
+    return "empty";
+}
+
+fn guard(int k) -> str {
+    Node? node = find(k);
+    if (node == null) {
+        return "empty";
+    }
+    int before = node->get();
+    node = null;
+    if (node != null) {
+        return "again " + str(node->get());
+    }
+    return "was " + str(before);
+}
+
+println(describe(0));
+println(describe(5));
+println(shrink(0));
+println(shrink(5));
+println(guard(7));
+
+str? label = null;
+println(label?.toUpperCase() ?? "(null)");
+label = "ok";
+if (label != null and label.length() > 0) {
+    println(label.toUpperCase());
+}

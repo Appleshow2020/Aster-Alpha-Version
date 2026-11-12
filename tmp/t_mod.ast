@@ -1,0 +1,5 @@
+import System.stdout.*;
+import mod.Thing;
+Thing t = new Thing();
+println(t.name());
+println(Thing.hi());

@@ -2,6 +2,7 @@
 
 extern fn _aster_now_ms() -> int;
 extern fn _aster_sleep_ms(int milliseconds) -> void;
+extern fn _aster_format_time(int epochSeconds, str pattern) -> str;
 extern fn time(int pointer) -> int;
 extern fn clock() -> int;
 
@@ -26,4 +27,26 @@ export fn sleepMillis(int milliseconds) -> void {
 
 export fn sleep(int seconds_) -> void {
     _aster_sleep_ms(seconds_ * 1000);
+}
+
+/* 에포크 초를 로컬 시각 문자열로 (strftime 패턴) */
+export fn formatTime(int epochSeconds, str pattern) -> str {
+    return _aster_format_time(epochSeconds, pattern);
+}
+
+/* 에포크 밀리초 기준 */
+export fn formatMillis(int epochMilliseconds, str pattern) -> str {
+    return _aster_format_time(epochMilliseconds / 1000, pattern);
+}
+
+export fn formatNow(str pattern) -> str {
+    return _aster_format_time(millis() / 1000, pattern);
+}
+
+export fn isoDate(int epochSeconds) -> str {
+    return _aster_format_time(epochSeconds, "%Y-%m-%d");
+}
+
+export fn isoDateTime(int epochSeconds) -> str {
+    return _aster_format_time(epochSeconds, "%Y-%m-%d %H:%M:%S");
 }

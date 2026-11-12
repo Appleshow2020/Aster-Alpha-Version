@@ -17,6 +17,8 @@ typedef struct _signature *signature_ty;
 typedef struct _handler *handler_ty;
 typedef struct _range_expr *range_expr_ty;
 typedef struct _enum_member *enum_member_ty;
+typedef struct _match_case *match_case_ty;
+typedef struct _match_pattern *match_pattern_ty;
 typedef struct _initializer *initializer_ty;
 typedef struct _designation *designation_ty;
 typedef struct _member *member_ty;
@@ -39,7 +41,7 @@ struct _mod {
     } v;
 };
 
-enum _stmt_kind { FunctionDef_kind = 1, ClassDef_kind = 2, InterfaceDef_kind = 3, StructDef_kind = 4, VarDecl_kind = 5, EnumDef_kind = 6, Destructure_kind = 7, Assert_kind = 8, Assign_kind = 9, If_kind = 10, While_kind = 11, For_kind = 12, ForRange_kind = 13, ForIn_kind = 14, Try_kind = 15, Yield_kind = 16, Return_kind = 17, Throw_kind = 18, Break_kind = 19, Continue_kind = 20, Import_kind = 21, ImportFrom_kind = 22, Export_kind = 23, ExceptionDef_kind = 24, ExprStmt_kind = 25 };
+enum _stmt_kind { FunctionDef_kind = 1, ClassDef_kind = 2, InterfaceDef_kind = 3, StructDef_kind = 4, VarDecl_kind = 5, EnumDef_kind = 6, Destructure_kind = 7, Assert_kind = 8, Assign_kind = 9, If_kind = 10, While_kind = 11, For_kind = 12, ForRange_kind = 13, ForIn_kind = 14, Switch_kind = 15, Try_kind = 16, Yield_kind = 17, Return_kind = 18, Throw_kind = 19, Break_kind = 20, Continue_kind = 21, Import_kind = 22, ImportFrom_kind = 23, Export_kind = 24, ExceptionDef_kind = 25, ExprStmt_kind = 26 };
 struct _stmt {
     enum _stmt_kind kind;
     union {
@@ -57,6 +59,7 @@ struct _stmt {
         struct { stmt_ty init; expr_ty test; stmt_ty step; asdl_seq *body; } For;
         struct { typeref_ty ty; identifier name; range_expr_ty iter; asdl_seq *body; } ForRange;
         struct { typeref_ty ty; identifier name; expr_ty iter; asdl_seq *body; } ForIn;
+        struct { expr_ty subject; asdl_seq *cases; } Switch;
         struct { asdl_seq *body; asdl_seq *handlers; asdl_seq *finalbody; } Try;
         struct { expr_ty value; } Yield;
         struct { expr_ty value; } Return;
@@ -119,7 +122,7 @@ struct _expr {
     int end_col_offset;
 };
 
-enum _typeref_kind { Primitive_kind = 1, Named_kind = 2, StructRef_kind = 3, Pointer_kind = 4, Nullable_kind = 5, FunctionTy_kind = 6 };
+enum _typeref_kind { Primitive_kind = 1, Named_kind = 2, StructRef_kind = 3, Pointer_kind = 4, Nullable_kind = 5, UnionTy_kind = 6, FunctionTy_kind = 7 };
 struct _typeref {
     enum _typeref_kind kind;
     union {
@@ -128,6 +131,7 @@ struct _typeref {
         struct { identifier tag; } StructRef;
         struct { typeref_ty base; } Pointer;
         struct { typeref_ty base; } Nullable;
+        struct { asdl_seq *members; } UnionTy;
         struct { asdl_seq *params; ret_ty returns; } FunctionTy;
     } v;
 };
@@ -171,7 +175,23 @@ struct _range_expr {
 
 struct _enum_member {
     identifier name;
+    asdl_seq *params;
     expr_ty value;
+};
+
+struct _match_case {
+    match_pattern_ty pattern;
+    asdl_seq *body;
+};
+
+enum _match_pattern_kind { PLiteral_kind = 1, PVariant_kind = 2, PBind_kind = 3 };
+struct _match_pattern {
+    enum _match_pattern_kind kind;
+    union {
+        struct { expr_ty value; } PLiteral;
+        struct { expr_ty path; asdl_seq *items; } PVariant;
+        struct { identifier name; } PBind;
+    } v;
 };
 
 enum _initializer_kind { NoInit_kind = 1, ExprInit_kind = 2, PositionalInit_kind = 3, DesignatedInit_kind = 4 };
@@ -236,6 +256,7 @@ stmt_ty _Aster_While(expr_ty test, asdl_seq *body, int lineno, int col_offset, i
 stmt_ty _Aster_For(stmt_ty init, expr_ty test, stmt_ty step, asdl_seq *body, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena);
 stmt_ty _Aster_ForRange(typeref_ty ty, identifier name, range_expr_ty iter, asdl_seq *body, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena);
 stmt_ty _Aster_ForIn(typeref_ty ty, identifier name, expr_ty iter, asdl_seq *body, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena);
+stmt_ty _Aster_Switch(expr_ty subject, asdl_seq *cases, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena);
 stmt_ty _Aster_Try(asdl_seq *body, asdl_seq *handlers, asdl_seq *finalbody, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena);
 stmt_ty _Aster_Yield(expr_ty value, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena);
 stmt_ty _Aster_Return(expr_ty value, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena);
@@ -288,6 +309,7 @@ typeref_ty _Aster_Named(identifier name, asdl_seq *args, Arena *arena);
 typeref_ty _Aster_StructRef(identifier tag, Arena *arena);
 typeref_ty _Aster_Pointer(typeref_ty base, Arena *arena);
 typeref_ty _Aster_Nullable(typeref_ty base, Arena *arena);
+typeref_ty _Aster_UnionTy(asdl_seq *members, Arena *arena);
 typeref_ty _Aster_FunctionTy(asdl_seq *params, ret_ty returns, Arena *arena);
 ret_ty _Aster_VoidRet(Arena *arena);
 ret_ty _Aster_ValueRet(typeref_ty ty, Arena *arena);
@@ -296,7 +318,11 @@ lparam_ty _Aster_lparam(typeref_ty ty, identifier name, Arena *arena);
 signature_ty _Aster_signature(access_ty access, identifier name, asdl_seq *params, ret_ty returns, Arena *arena);
 handler_ty _Aster_handler(typeref_ty ty, identifier name, asdl_seq *body, Arena *arena);
 range_expr_ty _Aster_range_expr(expr_ty start, expr_ty stop, expr_ty step, Arena *arena);
-enum_member_ty _Aster_enum_member(identifier name, expr_ty value, Arena *arena);
+enum_member_ty _Aster_enum_member(identifier name, asdl_seq *params, expr_ty value, Arena *arena);
+match_case_ty _Aster_match_case(match_pattern_ty pattern, asdl_seq *body, Arena *arena);
+match_pattern_ty _Aster_PLiteral(expr_ty value, Arena *arena);
+match_pattern_ty _Aster_PVariant(expr_ty path, asdl_seq *items, Arena *arena);
+match_pattern_ty _Aster_PBind(identifier name, Arena *arena);
 initializer_ty _Aster_NoInit(Arena *arena);
 initializer_ty _Aster_ExprInit(expr_ty value, Arena *arena);
 initializer_ty _Aster_PositionalInit(asdl_seq *values, Arena *arena);

@@ -1,0 +1,299 @@
+== ArrayList ==
+[30, 10, 20]
+3
+10
+[30, 15, 10, 20]
+30
+[99, 15, 10, 20]
+3
+3
+4
+true
+99
+true
+false
+['b']
+false
+[10, 15, 20, 20]
+[20, 20, 15, 10]
+[20, 20]
+20
+20
+15
+10
+true
+10
+3
+2
+[20, 20, 15, 777]
+[20, 20, 15]
+[20, 20, 15, 888]
+true
+== LinkedList ==
+[1, 2, 3]
+3
+1
+3
+1
+3
+[2]
+[8, 2, 9, 10]
+8
+10
+2
+9
+0
+true
+0
+[2, 9]
+2
+1
+== HashMap ==
+null
+null
+2
+2
+1
+null
+true
+true
+-1
+null
+3
+['b', 'a', 'c']
+[20, 1, 3]
+true
+b=20
+a=1
+c=3
+1
+2
+{'b': 20, 'c': 3}
+a
+1
+a=1
+1
+2
+true
+9736
+10
+20
+4
+false
+true
+== LinkedHashMap ==
+['z', 'y']
+[26, 25]
+== TreeMap ==
+['apple', 'orange', 'pear']
+apple
+pear
+['apple']
+['orange', 'pear']
+['apple', 'orange']
+apple:1
+orange:2
+pear:3
+[3, 1, 2]
+== HashSet ==
+true
+true
+false
+2
+true
+true
+false
+[3]
+true
+[3, 5, 6, 7]
+true
+[3, 7]
+true
+[7]
+7
+2
+[1, 2]
+== LinkedHashSet/TreeSet ==
+['b', 'a']
+[1, 3, 5]
+1
+5
+[1]
+[3, 5]
+[1, 3]
+== Iterable ==
+4
+5
+== Optional ==
+true
+true
+5
+9
+5
+5
+42
+Optional[10]
+Optional[5]
+Optional.empty
+Optional[5]
+Optional.empty
+got 5
+none
+7
+true
+NoSuchElementError
+5
+-1
+true
+9000000000
+2.5
+OptionalDouble.empty
+== Random ==
+1250496027
+1250496027
+64
+13
+false
+735
+true
+true
+true
+true
+4
+1250496027
+1250496027
+== UUID ==
+36
+true
+true
+true
+true
+true
+true
+true
+01234567-89ab-4def-0123-456789abcdef
+81985529216454127
+81985529216486895
+0
+-1
+== StringTokenizer ==
+3
+hello
+world
+aster
+false
+3
+a
+b
+c
+== BitSet ==
+true
+false
+3
+6
+3
+-1
+{1, 3, 5}
+false
+{5}
+{2, 5}
+{2, 5}
+{}
+{}
+true
+== Stack ==
+true
+3
+3
+2
+-1
+false
+false
+== Properties ==
+null
+10
+def
+2
+['x', 'y']
+['x', 'y']
+20
+{'x': '10', 'y': '20'}
+x=10
+y=20
+== Objects ==
+true
+false
+true
+true
+true
+null
+42
+304891
+304891
+304891
+-1
+1
+true
+false
+NullPointerError
+7
+30817
+== Arrays ==
+[3, 1, 2]
+[1, [2, 3], 4]
+[1, 2, 3]
+1
+-4
+[1, 2, 3, null, null]
+[2, 3]
+[7, 7, 7]
+true
+994
+[4, 5]
+[a, bb, ccc]
+== Collections ==
+[1, 2, 3]
+[3, 2, 1]
+[1, 2, 3]
+1
+3
+1
+1
+3
+0
+[9]
+['x', 'x', 'x']
+3
+4
+== Date ==
+1000
+1970-01-01 09:00:01
+true
+true
+-1
+true
+true
+true
+5000
+== Formatter ==
+n=3
+[   42]
+[42   ]
+[00042]
+3.14
+    3.14
+ff FF
+AB
+ab-ab
+100%
+true
+<a><b>
+<%s>
+== Locale ==
+en
+US
+en_US
+en-US
+ko_KR
+FR
+true

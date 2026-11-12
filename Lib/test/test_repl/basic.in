@@ -1,0 +1,26 @@
+1 + 2
+var x = 10
+x * 2
+var y = x
+var x = 99
+x
+y
+fn f(int n) -> int { return n + 1; }
+f(41)
+fn f(int n) -> int { return n * 3; }
+f(5)
+"ab".format(1)
+[1, "x", 2.5]
+{"a": 1}
+(1, 2)
+if (x > 5) {
+    println("big");
+} else {
+    println("small");
+}
+if (x > 100) {
+    println("huge");
+} else {
+    println("not huge");
+}
+:quit

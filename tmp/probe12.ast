@@ -1,0 +1,8 @@
+import System.stdout.*;
+class A {
+    public fn f(int x) -> str { return "i "; }
+    public fn f(float x) -> str { return "f "; }
+}
+A a = new A();
+println(a.f(0));
+println(a.f(0.0));

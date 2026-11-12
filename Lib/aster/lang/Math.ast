@@ -1,0 +1,236 @@
+/* aster.lang.Math: Java Math-style facade over libm.
+   The extern names must keep their C spelling, so each one is wrapped by a
+   private top-level helper; class methods never call themselves. */
+
+extern fn sqrt(float x) -> float;
+extern fn cbrt(float x) -> float;
+extern fn pow(float x, float y) -> float;
+extern fn exp(float x) -> float;
+extern fn log(float x) -> float;
+extern fn log10(float x) -> float;
+extern fn sin(float x) -> float;
+extern fn cos(float x) -> float;
+extern fn tan(float x) -> float;
+extern fn asin(float x) -> float;
+extern fn acos(float x) -> float;
+extern fn atan(float x) -> float;
+extern fn atan2(float y, float x) -> float;
+extern fn sinh(float x) -> float;
+extern fn cosh(float x) -> float;
+extern fn tanh(float x) -> float;
+extern fn fabs(float x) -> float;
+extern fn floor(float x) -> float;
+extern fn ceil(float x) -> float;
+extern fn rint(float x) -> float;
+extern fn hypot(float x, float y) -> float;
+extern fn rand() -> int;
+
+fn _mSqrt(float x) -> float { return sqrt(x); }
+fn _mCbrt(float x) -> float { return cbrt(x); }
+fn _mPow(float x, float y) -> float { return pow(x, y); }
+fn _mExp(float x) -> float { return exp(x); }
+fn _mLog(float x) -> float { return log(x); }
+fn _mLog10(float x) -> float { return log10(x); }
+fn _mSin(float x) -> float { return sin(x); }
+fn _mCos(float x) -> float { return cos(x); }
+fn _mTan(float x) -> float { return tan(x); }
+fn _mAsin(float x) -> float { return asin(x); }
+fn _mAcos(float x) -> float { return acos(x); }
+fn _mAtan(float x) -> float { return atan(x); }
+fn _mAtan2(float y, float x) -> float { return atan2(y, x); }
+fn _mSinh(float x) -> float { return sinh(x); }
+fn _mCosh(float x) -> float { return cosh(x); }
+fn _mTanh(float x) -> float { return tanh(x); }
+fn _mFabs(float x) -> float { return fabs(x); }
+fn _mFloor(float x) -> float { return floor(x); }
+fn _mCeil(float x) -> float { return ceil(x); }
+fn _mRint(float x) -> float { return rint(x); }
+fn _mHypot(float x, float y) -> float { return hypot(x, y); }
+
+export class Math {
+    public static float PI = 3.141592653589793;
+    public static float E = 2.718281828459045;
+
+    public static fn abs(int x) -> int {
+        if (x < 0) {
+            return -x;
+        }
+        return x;
+    }
+
+    public static fn abs(float x) -> float {
+        return _mFabs(x);
+    }
+
+    public static fn max(int x, int y) -> int {
+        if (x >= y) {
+            return x;
+        }
+        return y;
+    }
+
+    public static fn max(float x, float y) -> float {
+        if (x >= y) {
+            return x;
+        }
+        return y;
+    }
+
+    public static fn min(int x, int y) -> int {
+        if (x <= y) {
+            return x;
+        }
+        return y;
+    }
+
+    public static fn min(float x, float y) -> float {
+        if (x <= y) {
+            return x;
+        }
+        return y;
+    }
+
+    public static fn sqrt(float x) -> float {
+        return _mSqrt(x);
+    }
+
+    public static fn cbrt(float x) -> float {
+        return _mCbrt(x);
+    }
+
+    public static fn pow(float x, float y) -> float {
+        return _mPow(x, y);
+    }
+
+    public static fn exp(float x) -> float {
+        return _mExp(x);
+    }
+
+    public static fn log(float x) -> float {
+        return _mLog(x);
+    }
+
+    public static fn log10(float x) -> float {
+        return _mLog10(x);
+    }
+
+    public static fn sin(float x) -> float {
+        return _mSin(x);
+    }
+
+    public static fn cos(float x) -> float {
+        return _mCos(x);
+    }
+
+    public static fn tan(float x) -> float {
+        return _mTan(x);
+    }
+
+    public static fn asin(float x) -> float {
+        return _mAsin(x);
+    }
+
+    public static fn acos(float x) -> float {
+        return _mAcos(x);
+    }
+
+    public static fn atan(float x) -> float {
+        return _mAtan(x);
+    }
+
+    public static fn atan2(float y, float x) -> float {
+        return _mAtan2(y, x);
+    }
+
+    public static fn sinh(float x) -> float {
+        return _mSinh(x);
+    }
+
+    public static fn cosh(float x) -> float {
+        return _mCosh(x);
+    }
+
+    public static fn tanh(float x) -> float {
+        return _mTanh(x);
+    }
+
+    public static fn floor(float x) -> float {
+        return _mFloor(x);
+    }
+
+    public static fn ceil(float x) -> float {
+        return _mCeil(x);
+    }
+
+    public static fn round(float x) -> int {
+        return (int) _mFloor(x + 0.5);
+    }
+
+    public static fn rint(float x) -> float {
+        return _mRint(x);
+    }
+
+    public static fn hypot(float x, float y) -> float {
+        return _mHypot(x, y);
+    }
+
+    public static fn toRadians(float degrees) -> float {
+        return degrees * Math.PI / 180.0;
+    }
+
+    public static fn toDegrees(float radians) -> float {
+        return radians * 180.0 / Math.PI;
+    }
+
+    public static fn signum(int x) -> int {
+        if (x < 0) { return -1; }
+        if (x > 0) { return 1; }
+        return 0;
+    }
+
+    public static fn signum(float x) -> float {
+        if (x != x) {
+            return x;
+        }
+        if (x > 0.0) { return 1.0; }
+        if (x < 0.0) { return -1.0; }
+        return x;
+    }
+
+    public static fn addExact(int x, int y) -> int {
+        return x + y;
+    }
+
+    public static fn subtractExact(int x, int y) -> int {
+        return x - y;
+    }
+
+    public static fn multiplyExact(int x, int y) -> int {
+        return x * y;
+    }
+
+    public static fn floorDiv(int x, int y) -> int {
+        int q = x / y;
+        int r = x % y;
+        if (r != 0 and ((x < 0) != (y < 0))) {
+            q = q - 1;
+        }
+        return q;
+    }
+
+    public static fn floorMod(int x, int y) -> int {
+        /* Aster's % already follows the divisor's sign (floor modulo). */
+        return x % y;
+    }
+
+    public static fn copySign(float magnitude, float sign) -> float {
+        if (sign < 0.0) {
+            return -_mFabs(magnitude);
+        }
+        return _mFabs(magnitude);
+    }
+
+    public static fn random() -> float {
+        return (float) rand() / 2147483647.0;
+    }
+}

@@ -1,0 +1,78 @@
+/* aster.util.ListIteratorImpl: 리스트 위를 걷는 Iterator + ListIterator 구현.
+
+   ArrayList/LinkedList/HashSet 등이 iterator()에서 이 객체를 돌려준다.
+   add/set/remove는 바라보는 리스트를 직접 고친다. */
+
+import aster.util.ListIterator;
+import aster.util.Iterator;
+
+export class ListIteratorImpl<E> implements ListIterator, Iterator {
+    private list<E> data;
+    private int cursor;
+    private int lastReturned;
+
+    constructor(list<E> data) {
+        self->data = data;
+        self->cursor = 0;
+        self->lastReturned = -1;
+    }
+
+    public fn hasNext() -> bool {
+        return self->cursor < len(self->data);
+    }
+
+    public fn next() -> E {
+        if (not self->hasNext()) {
+            throw "no more elements" as NoSuchElementError;
+        }
+        E value = self->data[self->cursor];
+        self->lastReturned = self->cursor;
+        self->cursor = self->cursor + 1;
+        return value;
+    }
+
+    public fn remove() -> void {
+        if (self->lastReturned < 0) {
+            throw "next() has not been called" as RuntimeError;
+        }
+        self->data.pop(self->lastReturned);
+        if (self->lastReturned < self->cursor) {
+            self->cursor = self->cursor - 1;
+        }
+        self->lastReturned = -1;
+    }
+
+    public fn hasPrevious() -> bool {
+        return self->cursor > 0;
+    }
+
+    public fn previous() -> E {
+        if (not self->hasPrevious()) {
+            throw "no previous elements" as NoSuchElementError;
+        }
+        self->cursor = self->cursor - 1;
+        self->lastReturned = self->cursor;
+        return self->data[self->cursor];
+    }
+
+    public fn nextIndex() -> int {
+        return self->cursor;
+    }
+
+    public fn previousIndex() -> int {
+        return self->cursor - 1;
+    }
+
+    public fn add(E value) -> void {
+        self->data.insert(self->cursor, value);
+        self->cursor = self->cursor + 1;
+        self->lastReturned = -1;
+    }
+
+    public fn set(E value) -> void {
+        if (self->lastReturned < 0) {
+            throw "next() or previous() has not been called" as RuntimeError;
+        }
+        self->data[self->lastReturned] = value;
+    }
+}

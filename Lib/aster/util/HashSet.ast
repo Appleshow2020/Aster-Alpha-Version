@@ -1,0 +1,116 @@
+/* aster.util.HashSet: Java HashSet 스타일 집합 (내부 set<E>).
+
+   삽입 순서를 유지한다. iterator()는 스냅숏 리스트 위의 ListIteratorImpl을
+   돌려주므로 순회 중 원본을 고쳐도 안전하다. */
+
+import aster.util.Set;
+import aster.util.Iterator;
+import aster.util.ListIteratorImpl;
+
+export class HashSet<E> implements Set {
+    private set<E> items;
+
+    constructor() {
+        self->items = set();
+    }
+
+    public fn size() -> int {
+        return len(self->items);
+    }
+
+    public fn isEmpty() -> bool {
+        return len(self->items) == 0;
+    }
+
+    public fn contains(E value) -> bool {
+        return value in self->items;
+    }
+
+    public fn add(E value) -> bool {
+        if (value in self->items) {
+            return false;
+        }
+        self->items.add(value);
+        return true;
+    }
+
+    public fn remove(E value) -> bool {
+        if (not (value in self->items)) {
+            return false;
+        }
+        self->items.remove(value);
+        return true;
+    }
+
+    public fn clear() -> void {
+        self->items.clear();
+    }
+
+    public fn addAll(list<E> values) -> bool {
+        bool changed = false;
+        int i = 0;
+        while (i < len(values)) {
+            if (self->add(values[i])) {
+                changed = true;
+            }
+            i = i + 1;
+        }
+        return changed;
+    }
+
+    public fn removeAll(list<E> values) -> bool {
+        bool changed = false;
+        int i = 0;
+        while (i < len(values)) {
+            if (self->remove(values[i])) {
+                changed = true;
+            }
+            i = i + 1;
+        }
+        return changed;
+    }
+
+    public fn retainAll(list<E> values) -> bool {
+        list<E> keep = [];
+        int i = 0;
+        while (i < len(values)) {
+            if (values[i] in self->items) {
+                keep.append(values[i]);
+            }
+            i = i + 1;
+        }
+        set<E> fresh = set();
+        i = 0;
+        while (i < len(keep)) {
+            fresh.add(keep[i]);
+            i = i + 1;
+        }
+        bool changed = len(fresh) != len(self->items);
+        self->items = fresh;
+        return changed;
+    }
+
+    public fn toArray() -> list<E> {
+        list<E> out = [];
+        for (E item in self->items) {
+            out.append(item);
+        }
+        return out;
+    }
+
+    public fn iterator() -> Iterator {
+        return new ListIteratorImpl<E>(self->toArray());
+    }
+
+    public fn __len__() -> int {
+        return len(self->items);
+    }
+
+    public fn __str__() -> str {
+        return str(self->items);
+    }
+
+    public fn toString() -> str {
+        return str(self->items);
+    }
+}

@@ -1,0 +1,6 @@
+] import
+] var
+] expr
+(dbg)
+NameError: name 'x' is not defined
+(dbg) 5

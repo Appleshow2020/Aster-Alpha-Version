@@ -1,0 +1,164 @@
+/* aster.util.Arrays: Java Arrays 스타일 정적 헬퍼 (리스트 기반).
+
+   deepToString은 중첩 리스트를 재귀적으로 펼친다. copyOf는 모자란 자리를
+   null로 채운다(자바의 0/'' 대신). binarySearch는 정렬된 리스트를 가정하고
+   없으면 -(삽입 위치) - 1을 돌려준다. */
+
+import aster.util.ArrayList;
+import aster.util.Comparator;
+import aster.util.Objects;
+
+fn elemText(any value) -> str {
+    if (value is null) {
+        return "null";
+    }
+    return str(value);
+}
+
+export class Arrays {
+    public static fn toString(list<any> values) -> str {
+        list<str> parts = [];
+        int i = 0;
+        while (i < len(values)) {
+            parts.append(elemText(values[i]));
+            i = i + 1;
+        }
+        return "[" + ", ".join(parts) + "]";
+    }
+
+    public static fn deepToString(list<any> values) -> str {
+        list<str> parts = [];
+        int i = 0;
+        while (i < len(values)) {
+            any item = values[i];
+            if (typeName(item) == "list") {
+                parts.append(Arrays.deepToString(item));
+            }
+            else {
+                parts.append(elemText(item));
+            }
+            i = i + 1;
+        }
+        return "[" + ", ".join(parts) + "]";
+    }
+
+    public static fn fill(list<any> values, any value) -> void {
+        int i = 0;
+        while (i < len(values)) {
+            values[i] = value;
+            i = i + 1;
+        }
+    }
+
+    public static fn fill(list<any> values, int start, int end, any value) -> void {
+        if (start < 0 or end > len(values) or start > end) {
+            throw "fill range out of bounds" as IndexError;
+        }
+        int i = start;
+        while (i < end) {
+            values[i] = value;
+            i = i + 1;
+        }
+    }
+
+    public static fn copyOf(list<any> values, int newLength) -> list<any> {
+        if (newLength < 0) {
+            throw "negative length" as ValueError;
+        }
+        list<any> out = [];
+        int i = 0;
+        while (i < newLength) {
+            if (i < len(values)) {
+                out.append(values[i]);
+            }
+            else {
+                out.append(null);
+            }
+            i = i + 1;
+        }
+        return out;
+    }
+
+    public static fn copyOfRange(list<any> values, int start, int end) -> list<any> {
+        if (start < 0 or start > len(values) or start > end) {
+            throw "range out of bounds" as IndexError;
+        }
+        list<any> out = [];
+        int i = start;
+        while (i < end) {
+            if (i < len(values)) {
+                out.append(values[i]);
+            }
+            else {
+                out.append(null);
+            }
+            i = i + 1;
+        }
+        return out;
+    }
+
+    public static fn sort(list<any> values) -> void {
+        values.sort();
+    }
+
+    public static fn sort(list<any> values, Comparator* cmp) -> void {
+        int i = 1;
+        while (i < len(values)) {
+            any key = values[i];
+            int j = i - 1;
+            while (j >= 0 and cmp.compare(values[j], key) > 0) {
+                values[j + 1] = values[j];
+                j = j - 1;
+            }
+            values[j + 1] = key;
+            i = i + 1;
+        }
+    }
+
+    public static fn binarySearch(list<any> values, any key) -> int {
+        int low = 0;
+        int high = len(values) - 1;
+        while (low <= high) {
+            int mid = low + (high - low) / 2;
+            int c = Objects.compare(values[mid], key);
+            if (c == 0) {
+                return mid;
+            }
+            if (c < 0) {
+                low = mid + 1;
+            }
+            else {
+                high = mid - 1;
+            }
+        }
+        return -(low + 1);
+    }
+
+    public static fn asList(list<any> values) -> ArrayList<any> {
+        ArrayList<any> out = new ArrayList<any>();
+        int i = 0;
+        while (i < len(values)) {
+            out.add(values[i]);
+            i = i + 1;
+        }
+        return out;
+    }
+
+    public static fn equals(list<any> a, list<any> b) -> bool {
+        if (len(a) != len(b)) {
+            return false;
+        }
+        int i = 0;
+        while (i < len(a)) {
+            if (not Objects.equals(a[i], b[i])) {
+                return false;
+            }
+            i = i + 1;
+        }
+        return true;
+    }
+
+    public static fn hashCode(list<any> values) -> int {
+        return Objects.hashList(values);
+    }
+}

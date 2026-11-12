@@ -1,0 +1,47 @@
+yyyy-MM-dd HH:mm:ss.SSS
+23
+true
+000
+23
+true
+true
+2001
+MM/yyyy
+0 1 2 3
+MMM d, yyyy
+12
+1 1
+M/d/yy h:mm a
+0 0
+1000000000000
+1577923200000
+48600000
+caught: ParseException
+#,##0.00
+1,234,567.89
+-1,234.50
+0.00
+3.142
+2
+25.00%
+0.25
+$1,234.50
+-$1,234.50
+-1234.5
+#,##0
+1,235
+1,234,567.891
+42
+3 true
+1234567.891
+3.1
+1,234,568
+13%
+0.125
+$1,234.50
+1234.5
+Hello, {0}! You have {1} messages.
+Hello, Aster! You have 3 messages.
+It's Aster at 3
+Aster -> 3
+p4_text ok

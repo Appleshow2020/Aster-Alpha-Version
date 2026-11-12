@@ -1,0 +1,5 @@
+/* aster.util.function.ToIntFunction: Java ToIntFunction<T> shape. */
+
+export interface ToIntFunction {
+    fn applyAsInt(any value) -> int;
+}

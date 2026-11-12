@@ -1,0 +1,77 @@
+/* aster.io.BufferedReader: 다른 Reader를 줄 단위로 읽는다.
+   Aster 구현은 즉시 실행(eager)이므로 생성 시 원본을 모두 읽어 두고,
+   상속 필드 대신 자체 버퍼를 사용한다. */
+
+import aster.io.Reader;
+from aster.lang.String import StringBuilder;
+
+export class BufferedReader extends Reader {
+    private Reader src;
+    private str text;
+    private int index;
+
+    constructor(Reader source) {
+        super("");
+        self->src = source;
+        StringBuilder sb = new StringBuilder();
+        int c = source.read();
+        while (c >= 0) {
+            sb.append(chr(c));
+            c = source.read();
+        }
+        self->text = sb.toString();
+        self->index = 0;
+    }
+
+    public fn read() -> int {
+        if (self->index >= self->text.length()) {
+            return -1;
+        }
+        str ch = self->text.charAt(self->index);
+        self->index = self->index + 1;
+        return ord(ch);
+    }
+
+    public fn read(int n) -> list<int> {
+        list<int> out = [];
+        int i = 0;
+        while (i < n) {
+            int c = self->read();
+            if (c < 0) {
+                break;
+            }
+            out.append(c);
+            i = i + 1;
+        }
+        return out;
+    }
+
+    public fn ready() -> bool {
+        return self->index < self->text.length();
+    }
+
+    /* 다음 줄을 돌려준다. 끝이면 null. \r\n도 처리한다. */
+    public fn readLine() -> str? {
+        if (self->index >= self->text.length()) {
+            return null;
+        }
+        int start = self->index;
+        while (self->index < self->text.length() and self->text.charAt(self->index) != "\n") {
+            self->index = self->index + 1;
+        }
+        int end = self->index;
+        if (self->index < self->text.length()) {
+            self->index = self->index + 1;
+        }
+        str line = self->text.substring(start, end);
+        if (line.length() > 0 and line.charAt(line.length() - 1) == "\r") {
+            line = line.substring(0, line.length() - 1);
+        }
+        return line;
+    }
+
+    public fn close() -> void {
+        self->src.close();
+        super.close();
+    }
+}

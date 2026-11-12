@@ -1,0 +1,5 @@
+import System.stdout.*;
+import aster.text.DecimalFormat;
+DecimalFormat df = new DecimalFormat("#,##0.00");
+println(df.toPattern());
+println(df.format(1234567.891));

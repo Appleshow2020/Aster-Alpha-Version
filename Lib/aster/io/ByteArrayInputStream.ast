@@ -1,0 +1,64 @@
+/* aster.io.ByteArrayInputStream: list<int>를 바이트 입력 스트림처럼 읽는다. */
+
+export class ByteArrayInputStream {
+    private list<int> buf;
+    private int pos;
+    private int markPos;
+
+    constructor(list<int> data) {
+        self->buf = [];
+        for (int b in data) {
+            self->buf.append(b);
+        }
+        self->pos = 0;
+        self->markPos = 0;
+    }
+
+    public fn read() -> int {
+        if (self->pos >= len(self->buf)) {
+            return -1;
+        }
+        int b = self->buf[self->pos];
+        self->pos = self->pos + 1;
+        return b;
+    }
+
+    public fn read(int n) -> list<int> {
+        list<int> out = [];
+        int i = 0;
+        while (i < n and self->pos < len(self->buf)) {
+            out.append(self->buf[self->pos]);
+            self->pos = self->pos + 1;
+            i = i + 1;
+        }
+        return out;
+    }
+
+    public fn available() -> int {
+        return len(self->buf) - self->pos;
+    }
+
+    public fn skip(int n) -> int {
+        int left = len(self->buf) - self->pos;
+        int step = n;
+        if (step > left) {
+            step = left;
+        }
+        if (step < 0) {
+            step = 0;
+        }
+        self->pos = self->pos + step;
+        return step;
+    }
+
+    public fn mark() -> void {
+        self->markPos = self->pos;
+    }
+
+    public fn reset() -> void {
+        self->pos = self->markPos;
+    }
+
+    public fn close() -> void {
+    }
+}

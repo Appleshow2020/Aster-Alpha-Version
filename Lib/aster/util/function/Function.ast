@@ -1,0 +1,8 @@
+/* aster.util.function.Function: Java Function<T, R> shape.
+   Aster interfaces cannot declare type parameters, so the API is written
+   with `any` and used as a contract only. Lambdas cannot be assigned to
+   interface types; stream internals take `fn(T) -> R` values. */
+
+export interface Function {
+    fn apply(any value) -> any;
+}

@@ -1,0 +1,73 @@
+/* aster.io.DataInputStream: DataOutputStream이 만든 바이트를 되읽는다. */
+
+import aster.io.Codec;
+
+export class DataInputStream {
+    private list<int> buf;
+    private int pos;
+
+    constructor(list<int> data) {
+        self->buf = [];
+        for (int b in data) {
+            self->buf.append(b);
+        }
+        self->pos = 0;
+    }
+
+    public fn available() -> int {
+        return len(self->buf) - self->pos;
+    }
+
+    private fn readByteRaw() -> int {
+        if (self->pos >= len(self->buf)) {
+            throw "unexpected end of stream" as EOFError;
+        }
+        int b = self->buf[self->pos];
+        self->pos = self->pos + 1;
+        return b;
+    }
+
+    private fn readBytes(int n) -> list<int> {
+        list<int> out = [];
+        int i = 0;
+        while (i < n) {
+            out.append(self->readByteRaw());
+            i = i + 1;
+        }
+        return out;
+    }
+
+    public fn readByte() -> int {
+        int b = self->readByteRaw();
+        if (b >= 128) {
+            return b - 256;
+        }
+        return b;
+    }
+
+    public fn readBoolean() -> bool {
+        return self->readByteRaw() != 0;
+    }
+
+    public fn readInt() -> int {
+        return Codec.fromBytesBE(self->readBytes(4), 0, 4);
+    }
+
+    public fn readLong() -> int {
+        return Codec.fromBytesBE(self->readBytes(8), 0, 8);
+    }
+
+    public fn readDouble() -> float {
+        int scaled = self->readLong();
+        return scaled / 1000000.0;
+    }
+
+    public fn readUTF() -> str {
+        list<int> head = self->readBytes(2);
+        int length = head[0] * 256 + head[1];
+        return Codec.decodeUtf8(self->readBytes(length));
+    }
+
+    public fn close() -> void {
+    }
+}

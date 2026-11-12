@@ -1,0 +1,5 @@
+/* aster.util.function.LongUnaryOperator: Java LongUnaryOperator shape. */
+
+export interface LongUnaryOperator {
+    fn applyAsLong(int value) -> int;
+}

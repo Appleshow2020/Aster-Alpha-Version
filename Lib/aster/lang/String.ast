@@ -1,0 +1,196 @@
+/* aster.lang.String: 문자열 빌더와 공용 문자열 헬퍼.
+   Aster 문자열은 불변이므로 조각을 리스트에 모았다가 마지막에 한 번만
+   join 한다. append는 분할 상환 O(1), toString은 O(n)이다. */
+
+export class StringBuilder {
+    private list<str> parts;
+    private int count;
+
+    constructor() {
+        self->parts = [];
+        self->count = 0;
+    }
+
+    public fn append(str value) -> StringBuilder {
+        self->parts.append(value);
+        self->count = self->count + 1;
+        return self;
+    }
+
+    public fn appendChar(str ch) -> StringBuilder {
+        return self->append(ch);
+    }
+
+    public fn appendLine(str value) -> StringBuilder {
+        self->append(value);
+        return self->append("\n");
+    }
+
+    public fn newLine() -> StringBuilder {
+        return self->append("\n");
+    }
+
+    public fn length() -> int {
+        return self->toString().length();
+    }
+
+    public fn isEmpty() -> bool {
+        return self->count == 0;
+    }
+
+    public fn clear() -> void {
+        self->parts = [];
+        self->count = 0;
+    }
+
+    public fn toString() -> str {
+        return "".join(self->parts);
+    }
+
+    public fn reverse() -> StringBuilder {
+        list<str> chars = self->toString().chars();
+        chars.reverse();
+        self->parts = ["".join(chars)];
+        self->count = 1;
+        return self;
+    }
+
+    public fn __len__() -> int {
+        return self->length();
+    }
+
+    public fn __str__() -> str {
+        return self->toString();
+    }
+}
+
+/* s를 count번 반복한다. */
+export fn repeat(str s, int count) -> str {
+    if (count <= 0 or s.length() == 0) {
+        return "";
+    }
+    list<str> parts = [];
+    int i = 0;
+    while (i < count) {
+        parts.append(s);
+        i = i + 1;
+    }
+    return "".join(parts);
+}
+
+/* 폭 width에 맞춰 왼쪽을 fill로 채운다. */
+export fn padStart(str s, int width, str fill) -> str {
+    int need = width - s.length();
+    if (need <= 0) {
+        return s;
+    }
+    return repeat(fill, need) + s;
+}
+
+/* 폭 width에 맞춰 오른쪽을 fill로 채운다. */
+export fn padEnd(str s, int width, str fill) -> str {
+    int need = width - s.length();
+    if (need <= 0) {
+        return s;
+    }
+    return s + repeat(fill, need);
+}
+
+/* 첫 글자만 대문자로. */
+export fn capitalize(str s) -> str {
+    if (s.length() == 0) {
+        return s;
+    }
+    return s.substring(0, 1).upper() + s.substring(1);
+}
+
+/* 공백만으로 이루어졌는지. */
+export fn isBlank(str s) -> bool {
+    return s.trim().length() == 0;
+}
+
+/* 개행 기준으로 나눈다. */
+export fn lines(str s) -> list<str> {
+    return s.split("\n");
+}
+
+/* 공백을 하나로 접고 앞뒤를 정리한다. */
+export fn collapseSpaces(str s) -> str {
+    list<str> raw = s.split(" ");
+    list<str> kept = [];
+    int i = 0;
+    while (i < len(raw)) {
+        if (raw[i].length() > 0) {
+            kept.append(raw[i]);
+        }
+        i = i + 1;
+    }
+    return " ".join(kept);
+}
+
+/* Java String.valueOf 적응: 어떤 값이든 문자열로 만든다. */
+export fn valueOf(var value) -> str {
+    return str(value);
+}
+
+/* Java String.join(delimiter, elements) 적응. */
+export fn join(str delimiter, list<str> parts) -> str {
+    return delimiter.join(parts);
+}
+
+/* 간단한 format: {}와 {n} 위치 필드를 지원하고 :서식부는 무시한다.
+   세밀한 서식이 필요하면 문자열의 .format()을 쓴다. */
+export fn format(str template, list<any> args) -> str {
+    str out = "";
+    int n = template.length();
+    int next = 0;
+    int i = 0;
+    while (i < n) {
+        str c = template.charAt(i);
+        if (c == "{" and i + 1 < n and template.charAt(i + 1) == "{") {
+            out = out + "{";
+            i = i + 2;
+        }
+        else if (c == "}" and i + 1 < n and template.charAt(i + 1) == "}") {
+            out = out + "}";
+            i = i + 2;
+        }
+        else if (c == "{") {
+            int close = -1;
+            int k = i + 1;
+            while (k < n) {
+                if (template.charAt(k) == "}") {
+                    close = k;
+                    break;
+                }
+                k = k + 1;
+            }
+            if (close < 0) {
+                out = out + c;
+                i = i + 1;
+            }
+            else {
+                str field = template.substring(i + 1, close);
+                str indexPart = field;
+                int colon = field.find(":");
+                if (colon >= 0) {
+                    indexPart = field.substring(0, colon);
+                }
+                int idx = next;
+                if (indexPart.length() > 0) {
+                    idx = indexPart.to_int();
+                }
+                if (idx >= 0 and idx < len(args)) {
+                    out = out + str(args[idx]);
+                }
+                next = next + 1;
+                i = close + 1;
+            }
+        }
+        else {
+            out = out + c;
+            i = i + 1;
+        }
+    }
+    return out;
+}

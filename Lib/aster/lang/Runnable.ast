@@ -1,0 +1,5 @@
+/* aster.lang.Runnable: task contract with a single run method. */
+
+export interface Runnable {
+    fn run() -> void;
+}

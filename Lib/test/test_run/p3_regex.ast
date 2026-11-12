@@ -1,0 +1,56 @@
+import System.stdout.*;
+import aster.util.regex.Pattern;
+import aster.util.regex.Matcher;
+import aster.util.regex.Native;
+
+/* Python re와 동일한 semantics + Java 스타일 Pattern/Matcher 래퍼. */
+
+/* --- Python 스타일(저수준 Native) --- */
+int re = Native.compile("(?P<year>\\d{4})-(?P<mon>\\d{2})", 0);
+println(Native.pattern(re));
+println(Native.flags(re));
+println(Native.groupindex(re));
+println(Native.findall(Native.compile("<.+?>", 0), "<a><b>"));
+println(Native.findall(Native.compile("a++", 0), "aaa"));
+println(Native.findall(Native.compile("(a++)a", 0), "aaa"));
+println(Native.findall(Native.compile("\\d+(?! dollars)", 0), "5 dollars 10 euros 20 dollars"));
+println(Native.split(Native.compile("(\\d+)", 0), "a1b22c", 0));
+println(Native.split(Native.compile("\\d+", 0), "a1b2c3d", 2));
+println(Native.sub(Native.compile("(\\w+) (\\w+)", 0), "hello world", "\\2 \\1", 0));
+println(Native.escape("a.b*c"));
+
+int m = Native.exec(re, "on 2024-05-01", 0, 0);
+println(str(Native.start(m, 0)) + ".." + str(Native.end(m, 0)));
+println(Native.group(m, 0));
+println(Native.groupname(m, "mon"));
+println(Native.startname(m, "mon"));
+println(Native.lastindex(m));
+println(Native.lastgroup(m));
+
+/* --- Java 스타일(Pattern/Matcher) --- */
+Pattern* word = Pattern.compile("(?P<word>\\w+)");
+Matcher* it = word->matcher("hello world 42");
+while (it->find()) {
+    println(str(it->start()) + "-" + str(it->end()) + " " + it->group("word"));
+}
+println(word->groupCount());
+println(Pattern.quote("a.b*c"));
+println(Pattern.compile("b").matches("b"));
+println(Pattern.compile("ab").matches("abc"));
+Matcher* look = Pattern.compile("ab").matcher("abc");
+println(look->lookingAt());
+println(Pattern.compile("(\\w+)\\s+(\\w+)")->replaceAll("hello world", "$2 $1"));
+println(Pattern.compile("(?P<a>x)(?P<b>y)")->replaceAll("xy", "${b}${a}"));
+println(Pattern.compile("\\w+")->split("a b c", 2));
+println(Pattern.compile("\\d+", Pattern.CASE_INSENSITIVE)->flags());
+
+Matcher* first = Pattern.compile("\\d").matcher("a1b2");
+println(first->find());
+println(first->group());
+println(first->find());
+println(first->group());
+
+/* 유니코드 문자 분류는 Python과 같다. */
+println(Native.findall(Native.compile("\\w+", 0), "café ٣ Ⅷ あ"));
+println(Native.findall(Native.compile("\\d+", 0), "٣ ² １２3"));
+println("\u001C".isspace());

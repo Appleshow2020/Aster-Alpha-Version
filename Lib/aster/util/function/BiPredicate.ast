@@ -1,0 +1,5 @@
+/* aster.util.function.BiPredicate: Java BiPredicate<T, U> shape. */
+
+export interface BiPredicate {
+    fn test(any first, any second) -> bool;
+}

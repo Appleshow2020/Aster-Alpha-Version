@@ -1,0 +1,5 @@
+/* aster.lang.AutoCloseable: resource contract used by try-style helpers. */
+
+export interface AutoCloseable {
+    fn close() -> void;
+}

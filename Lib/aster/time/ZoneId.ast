@@ -1,0 +1,81 @@
+/* aster.time.ZoneId: 고정 오프셋 기반의 시간대 식별자. */
+
+import aster.time.ZoneOffset;
+import aster.time.LocalDate;
+import aster.time.DateTimeParseException;
+
+extern fn _aster_now_ms() -> int;
+extern fn _aster_format_time(int epochSeconds, str pattern) -> str;
+
+fn _zoneParseError(str text) -> void {
+    throw ("Unknown time-zone ID: " + text) as DateTimeParseException;
+}
+
+export class ZoneId {
+    private str idValue;
+    private ZoneOffset offsetValue;
+
+    constructor(str id, ZoneOffset offset) {
+        self->idValue = id;
+        self->offsetValue = offset;
+    }
+
+    /* 로컬 시간대의 현재 오프셋으로 만든 ZoneId. */
+    public static fn systemDefault() -> ZoneId {
+        int nowSeconds = _aster_now_ms() / 1000;
+        str text = _aster_format_time(nowSeconds, "%Y %m %d %H %M %S");
+        list<str> parts = text.split(" ");
+        if (len(parts) != 6) {
+            throw "Cannot read the local time zone" as ValueError;
+        }
+        int day = LocalDate.of(parts[0].to_int(), parts[1].to_int(),
+                               parts[2].to_int()).toEpochDay();
+        int localSeconds = day * 86400 + parts[3].to_int() * 3600
+                         + parts[4].to_int() * 60 + parts[5].to_int();
+        ZoneOffset offset = ZoneOffset.ofTotalSeconds(localSeconds - nowSeconds);
+        return new ZoneId(offset.getId(), offset);
+    }
+
+    /* "Z", "+01:00", "UTC", "GMT" 같은 고정 오프셋 식별자. */
+    public static fn of(str zoneId) -> ZoneId {
+        if (zoneId.length() == 0) { _zoneParseError(zoneId); }
+        if (zoneId == "UTC" or zoneId == "GMT") {
+            return new ZoneId(zoneId, ZoneOffset.UTC());
+        }
+        if (zoneId == "Z" or zoneId == "z" or zoneId.startswith("+")
+            or zoneId.startswith("-")) {
+            ZoneOffset offset = ZoneOffset.of(zoneId);
+            return new ZoneId(offset.getId(), offset);
+        }
+        _zoneParseError(zoneId);
+        return new ZoneId("Z", ZoneOffset.UTC());
+    }
+
+    public fn getId() -> str {
+        return self->idValue;
+    }
+
+    public fn getOffset() -> ZoneOffset {
+        return self->offsetValue;
+    }
+
+    public fn getTotalSeconds() -> int {
+        return self->offsetValue.getTotalSeconds();
+    }
+
+    public fn equals(ZoneId other) -> bool {
+        return self->idValue == other.idValue;
+    }
+
+    public fn hashCode() -> int {
+        return self->offsetValue.getTotalSeconds();
+    }
+
+    public fn toString() -> str {
+        return self->idValue;
+    }
+
+    public fn __str__() -> str {
+        return self->idValue;
+    }
+}

@@ -1,0 +1,230 @@
+/* aster.time.LocalDateTime: 시간대가 없는 날짜+시각. */
+
+import aster.time.LocalDate;
+import aster.time.LocalTime;
+import aster.time.DayOfWeek;
+import aster.time.Month;
+import aster.time.DateTimeParseException;
+
+extern fn _aster_now_ms() -> int;
+extern fn _aster_format_time(int epochSeconds, str pattern) -> str;
+
+const int LDT_NANOS_PER_DAY = 86400000000000;
+
+fn _ldtParseError(str text) -> void {
+    throw ("Text '" + text + "' cannot be parsed as a LocalDateTime") as DateTimeParseException;
+}
+
+export class LocalDateTime {
+    private LocalDate dateValue;
+    private LocalTime timeValue;
+
+    constructor(LocalDate date, LocalTime time) {
+        self->dateValue = date;
+        self->timeValue = time;
+    }
+
+    /* 로컬 시간대의 현재 날짜+시각. */
+    public static fn now() -> LocalDateTime {
+        str text = _aster_format_time(_aster_now_ms() / 1000, "%Y %m %d %H %M %S");
+        list<str> parts = text.split(" ");
+        if (len(parts) != 6) {
+            throw "Cannot read the local date and time" as ValueError;
+        }
+        LocalDate date = LocalDate.of(parts[0].to_int(), parts[1].to_int(),
+                                      parts[2].to_int());
+        LocalTime time = LocalTime.of(parts[3].to_int(), parts[4].to_int(),
+                                      parts[5].to_int());
+        return new LocalDateTime(date, time);
+    }
+
+    public static fn of(int year, int month, int day, int hour, int minute) -> LocalDateTime {
+        return new LocalDateTime(LocalDate.of(year, month, day),
+                                 LocalTime.of(hour, minute));
+    }
+
+    public static fn of(int year, int month, int day, int hour, int minute,
+                        int second) -> LocalDateTime {
+        return new LocalDateTime(LocalDate.of(year, month, day),
+                                 LocalTime.of(hour, minute, second));
+    }
+
+    public static fn of(int year, int month, int day, int hour, int minute,
+                        int second, int nano) -> LocalDateTime {
+        return new LocalDateTime(LocalDate.of(year, month, day),
+                                 LocalTime.of(hour, minute, second, nano));
+    }
+
+    public static fn of(LocalDate date, LocalTime time) -> LocalDateTime {
+        return new LocalDateTime(date, time);
+    }
+
+    /* "2024-02-29T12:30:45" 또는 "2024-02-29T12:30:45.123" 형식. */
+    public static fn parse(str text) -> LocalDateTime {
+        int t = text.find("T");
+        if (t < 0) {
+            t = text.find("t");
+        }
+        if (t <= 0 or t >= text.length() - 1) { _ldtParseError(text); }
+        str datePart = text.substring(0, t);
+        str timePart = text.substring(t + 1, text.length());
+        LocalDate date = LocalDate.parse(datePart);
+        LocalTime time = LocalTime.parse(timePart);
+        return new LocalDateTime(date, time);
+    }
+
+    public fn getYear() -> int {
+        return self->dateValue.getYear();
+    }
+
+    public fn getMonthValue() -> int {
+        return self->dateValue.getMonthValue();
+    }
+
+    public fn getMonth() -> Month {
+        return self->dateValue.getMonth();
+    }
+
+    public fn getDayOfMonth() -> int {
+        return self->dateValue.getDayOfMonth();
+    }
+
+    public fn getDayOfYear() -> int {
+        return self->dateValue.getDayOfYear();
+    }
+
+    public fn getDayOfWeek() -> DayOfWeek {
+        return self->dateValue.getDayOfWeek();
+    }
+
+    public fn getHour() -> int {
+        return self->timeValue.getHour();
+    }
+
+    public fn getMinute() -> int {
+        return self->timeValue.getMinute();
+    }
+
+    public fn getSecond() -> int {
+        return self->timeValue.getSecond();
+    }
+
+    public fn getNano() -> int {
+        return self->timeValue.getNano();
+    }
+
+    public fn toLocalDate() -> LocalDate {
+        return self->dateValue;
+    }
+
+    public fn toLocalTime() -> LocalTime {
+        return self->timeValue;
+    }
+
+    public fn plusDays(int days) -> LocalDateTime {
+        return new LocalDateTime(self->dateValue.plusDays(days), self->timeValue);
+    }
+
+    public fn plusWeeks(int weeks) -> LocalDateTime {
+        return new LocalDateTime(self->dateValue.plusWeeks(weeks), self->timeValue);
+    }
+
+    public fn plusMonths(int months) -> LocalDateTime {
+        return new LocalDateTime(self->dateValue.plusMonths(months), self->timeValue);
+    }
+
+    public fn plusYears(int years) -> LocalDateTime {
+        return new LocalDateTime(self->dateValue.plusYears(years), self->timeValue);
+    }
+
+    public fn plusHours(int hours) -> LocalDateTime {
+        return self->plusSeconds(hours * 3600);
+    }
+
+    public fn plusMinutes(int minutes) -> LocalDateTime {
+        return self->plusSeconds(minutes * 60);
+    }
+
+    public fn plusSeconds(int seconds) -> LocalDateTime {
+        int total = self->timeValue.toNanoOfDay() + seconds * 1000000000;
+        int days = total // LDT_NANOS_PER_DAY;
+        int nanoOfDay = total % LDT_NANOS_PER_DAY;
+        LocalDate date = self->dateValue.plusDays(days);
+        return new LocalDateTime(date, LocalTime.ofNanoOfDay(nanoOfDay));
+    }
+
+    public fn plusNanos(int nanos) -> LocalDateTime {
+        int total = self->timeValue.toNanoOfDay() + nanos;
+        int days = total // LDT_NANOS_PER_DAY;
+        int nanoOfDay = total % LDT_NANOS_PER_DAY;
+        LocalDate date = self->dateValue.plusDays(days);
+        return new LocalDateTime(date, LocalTime.ofNanoOfDay(nanoOfDay));
+    }
+
+    public fn minusDays(int days) -> LocalDateTime {
+        return self->plusDays(-days);
+    }
+
+    public fn minusWeeks(int weeks) -> LocalDateTime {
+        return self->plusWeeks(-weeks);
+    }
+
+    public fn minusMonths(int months) -> LocalDateTime {
+        return self->plusMonths(-months);
+    }
+
+    public fn minusYears(int years) -> LocalDateTime {
+        return self->plusYears(-years);
+    }
+
+    public fn minusHours(int hours) -> LocalDateTime {
+        return self->plusHours(-hours);
+    }
+
+    public fn minusMinutes(int minutes) -> LocalDateTime {
+        return self->plusMinutes(-minutes);
+    }
+
+    public fn minusSeconds(int seconds) -> LocalDateTime {
+        return self->plusSeconds(-seconds);
+    }
+
+    public fn minusNanos(int nanos) -> LocalDateTime {
+        return self->plusNanos(-nanos);
+    }
+
+    public fn isBefore(LocalDateTime other) -> bool {
+        int cmp = self->dateValue.compareTo(other.dateValue);
+        if (cmp != 0) { return cmp < 0; }
+        return self->timeValue.isBefore(other.timeValue);
+    }
+
+    public fn isAfter(LocalDateTime other) -> bool {
+        int cmp = self->dateValue.compareTo(other.dateValue);
+        if (cmp != 0) { return cmp > 0; }
+        return self->timeValue.isAfter(other.timeValue);
+    }
+
+    public fn compareTo(LocalDateTime other) -> int {
+        int cmp = self->dateValue.compareTo(other.dateValue);
+        if (cmp != 0) { return cmp; }
+        return self->timeValue.compareTo(other.timeValue);
+    }
+
+    public fn equals(LocalDateTime other) -> bool {
+        return self->dateValue.equals(other.dateValue)
+            and self->timeValue.equals(other.timeValue);
+    }
+
+    public fn hashCode() -> int {
+        return self->dateValue.hashCode() * 31 + self->timeValue.hashCode();
+    }
+
+    public fn toString() -> str {
+        return self->dateValue.toString() + "T" + self->timeValue.toString();
+    }
+
+    public fn __str__() -> str {
+        return self->toString();
+    }
+}

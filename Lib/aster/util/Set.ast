@@ -1,0 +1,12 @@
+/* aster.util.Set: Java Set 계약 (Collection의 메서드를 다시 선언). */
+
+export interface Set {
+    fn size() -> int;
+    fn isEmpty() -> bool;
+    fn contains(any value) -> bool;
+    fn add(any value) -> bool;
+    fn remove(any value) -> bool;
+    fn clear() -> void;
+    fn iterator() -> any;
+    fn toArray() -> list<any>;
+}

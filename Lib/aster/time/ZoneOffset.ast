@@ -1,0 +1,152 @@
+/* aster.time.ZoneOffset: UTC 기준 고정 오프셋. */
+
+import aster.time.DateTimeParseException;
+
+const int MAX_OFFSET_SECONDS = 64800;
+
+fn _zoIsDigits(str text) -> bool {
+    if (text.length() == 0) { return false; }
+    int i = 0;
+    while (i < text.length()) {
+        if ("0123456789".find(text.charAt(i)) < 0) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
+fn _zoPad2(int value) -> str {
+    if (value < 10) { return "0" + str(value); }
+    return str(value);
+}
+
+fn _zoParseError(str text) -> void {
+    throw ("Text '" + text + "' cannot be parsed as a ZoneOffset") as DateTimeParseException;
+}
+
+fn _zoId(int total) -> str {
+    if (total == 0) { return "Z"; }
+    str sign = "+";
+    int value = total;
+    if (value < 0) {
+        sign = "-";
+        value = -value;
+    }
+    int hours = value / 3600;
+    int minutes = (value % 3600) / 60;
+    int seconds = value % 60;
+    str out = sign + _zoPad2(hours) + ":" + _zoPad2(minutes);
+    if (seconds != 0) {
+        out = out + ":" + _zoPad2(seconds);
+    }
+    return out;
+}
+
+export class ZoneOffset {
+    private int totalSeconds;
+    private str offsetId;
+
+    constructor(int seconds) {
+        if (seconds < -MAX_OFFSET_SECONDS or seconds > MAX_OFFSET_SECONDS) {
+            throw ("Zone offset not in valid range: " + str(seconds)) as ValueError;
+        }
+        self->totalSeconds = seconds;
+        self->offsetId = _zoId(seconds);
+    }
+
+    public static fn UTC() -> ZoneOffset {
+        return new ZoneOffset(0);
+    }
+
+    /* "Z", "+01:00", "-05:30", "+0900", "+09" 형식. */
+    public static fn of(str offsetId) -> ZoneOffset {
+        if (offsetId.length() == 0) { _zoParseError(offsetId); }
+        if (offsetId == "Z" or offsetId == "z") {
+            return new ZoneOffset(0);
+        }
+        str sign = offsetId.charAt(0);
+        if (sign != "+" and sign != "-") { _zoParseError(offsetId); }
+        str body = offsetId.substring(1, offsetId.length());
+        int hours = 0;
+        int minutes = 0;
+        int seconds = 0;
+        if (body.find(":") >= 0) {
+            list<str> parts = body.split(":");
+            if (len(parts) < 2 or len(parts) > 3) { _zoParseError(offsetId); }
+            int i = 0;
+            while (i < len(parts)) {
+                if (not _zoIsDigits(parts[i]) or parts[i].length() > 2) {
+                    _zoParseError(offsetId);
+                }
+                i = i + 1;
+            }
+            hours = parts[0].to_int();
+            minutes = parts[1].to_int();
+            if (len(parts) == 3) { seconds = parts[2].to_int(); }
+        }
+        else {
+            if (not _zoIsDigits(body)) { _zoParseError(offsetId); }
+            if (body.length() == 2) {
+                hours = body.to_int();
+            }
+            else if (body.length() == 4) {
+                hours = body.substring(0, 2).to_int();
+                minutes = body.substring(2, 4).to_int();
+            }
+            else if (body.length() == 6) {
+                hours = body.substring(0, 2).to_int();
+                minutes = body.substring(2, 4).to_int();
+                seconds = body.substring(4, 6).to_int();
+            }
+            else {
+                _zoParseError(offsetId);
+            }
+        }
+        if (hours > 18 or minutes > 59 or seconds > 59) { _zoParseError(offsetId); }
+        if (hours == 18 and (minutes != 0 or seconds != 0)) { _zoParseError(offsetId); }
+        int total = hours * 3600 + minutes * 60 + seconds;
+        if (sign == "-") { total = -total; }
+        return new ZoneOffset(total);
+    }
+
+    public static fn ofHours(int hours) -> ZoneOffset {
+        if (hours < -18 or hours > 18) {
+            throw ("Invalid value for ZoneOffset hours: " + str(hours)) as ValueError;
+        }
+        return new ZoneOffset(hours * 3600);
+    }
+
+    public static fn ofTotalSeconds(int seconds) -> ZoneOffset {
+        return new ZoneOffset(seconds);
+    }
+
+    public fn getTotalSeconds() -> int {
+        return self->totalSeconds;
+    }
+
+    public fn getId() -> str {
+        return self->offsetId;
+    }
+
+    /* Java와 같이 큰 오프셋이 먼저 오도록 비교한다. */
+    public fn compareTo(ZoneOffset other) -> int {
+        if (self->totalSeconds > other.totalSeconds) { return -1; }
+        if (self->totalSeconds < other.totalSeconds) { return 1; }
+        return 0;
+    }
+
+    public fn equals(ZoneOffset other) -> bool {
+        return self->totalSeconds == other.totalSeconds;
+    }
+
+    public fn hashCode() -> int {
+        return self->totalSeconds;
+    }
+
+    public fn toString() -> str {
+        return self->offsetId;
+    }
+
+    public fn __str__() -> str {
+        return self->offsetId;
+    }
+}

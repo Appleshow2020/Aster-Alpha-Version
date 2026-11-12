@@ -10,17 +10,21 @@
 ```sh
 aster program.ast [인자...]
 aster -                    # 표준 입력에서 읽는다
+aster                      # 파일이 없으면 대화형 REPL
 ```
 
-| 옵션              | 의미                             |
-| ----------------- | -------------------------------- |
-| (없음)            | 타입 검사 후 실행                |
-| `--check`         | 타입 검사만 수행 (실행하지 않음) |
-| `--no-check`      | 타입 검사를 건너뛰고 실행        |
-| `--ast`           | 파싱한 AST를 출력                |
-| `--tokens`        | 토큰 목록을 출력                 |
-| `--version`, `-V` | 버전 출력                        |
-| `--help`, `-h`    | 도움말                           |
+| 옵션              | 의미                                    |
+| ----------------- | --------------------------------------- |
+| (없음)            | 타입 검사 후 실행                       |
+| `--check`         | 타입 검사만 수행 (실행하지 않음)        |
+| `--no-check`      | 타입 검사를 건너뛰고 실행               |
+| `--ast`           | 파싱한 AST를 출력                       |
+| `--tokens`        | 토큰 목록을 출력                        |
+| `--format`        | 정규화된 소스를 출력 (주석은 사라짐)    |
+| `--lint`          | 미사용 변수와 도달 불가 코드를 보고      |
+| `--debug`         | 문장 단위 디버거로 실행 (`s/c/p/b/q/h`) |
+| `--version`, `-V` | 버전 출력                               |
+| `--help`, `-h`    | 도움말                                  |
 
 스크립트는 위에서부터 순서대로 실행됩니다. `main()`은 자동으로 호출되지 않으므로
 필요하면 직접 호출합니다. 파일 이름 뒤의 인자는 `System.args`로 들어갑니다.
@@ -36,9 +40,9 @@ println("인자 수: " + str(len(System.args)));
 import해야 하며, import하지 않으면 `NameError`입니다.
 
 ```aster
-import System;             // System.out / System.err / System.in / System.args ...
-import System.stdout.*;    // print, println
-import System.stderr.*;    // print, println (표준 에러로 출력)
+import System;             # System.out / System.err / System.in / System.args ...
+import System.stdout.*;    # print, println
+import System.stderr.*;    # print, println (표준 에러로 출력)
 
 println("hello");
 System.out.println("hello");
@@ -47,6 +51,36 @@ System.err.println("error");
 
 이 문서의 예제에서 `println`/`print`를 쓰려면 `import System.stdout.*;`가
 필요합니다.
+
+### 대화형 REPL
+
+파일 없이 `aster`를 실행하면 REPL이 열립니다. 입력마다 타입 검사 후 바로
+실행하며, 선언한 함수·변수는 다음 입력에서도 유지됩니다. 블록이 닫히지
+않았으면 `... ` 프롬프트로 다음 줄을 이어 받습니다.
+
+```text
+>>> int x = 2;
+>>> x * 3
+6
+>>> :quit
+```
+
+- `:help`: 명령 목록 출력
+- `:quit` (또는 `:q`, `:exit`, Ctrl-D): 종료
+
+표현식 문장은 값을 출력하고, 오류는 실행을 멈추지 않습니다.
+
+### 포매터, 린터, 디버거
+
+세 도구는 파일을 수정하지 않고 결과만 출력합니다.
+
+- `--format`: AST를 기준으로 정규화한 소스를 표준 출력에 씁니다. 주석은 보존되지
+  않습니다. `--format file.ast > file.formatted.ast`처럼 리다이렉트해서 씁니다.
+- `--lint`: 미사용 변수와 도달 불가 코드를 표준 에러에 보고합니다. 경고가 하나라도
+  있으면 종료 코드가 1, 없으면 0입니다(타입 검사는 하지 않습니다).
+- `--debug`: 타입 검사 후 문장을 하나씩 멈춰 가며 실행합니다. 입력 명령은
+  `s`(다음 문장), `c`(계속 실행), `p 표현식`(값 출력), `b 줄번호`(중단점 설정),
+  `q`(종료), `h`(도움말)입니다. 디버그 프롬프트와 추적은 표준 에러로 나갑니다.
 
 ## 2. 어휘 규칙
 
@@ -59,8 +93,8 @@ System.err.println("error");
 - **식별자**: 문자, 숫자, `_`로 구성되며 숫자로 시작할 수 없습니다.
 - **하드 키워드**: `package import from as fn class extends implements interface new
 self public protected private internal if else while for break continue return
-throw try catch finally typedef struct and or not is in true false sizeof
-int float bool str null void super exception export yield`
+throw try catch finally switch case default typedef struct and or not is in
+true false sizeof int float bool str null void super exception export yield`
 - **소프트 키워드**: `const static enum assert extern constructor getter setter property`.
   지정된 위치에서만 키워드로 취급되므로 변수 이름으로도 쓸 수 있습니다.
   (`yield`는 하드 키워드입니다.)
@@ -85,12 +119,12 @@ int float bool str null void super exception export yield`
 ### 타입 수식어
 
 ```aster
-int x;              // 값
-int* p;             // 포인터 단계
-int** pp;           // 두 단계
-str? maybe;         // null 허용 (맨 끝에만)
-Point*? node;       // 포인터이면서 null 허용
-list<int> xs;       // 제네릭
+int x;              # 값
+int* p;             # 포인터 단계
+int** pp;           # 두 단계
+str? maybe;         # null 허용 (맨 끝에만)
+Point*? node;       # 포인터이면서 null 허용
+list<int> xs;       # 제네릭
 dict<str, int> m;
 ```
 
@@ -100,7 +134,7 @@ dict<str, int> m;
   `void`입니다.
 
 ```aster
-fn(int) -> int twice = double_number;   // 이름 있는 함수를 담는 함수 타입 변수
+fn(int) -> int twice = double_number;   # 이름 있는 함수를 담는 함수 타입 변수
 list<fn(int) -> bool> predicates = [];
 ```
 
@@ -112,16 +146,37 @@ list<fn(int) -> bool> predicates = [];
 var a = (int x) -> int => x * 2;
 float b = (int x) -> float => (float)x;
 
-fn(int) -> int c = (int x) -> int => x * 2;   // 오류
+fn(int) -> int c = (int x) -> int => x * 2;   # 오류
 ```
+
+### 합집합 타입
+
+`|`로 여러 타입 중 하나를 받는 타입을 씁니다. 변수, 매개변수, 반환 타입,
+제네릭 인자 어디에나 쓸 수 있습니다.
+
+```aster
+int | str value = 42;      # OK
+value = "text";            # OK
+value = 1.5;               # 오류: float는 int | str에 속하지 않음
+
+fn label(int | str v) -> str { ... }
+
+list<int | str> mixed = [1, "two", 3];
+int | str | null maybe = null;
+```
+
+- `|`는 타입 위치에서만 씁니다. 식에서 `|`를 쓰면 문법 오류입니다.
+- 초기값을 생략하면 **첫 번째 타입**의 기본값을 씁니다(`int | str`이면 `0`).
+- `null`을 허용하려면 `null`을 멤버로 넣거나 맨 끝에 `?`를 붙입니다:
+  `int | str | null`, `int | str?`.
 
 ### 타입 추론과 `const`
 
 ```aster
-var count = 3;          // int로 추론
-var name = "aster";     // str로 추론
-const int LIMIT = 3;    // 재대입 불가
-var xs = [1, 2, 3];     // list<int>
+var count = 3;          # int로 추론
+var name = "aster";     # str로 추론
+const int LIMIT = 3;    # 재대입 불가
+var xs = [1, 2, 3];     # list<int>
 ```
 
 `var`와 `any`는 "타입을 검사하지 않음"을 뜻합니다. `const`가 붙은 변수에 다시
@@ -130,12 +185,12 @@ var xs = [1, 2, 3];     // list<int>
 ### 선언과 기본값
 
 ```aster
-int x;                  // 0
-float f;                // 0.0
-bool b;                 // false
-str s;                  // ""
-Point* p;               // null
-Point p2 = {1, 2};      // 구조체 위치 초기화
+int x;                  # 0
+float f;                # 0.0
+bool b;                 # false
+str s;                  # ""
+Point* p;               # null
+Point p2 = {1, 2};      # 구조체 위치 초기화
 Point p3 = { .y = 2, .x = 1 };
 ```
 
@@ -195,9 +250,9 @@ int n = maybe?.length() ?? 0;
 ### 캐스트, 변환, sizeof
 
 ```aster
-int x = (int) 3.9;         // C 스타일 캐스트 (절단)
+int x = (int) 3.9;         # C 스타일 캐스트 (절단)
 Point* q = (Point*) raw;
-int y = int("42");         // 기본 타입 변환 함수
+int y = int("42");         # 기본 타입 변환 함수
 str s = str(3.5);
 bool t = bool(1);
 int size = sizeof(struct Point);
@@ -230,7 +285,7 @@ i++;
 ```aster
 {
     int x = 1;
-    x += 2;             // += -= *= /= //= %= **=
+    x += 2;             # += -= *= /= //= %= **=
     x = x + 1;
 }
 ```
@@ -239,9 +294,9 @@ i++;
 (`xs[i]`, `d[k]`), 슬라이스(`xs[1:3]`), 튜플 `(a, b)`만 가능합니다.
 
 ```aster
-xs[1:3] = [9, 8, 7];    // 슬라이스 대입 (길이는 달라도 됨)
+xs[1:3] = [9, 8, 7];    # 슬라이스 대입 (길이는 달라도 됨)
 d["k"] = 1;
-(a, b) = (b, a);        // 튜플 교환
+(a, b) = (b, a);        # 튜플 교환
 ```
 
 ### 조건문
@@ -256,14 +311,69 @@ if (x > 0) {
 }
 ```
 
-괄호는 필수입니다. 3항 연산자(`? :`)와 `switch`는 없습니다.
+괄호는 필수입니다. 3항 연산자(`? :`)는 없습니다.
+
+### switch와 패턴
+
+`switch`는 값 하나를 여러 패턴과 차례로 비교해 처음 맞는 가지만 실행합니다.
+폴스루(다음 `case`로 넘어감)는 없고, 각 `case`는 자기 블록을 끝까지 실행한 뒤
+`switch`를 빠져나갑니다.
+
+```aster
+int x = -1;
+switch (x) {
+    case 0 { println("zero"); }
+    case -1 { println("minus one"); }
+    default { println("other"); }
+}
+
+str s = "hi";
+switch (s) {
+    case "hi" { println("greeting"); }
+    case "bye" { println("farewell"); }
+}
+```
+
+패턴은 다음 세 가지입니다.
+
+- **리터럴**: 정수(음수 포함), 실수, 문자열, `true`, `false`, `null`. `==`로 비교하며,
+  타입 검사기는 리터럴이 주체 타입에 대입 가능한지도 확인합니다(예: `int` 주체에
+  문자열 리터럴 `case`는 오류). `null`은 nullable 주체에서만 씁니다.
+- **이름 바인딩**: 그 자리에 매칭되는 모든 값과 일치하고, 값을 그 이름에 묶습니다.
+  `_`는 아무것도 묶지 않는 와일드카드이며 `default`와 같습니다.
+- **열거형 변형**: `Type.Variant` 또는 `Type.Variant(하위패턴...)`. 타입·변형·페이로드
+  개수가 모두 같아야 하고, 하위 패턴도 차례로 매칭됩니다.
+
+```aster
+enum Shape {
+    Circle(float r),
+    Rect(float w, float h),
+    Empty
+}
+
+fn describe(Shape s) -> str {
+    switch (s) {
+        case Shape.Circle(r) { return "circle " + str(r); }
+        case Shape.Rect(w, h) { return "rect " + str(w) + "x" + str(h); }
+        case Shape.Empty { return "empty"; }
+    }
+    return "unknown";
+}
+```
+
+- 주체 식은 한 번만 평가합니다. 각 `case`는 별도의 자식 스코프를 가지므로 패턴이
+  묶은 이름은 그 블록 안에서만 보입니다.
+- 매칭되는 패턴이 없으면 아무것도 하지 않고 다음 문장으로 넘어갑니다.
+- `default`는 `_` 패턴과 같아서 위치상 그 뒤의 `case`가 있으면 안 됩니다. `default`를
+  두 번 쓰면 문법 오류입니다.
+- 변형 패턴의 경로가 열거형 변형을 가리키지 않으면 `TypeError`입니다.
 
 ### 반복문
 
 ```aster
-for (int i = 0; i < 10; i++) { println(i); }       // C 스타일
-for (int i in xs) { println(i); }                  // for-in
-for (int i; i = 1..6..2) { println(i); }           // 범위 (1,3,5)
+for (int i = 0; i < 10; i++) { println(i); }       # C 스타일
+for (int i in xs) { println(i); }                  # for-in
+for (int i; i = 1..6..2) { println(i); }           # 범위 (1,3,5)
 while (running) { ... }
 ```
 
@@ -319,7 +429,7 @@ int r = add(1, 2);
 
 ```aster
 fn id<T>(T value) -> T { return value; }
-int x = id(3);              // T는 호출 시 추론
+int x = id(3);              # T는 호출 시 추론
 ```
 
 타입 인자를 명시하는 호출 문법(`id<int>(3)`)은 없습니다.
@@ -331,8 +441,8 @@ var double = x -> int => x * 2;
 var add = (int a, int b) -> int => a + b;
 var make = () -> int => 42;
 
-double_it = (int x) -> int => x * 2;   // var 없이 선언해도 된다
-float half = (int x) -> float => (float)x;   // 선언 타입 = 람다의 반환 타입
+double_it = (int x) -> int => x * 2;   # var 없이 선언해도 된다
+float half = (int x) -> float => (float)x;   # 선언 타입 = 람다의 반환 타입
 ```
 
 - 형식은 `매개변수 -> 반환타입 => 본문`입니다. 반환 타입은 필수입니다.
@@ -352,11 +462,11 @@ float half = (int x) -> float => (float)x;   // 선언 타입 = 람다의 반환
 ```aster
 fn apply(fn(int) -> int f, int v) -> int { return f(v); }
 
-fn(int) -> int double_it = double_number;   // 이름 있는 함수
-println(apply(double_it, 4));               // 8
+fn(int) -> int double_it = double_number;   # 이름 있는 함수
+println(apply(double_it, 4));               # 8
 
-var triple = (int x) -> int => x * 3;       // 람다는 var로
-println(apply(triple, 4));                  // 12
+var triple = (int x) -> int => x * 3;       # 람다는 var로
+println(apply(triple, 4));                  # 12
 
 list<fn(int) -> bool> predicates = [];
 ```
@@ -432,8 +542,8 @@ class Vec {
 
 Vec a = new Vec(1.0, 2.0);
 Vec b = new Vec(3.0, 4.0);
-println(a + b);            // Vec(4.0, 6.0)
-println(a == new Vec(1.0, 2.0));   // true
+println(a + b);            # Vec(4.0, 6.0)
+println(a == new Vec(1.0, 2.0));   # true
 ```
 
 - 왼쪽 피연산자 객체의 메서드를 먼저 찾고, 없으면 오른쪽의 `__r...__`를 씁니다.
@@ -454,9 +564,9 @@ fn odds(int n) -> list<int> {
 for (int v in odds(5)) { println(v); }
 
 var g = odds(3);
-println(next(g));       // 1  (여기서 본문이 2번째 yield까지 실행된다)
-println(list(g));       // [9]  (남은 값)
-println(list(g));       // []
+println(next(g));       # 1  (여기서 본문이 2번째 yield까지 실행된다)
+println(list(g));       # [9]  (남은 값)
+println(list(g));       # []
 ```
 
 본문에 `yield`가 하나라도 있으면 그 함수는 제너레이터 함수가 됩니다. 호출하면
@@ -488,7 +598,7 @@ class Countdown {
     }
 }
 
-for (int v in new Countdown(3)) { println(v); }   // 2, 1, 0
+for (int v in new Countdown(3)) { println(v); }   # 2, 1, 0
 ```
 
 ## 7. 클래스, 인터페이스, 구조체
@@ -676,13 +786,59 @@ main.ast:14: error: ZeroDivisionError: 0으로 나눌 수 없습니다
 enum Color { RED, GREEN, BLUE }
 enum Code { OK = 0, WARN = 10, ERROR = 20 }
 
-println(Color.GREEN.name);     // GREEN
-println(Color.BLUE.ordinal);   // 2
-println(Code.WARN.value);      // 10
+println(Color.GREEN.name);     # GREEN
+println(Color.BLUE.ordinal);   # 2
+println(Code.WARN.value);      # 10
 ```
 
 값을 생략하면 0부터의 순서가 됩니다. 열거형 멤버는 `타입.이름`으로 접근하고
 `.name`, `.ordinal`, `.value`를 읽을 수 있습니다.
+
+### 페이로드가 있는 변형
+
+멤버에 매개변수를 붙이면 값을 담는 변형(variant)이 됩니다.
+
+```aster
+enum Shape {
+    Circle(float r),
+    Rect(float w, float h),
+    Empty
+}
+
+Shape c = Shape.Circle(1.5);
+Shape r = Shape.Rect(2.0, 3.0);
+Shape e = Shape.Empty;
+
+println(c);            # Shape.Circle(1.5)
+println(c.variant);    # Circle
+println(c.arity);      # 1
+println(c.payload);    # [1.5]
+println(r.payload);    # [2.0, 3.0]
+println(e.arity);      # 0
+```
+
+- 매개변수가 있는 멤버는 `타입.멤버(인자...)`로 생성합니다. 인자 개수가 다르면
+  `TypeError`입니다.
+- 매개변수가 없는 멤버는 생성 호출 없이 `Shape.Empty`가 곧 값입니다.
+- 공통 접근자: `.name`, `.ordinal`, `.value`, `.variant`(이름), `.arity`(페이로드
+  개수), `.payload`(페이로드 리스트).
+- `==`는 타입, 변형, 페이로드를 모두 비교합니다. 페이로드가 해시 가능하면
+  딕셔너리 키나 세트 원소로도 쓸 수 있습니다.
+- 분기는 `switch`와 변형 패턴(`case Shape.Circle(r) { ... }`)으로 합니다. 자세한
+  문법은 §5의 “switch와 패턴”을 봅니다.
+
+```aster
+fn area(Shape s) -> float {
+    if (s.variant == "Circle") {
+        float r = s.payload[0];
+        return 3.0 * r * r;
+    }
+    if (s.variant == "Rect") {
+        return s.payload[0] * s.payload[1];
+    }
+    return 0.0;
+}
+```
 
 ## 10. 컬렉션
 
@@ -691,12 +847,12 @@ println(Code.WARN.value);      // 10
 ```aster
 var xs = [1, 2, 3];
 var empty = [];
-var t = (1, 2);          // 튜플
-var one = (1,);          // 원소 1개 튜플
+var t = (1, 2);          # 튜플
+var one = (1,);          # 원소 1개 튜플
 var d = {"a": 1, "b": 2};
-var s = {1, 2, 3};       // 세트
-var e = {};              // 빈 딕셔너리
-var fs = frozenset(xs);  // 불변 세트 (리터럴 없음)
+var s = {1, 2, 3};       # 세트
+var e = {};              # 빈 딕셔너리
+var fs = frozenset(xs);  # 불변 세트 (리터럴 없음)
 var nested = [[1], [2]];
 ```
 
@@ -725,9 +881,9 @@ var merged = {**d, "c": 3};
 `a..b`는 양 끝을 포함하는 리스트를 만듭니다. `a..b..s`는 간격을 지정합니다.
 
 ```aster
-list<int> xs = 1..5;          // [1, 2, 3, 4, 5]
-list<int> odds = 1..9..2;     // [1, 3, 5, 7, 9]
-list<int> down = 5..1..-2;    // [5, 3, 1]
+list<int> xs = 1..5;          # [1, 2, 3, 4, 5]
+list<int> odds = 1..9..2;     # [1, 3, 5, 7, 9]
+list<int> down = 5..1..-2;    # [5, 3, 1]
 list<int> squares = xs.map(x -> int => x * x);
 list<int> big = squares.filter(x -> bool => x > 4);
 ```
@@ -739,9 +895,9 @@ list<int> big = squares.filter(x -> bool => x > 4);
 
 ```aster
 println(xs[0]);
-println(xs[-1]);         // 뒤에서 첫 번째
+println(xs[-1]);         # 뒤에서 첫 번째
 println(d["a"]);
-var part = xs[1:3];      // [xs[1], xs[2]]
+var part = xs[1:3];      # [xs[1], xs[2]]
 var step = xs[0:5:2];
 xs[0] = 9;
 xs[1:3] = [7, 7, 7];
@@ -754,9 +910,9 @@ frozenset은 인덱스로 읽을 수 없습니다. 슬라이스 경계는 생략
 
 ```aster
 for (int x in xs) { ... }
-for (str k in d) { ... }         // 키
+for (str k in d) { ... }         # 키
 for (int v in s) { ... }
-for (str ch in "abc") { ... }    // 유니코드 코드포인트 단위
+for (str ch in "abc") { ... }    # 유니코드 코드포인트 단위
 ```
 
 ### 내장 함수와 메서드
@@ -768,12 +924,12 @@ for (str ch in "abc") { ... }    // 유니코드 코드포인트 단위
 
 ```aster
 str s = "Aster";
-println(s.upper());              // ASTER
+println(s.upper());              # ASTER
 println(s.length());
 println(s.substring(1, 3));
 println(s.charAt(0));
 println("  x  ".trim());
-println("-".join(["a", "b"]));   // a-b
+println("-".join(["a", "b"]));   # a-b
 println("42".to_int());
 
 str msg = f"{name}은 {count}살, 평균 {avg:.2f}";
@@ -790,23 +946,30 @@ f-string은 `f"..."`로 쓰고 `{식}`을 보간합니다. `{{`/`}}`는 중괄�
 ## 12. 모듈
 
 ```aster
-// helper.ast
+# helper.ast
 export fn greet(str name) -> str { return "Hello, " + name; }
 export int answer = 42;
 
-// main.ast
+# main.ast
 import helper;
 println(helper.greet("aster"));
 
 import helper as h;
 println(h.answer);
 
-from helper import greet, answer;
+from helper import greet;
+from helper import answer as a;
 from helper import *;
 ```
 
+`from`은 한 번에 이름 하나만 가져옵니다(콤마 목록은 지원하지 않습니다). 여러
+이름이 필요하면 `from`을 여러 번 쓰거나 모듈 전체를 가져옵니다.
+
 - 모듈 경로의 `.`은 디렉터리 구분자입니다. `import a.b`는 `a/b.ast` 또는
   `a/b/__init__.ast`를 찾습니다.
+- `import a.b.C;`는 모듈 `a.b`가 공개한 이름 `C`를 **직접** 가져옵니다. Java의
+  `import java.io.File;`과 같은 방식입니다. 모듈의 마지막 경로 이름과 같은
+  공개 선언이 없을 때만 모듈 객체를 가져옵니다.
 - 탐색 순서: 실행 파일이 있는 디렉터리 → 표준 라이브러리(`ASTER_HOME/Lib`
   또는 현재 디렉터리의 `Lib`) → 패키지 의존성 경로 → `ASTER_PATH`.
 - `export`가 하나라도 있으면 **export한 이름만** import할 수 있습니다.
@@ -814,6 +977,17 @@ from helper import *;
 - 모듈은 이름별로 한 번만 로드되고 캐시됩니다.
 - `import *`는 공개 이름을 현재 범위로 가져옵니다.
 - `package 이름;` 문장은 파싱되지만 현재 로더 동작에는 영향을 주지 않습니다.
+
+표준 라이브러리의 내장 클래스도 같은 방식으로 가져옵니다.
+
+```aster
+import aster.io.File;          # File 클래스
+import aster.util.Deque;       # Deque<T> 클래스
+import aster.util.regex.Pattern;
+
+File f = new File("notes.txt");
+Deque<int>* d = new Deque<int>();
+```
 
 패키지 관리자는 [packages.md](packages.md)를 봅니다.
 
@@ -868,11 +1042,19 @@ Aster는 실행 전에 정적 타입 검사를 합니다.
 ## 15. 실행 모델과 제한
 
 - 트리 워킹 인터프리터이며, 값은 태그가 붙은 `RValue`로 표현됩니다.
-- 메모리는 아레나에 할당되고 프로그램 종료 시 한꺼번에 해제됩니다.
+- AST 노드는 아레나에 할당되고 프로그램 종료 시 한꺼번에 해제됩니다. 실행 중
+  만들어진 값(리스트, 인스턴스 등)은 참조 카운팅 없이 프로세스가 끝날 때 반환됩니다.
+- 호출 환경과 매 반복마다 새로 만들어지는 블록 환경은 재사용 풀에서 꺼내 씁니다.
+  함수/블록 본문이 환경을 밖으로 흘리지 않는다고 정적으로 판단될 때만 재사용하므로,
+  클로저·람다·`&지역변수`·제너레이터·중첩 선언이 있는 곳은 항상 새 환경을 씁니다.
+  이는 의미를 바꾸지 않으면서 반복 호출의 할당량을 줄입니다.
 - 클래스 인스턴스는 참조 의미, 구조체는 값 의미입니다.
 - 제너레이터는 지연 실행이며 별도 스택(Windows 파이버 / POSIX ucontext)에서 돕니다.
 - 호출 깊이 제한 기본값은 512입니다. 넘으면 `RecursionError`가 납니다.
   `System.setRecursionLimit(n)`으로 바꾸고 `System.getRecursionLimit()`으로 읽습니다
   (1 이상 100000 이하).
-- `switch`, 3항 연산자, 예외 없는 `try` 블록은 없습니다.
+- 3항 연산자(`? :`)와 예외 없는 `try` 블록은 없습니다.
+- `--format`은 주석을 보존하지 않습니다. 정규화된 코드만 필요할 때 씁니다.
+- 바이트코드 VM은 아직 없습니다. 성능·메모리 상한이 필요하면 트리 워킹의 한계를
+  전제로 해야 합니다.
 - `extern`은 프로세스에 이미 있는 C 심볼만 호출할 수 있습니다(임의 라이브러리 로드 없음).

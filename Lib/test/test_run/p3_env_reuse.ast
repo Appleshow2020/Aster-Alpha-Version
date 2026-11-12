@@ -1,0 +1,71 @@
+import System.stdout.*;
+
+fn fib(int n) -> int {
+    if (n < 2) {
+        return n;
+    }
+    return fib(n - 1) + fib(n - 2);
+}
+
+fn make_adder(int base) -> int {
+    add = (int x) => x + base -> int;
+    return add(10);
+}
+
+fn addr(int v) -> int* {
+    int local = v;
+    return &local;
+}
+
+fn gen(int limit) -> int {
+    int i = 0;
+    while (i < limit) {
+        yield i;
+        i = i + 1;
+    }
+    return 0;
+}
+
+fn sum_to(int n) -> int {
+    int sum = 0;
+    for (int i = 0; i < n; i = i + 1) {
+        int k = i * 2;
+        sum = sum + k;
+    }
+    return sum;
+}
+
+class Box {
+    int value;
+    constructor(int v) {
+        self.value = v;
+    }
+    fn scaled(int f) -> int {
+        return self.value * f;
+    }
+}
+
+println(fib(15));
+println(make_adder(7));
+println(sum_to(5));
+
+var closures = [];
+for (int i = 0; i < 3; i = i + 1) {
+    int k = i;
+    closures.append((int z) => k + z -> int);
+}
+for (var f in closures) {
+    println(f(10));
+}
+
+int* p = addr(3);
+println(*p);
+
+int total = 0;
+for (int v in gen(4)) {
+    total = total + v;
+}
+println(total);
+
+Box b = new Box(4);
+println(b.scaled(3));

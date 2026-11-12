@@ -1,0 +1,170 @@
+/* aster.lang.StringBuffer: mutable, Java-style string builder facade.
+   It composes aster.lang.StringBuilder rather than inheriting across
+   modules; every mutator returns self for call chaining. */
+
+import aster.lang.Object;
+from aster.lang.String import StringBuilder;
+
+export class StringBuffer extends Object {
+    private StringBuilder buf;
+
+    constructor() {
+        self->buf = new StringBuilder();
+    }
+
+    /* Aster classes support a single constructor, so initial contents are
+       provided by this factory (of) instead of an overloaded constructor. */
+    public static fn of(str initial) -> StringBuffer {
+        StringBuffer out = new StringBuffer();
+        out->append(initial);
+        return out;
+    }
+
+    private fn content() -> str {
+        return self->buf.toString();
+    }
+
+    public fn append(str value) -> StringBuffer {
+        self->buf.append(value);
+        return self;
+    }
+
+    public fn append(int value) -> StringBuffer {
+        return self->append(str(value));
+    }
+
+    public fn append(float value) -> StringBuffer {
+        return self->append(str(value));
+    }
+
+    public fn append(bool value) -> StringBuffer {
+        return self->append(str(value));
+    }
+
+    public fn appendChar(str ch) -> StringBuffer {
+        return self->append(ch);
+    }
+
+    public fn insert(int offset, str value) -> StringBuffer {
+        str cur = self->content();
+        if (offset < 0 or offset > cur.length()) {
+            throw "string index out of range: " + str(offset) as IndexError;
+        }
+        self->buf.clear();
+        self->buf.append(cur.substring(0, offset));
+        self->buf.append(value);
+        self->buf.append(cur.substring(offset));
+        return self;
+    }
+
+    public fn insert(int offset, int value) -> StringBuffer {
+        return self->insert(offset, str(value));
+    }
+
+    public fn delete(int start, int end) -> StringBuffer {
+        str cur = self->content();
+        if (start < 0 or end > cur.length() or start > end) {
+            throw "string index out of range" as IndexError;
+        }
+        self->buf.clear();
+        self->buf.append(cur.substring(0, start));
+        self->buf.append(cur.substring(end));
+        return self;
+    }
+
+    public fn deleteCharAt(int index) -> StringBuffer {
+        return self->delete(index, index + 1);
+    }
+
+    public fn replace(int start, int end, str value) -> StringBuffer {
+        str cur = self->content();
+        if (start < 0 or end > cur.length() or start > end) {
+            throw "string index out of range" as IndexError;
+        }
+        self->buf.clear();
+        self->buf.append(cur.substring(0, start));
+        self->buf.append(value);
+        self->buf.append(cur.substring(end));
+        return self;
+    }
+
+    public fn indexOf(str value) -> int {
+        return self->content().indexOf(value);
+    }
+
+    public fn indexOf(str value, int start) -> int {
+        str cur = self->content();
+        int pos = start;
+        if (pos < 0) {
+            pos = 0;
+        }
+        if (pos > cur.length()) {
+            return -1;
+        }
+        int found = cur.substring(pos).indexOf(value);
+        if (found < 0) {
+            return -1;
+        }
+        return found + pos;
+    }
+
+    public fn substring(int start) -> str {
+        return self->content().substring(start);
+    }
+
+    public fn substring(int start, int end) -> str {
+        return self->content().substring(start, end);
+    }
+
+    public fn setLength(int newLength) -> void {
+        if (newLength < 0) {
+            throw "negative length: " + str(newLength) as ValueError;
+        }
+        str cur = self->content();
+        if (newLength <= cur.length()) {
+            self->buf.clear();
+            self->buf.append(cur.substring(0, newLength));
+        }
+        else {
+            int need = newLength - cur.length();
+            int i = 0;
+            while (i < need) {
+                self->buf.append(" ");
+                i = i + 1;
+            }
+        }
+    }
+
+    public fn charAt(int index) -> str {
+        return self->content().charAt(index);
+    }
+
+    public fn reverse() -> StringBuffer {
+        self->buf.reverse();
+        return self;
+    }
+
+    public fn length() -> int {
+        return self->buf.length();
+    }
+
+    public fn isEmpty() -> bool {
+        return self->buf.isEmpty();
+    }
+
+    public fn clear() -> void {
+        self->buf.clear();
+    }
+
+    public fn toString() -> str {
+        return self->content();
+    }
+
+    public fn __len__() -> int {
+        return self->length();
+    }
+
+    public fn __str__() -> str {
+        return self->content();
+    }
+}

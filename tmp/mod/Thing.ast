@@ -1,0 +1,5 @@
+export fn hello() -> int { return 7; }
+export class Thing {
+    public static fn hi() -> int { return 1; }
+    public fn name() -> str { return "thing"; }
+}

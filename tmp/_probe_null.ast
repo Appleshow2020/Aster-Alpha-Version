@@ -1,0 +1,29 @@
+class P {
+    public str name;
+    public fn greet() -> str { return self->name; }
+}
+
+fn maybe() -> P? {
+    return null;
+}
+
+fn a() -> str {
+    P? p = maybe();
+    return p->greet();
+}
+
+fn b() -> str {
+    P? p = maybe();
+    if (p != null) {
+        return p->greet();
+    }
+    return "none";
+}
+
+fn c() -> str {
+    P? p = maybe();
+    if (p == null) {
+        return "none";
+    }
+    return p->name;
+}

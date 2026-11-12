@@ -1,0 +1,5 @@
+/* aster.io.Flushable: Java Flushable contract. */
+
+export interface Flushable {
+    fn flush() -> void;
+}

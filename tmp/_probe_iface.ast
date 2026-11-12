@@ -1,0 +1,15 @@
+import System.stdout.*;
+
+interface Named {
+    fn name() -> str;
+}
+
+class P implements Named {
+    public fn name() -> str { return "p"; }
+}
+
+fn show(Named n) -> str {
+    return n.name();
+}
+
+println(show(new P()));

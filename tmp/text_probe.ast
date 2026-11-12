@@ -1,0 +1,59 @@
+import System.stdout.*;
+import aster.text.SimpleDateFormat;
+import aster.text.DateFormat;
+import aster.text.NumberFormat;
+import aster.text.DecimalFormat;
+import aster.text.MessageFormat;
+import aster.text.ParseException;
+
+SimpleDateFormat f = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS");
+println(f.toPattern());
+println(f.format(1000000000000));
+println(f.format(1234));
+println(f.format(0));
+println(f.format(-1));
+SimpleDateFormat y = new SimpleDateFormat("yyyy");
+println(y.format(1000000000000));
+SimpleDateFormat d = DateFormat.getDateInstance();
+println(d.toPattern(), d.format(1000000000000).length());
+Date d2 = DateFormat.getDateInstance(DateFormat.FULL);
+println(d2.toPattern());
+SimpleDateFormat p = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+int millis = p.parse("2001-09-09 01:46:40");
+println(millis);
+SimpleDateFormat p2 = new SimpleDateFormat("MM/dd/yyyy");
+println(p2.parse("01/02/2020"));
+SimpleDateFormat p3 = new SimpleDateFormat("h:mm a");
+println(p3.parse("1:30 PM"));
+println(p3.format(0));
+
+DecimalFormat df = new DecimalFormat("#,##0.00");
+println(df.toPattern(), df.format(1234567.891), df.format(-1234.5), df.format(0));
+DecimalFormat df2 = new DecimalFormat("0.###");
+println(df2.format(3.14159), df2.format(2.0));
+DecimalFormat df3 = new DecimalFormat("0.00%");
+println(df3.format(0.25), df3.parse("25.00%"));
+DecimalFormat df4 = new DecimalFormat("$#,##0.00");
+println(df4.format(1234.5), df4.format(-1234.5), df4.parse("$1,234.50"), df4.parse("-$1,234.50"));
+NumberFormat nf = NumberFormat.getInstance();
+println(nf.format(1234567.891), nf.format(42), nf.getMaximumFractionDigits(), nf.isGroupingUsed());
+NumberFormat ni = NumberFormat.getIntegerInstance();
+println(ni.format(1234567.891));
+NumberFormat np = NumberFormat.getPercentInstance();
+println(np.format(0.125), np.parse("12.5%"));
+NumberFormat nc = NumberFormat.getCurrencyInstance();
+println(nc.format(1234.5), nc.parse("$1,234.50"));
+nf.setGroupingUsed(false);
+println(nf.format(1234567.891));
+MessageFormat mf = new MessageFormat("Hello, {0}! You have {1} messages.");
+list<var> args = [];
+args.append("Aster");
+args.append(3);
+println(mf.format(args));
+println(MessageFormat.format("It''s {0} at {1}", args));
+try {
+    SimpleDateFormat bad = new SimpleDateFormat("yyyy-MM-dd");
+    bad.parse("oops");
+} catch (ParseException e) {
+    println("caught: " + e.name);
+}

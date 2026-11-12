@@ -1,0 +1,13 @@
+import System.stdout.*;
+fn show(int | float | str v) -> str { return str(v); }
+fn show2(int | str | float v) -> str { return str(v); }
+class C {
+    public str v;
+    constructor(int | float | str x) { self->v = str(x); }
+}
+println(show(1));
+println(show(1.5));
+println(show("x"));
+println(show2(2.5));
+C c = new C(3.5);
+println(c->v);

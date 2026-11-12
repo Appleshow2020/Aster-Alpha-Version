@@ -1,0 +1,89 @@
+/* aster.text.MessageFormat: java.text.MessageFormat의 단순화 버전.
+   {0}, {1}, ... 위치 인자만 지원한다. 선택(choice)과 number/date 같은
+   형식 타입은 지원하지 않으며, 작은따옴표 ''는 리터럴 따옴표로 처리한다. */
+
+export class MessageFormat {
+    private str patternText;
+
+    constructor(str pattern) {
+        self->patternText = pattern;
+    }
+
+    public fn applyPattern(str pattern) -> void {
+        self->patternText = pattern;
+    }
+
+    public fn toPattern() -> str {
+        return self->patternText;
+    }
+
+    public static fn format(str pattern, list<var> args) -> str {
+        return MessageFormat._render(pattern, args);
+    }
+
+    public fn format(list<var> args) -> str {
+        return MessageFormat._render(self->patternText, args);
+    }
+
+    private static fn _render(str pattern, list<var> args) -> str {
+        str out = "";
+        int i = 0;
+        int n = pattern.length();
+        while (i < n) {
+            str c = pattern.charAt(i);
+            if (c == "'") {
+                if (i + 1 < n and pattern.charAt(i + 1) == "'") {
+                    out = out + "'";
+                    i = i + 2;
+                    continue;
+                }
+                i = i + 1;
+                bool closed = false;
+                while (i < n and not closed) {
+                    if (pattern.charAt(i) == "'") {
+                        if (i + 1 < n and pattern.charAt(i + 1) == "'") {
+                            out = out + "'";
+                            i = i + 2;
+                        }
+                        else {
+                            i = i + 1;
+                            closed = true;
+                        }
+                    }
+                    else {
+                        out = out + pattern.charAt(i);
+                        i = i + 1;
+                    }
+                }
+                continue;
+            }
+            if (c == "{") {
+                int close = i + 1;
+                while (close < n and pattern.charAt(close) != "}") {
+                    close = close + 1;
+                }
+                if (close >= n) {
+                    throw "unmatched '{' in MessageFormat pattern" as ValueError;
+                }
+                str inner = pattern.substring(i + 1, close).strip();
+                int comma = inner.find(",");
+                if (comma >= 0) {
+                    inner = inner.substring(0, comma).strip();
+                }
+                if (inner.length() == 0) {
+                    throw "empty argument index in MessageFormat pattern" as ValueError;
+                }
+                int index = inner.to_int();
+                if (index < 0 or index >= len(args)) {
+                    throw "MessageFormat argument index out of range: " + str(index) as ValueError;
+                }
+                out = out + str(args[index]);
+                i = close + 1;
+                continue;
+            }
+            out = out + c;
+            i = i + 1;
+        }
+        return out;
+    }
+}

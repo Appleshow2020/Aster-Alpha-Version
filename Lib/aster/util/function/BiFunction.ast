@@ -1,0 +1,5 @@
+/* aster.util.function.BiFunction: Java BiFunction<T, U, R> shape. */
+
+export interface BiFunction {
+    fn apply(any first, any second) -> any;
+}

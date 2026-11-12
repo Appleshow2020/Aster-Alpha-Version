@@ -1,0 +1,18 @@
+/* aster.util.Map: Java Map 계약.
+
+   keySet/values/entrySet의 구체 타입은 구현마다 달라서 any로 선언한다.
+   HashMap의 entrySet은 MapEntry 리스트다(엔트리는 해시 가능하지 않을 수 있다). */
+
+export interface Map {
+    fn put(any key, any value) -> any;
+    fn get(any key) -> any;
+    fn remove(any key) -> any;
+    fn containsKey(any key) -> bool;
+    fn containsValue(any value) -> bool;
+    fn keySet() -> any;
+    fn values() -> any;
+    fn entrySet() -> any;
+    fn size() -> int;
+    fn isEmpty() -> bool;
+    fn clear() -> void;
+}

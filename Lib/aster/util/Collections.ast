@@ -1,0 +1,130 @@
+/* aster.util.Collections: Java Collections 스타일 정적 헬퍼.
+
+   모든 함수는 ArrayList를 받거나 돌려준다. unmodifiableList는 자바와 달리
+   방어적 복사본을 돌려준다(불변 뷰가 아님). */
+
+import aster.util.ArrayList;
+import aster.util.Comparator;
+import aster.util.Objects;
+import aster.util.Random;
+import aster.util.Arrays;
+
+export class Collections {
+    public static fn emptyList() -> ArrayList<any> {
+        return new ArrayList<any>();
+    }
+
+    public static fn singletonList(any value) -> ArrayList<any> {
+        ArrayList<any> out = new ArrayList<any>();
+        out.add(value);
+        return out;
+    }
+
+    public static fn nCopies(int count, any value) -> ArrayList<any> {
+        if (count < 0) {
+            throw "count must not be negative" as ValueError;
+        }
+        ArrayList<any> out = new ArrayList<any>();
+        int i = 0;
+        while (i < count) {
+            out.add(value);
+            i = i + 1;
+        }
+        return out;
+    }
+
+    public static fn sort(ArrayList<any>* list) -> void {
+        list.sort();
+    }
+
+    public static fn sort(ArrayList<any>* list, Comparator* cmp) -> void {
+        list.sort(cmp);
+    }
+
+    public static fn reverse(ArrayList<any>* list) -> void {
+        int i = 0;
+        int j = list.size() - 1;
+        while (i < j) {
+            any tmp = list.get(i);
+            list.set(i, list.get(j));
+            list.set(j, tmp);
+            i = i + 1;
+            j = j - 1;
+        }
+    }
+
+    public static fn shuffle(ArrayList<any>* list) -> void {
+        Random* rng = new Random();
+        Collections.shuffle(list, rng);
+    }
+
+    public static fn shuffle(ArrayList<any>* list, Random* rng) -> void {
+        int i = list.size() - 1;
+        while (i > 0) {
+            int j = rng.nextInt(i + 1);
+            any tmp = list.get(i);
+            list.set(i, list.get(j));
+            list.set(j, tmp);
+            i = i - 1;
+        }
+    }
+
+    public static fn swap(ArrayList<any>* list, int i, int j) -> void {
+        any tmp = list.get(i);
+        list.set(i, list.get(j));
+        list.set(j, tmp);
+    }
+
+    public static fn min(ArrayList<any>* list) -> any {
+        if (list.isEmpty()) {
+            throw "collection is empty" as NoSuchElementError;
+        }
+        any best = list.get(0);
+        int i = 1;
+        while (i < list.size()) {
+            if (Objects.compare(list.get(i), best) < 0) {
+                best = list.get(i);
+            }
+            i = i + 1;
+        }
+        return best;
+    }
+
+    public static fn max(ArrayList<any>* list) -> any {
+        if (list.isEmpty()) {
+            throw "collection is empty" as NoSuchElementError;
+        }
+        any best = list.get(0);
+        int i = 1;
+        while (i < list.size()) {
+            if (Objects.compare(list.get(i), best) > 0) {
+                best = list.get(i);
+            }
+            i = i + 1;
+        }
+        return best;
+    }
+
+    public static fn frequency(ArrayList<any>* list, any value) -> int {
+        int count = 0;
+        int i = 0;
+        while (i < list.size()) {
+            if (Objects.equals(list.get(i), value)) {
+                count = count + 1;
+            }
+            i = i + 1;
+        }
+        return count;
+    }
+
+    public static fn binarySearch(ArrayList<any>* list, any key) -> int {
+        return Arrays.binarySearch(list.toArray(), key);
+    }
+
+    /* 자바의 불변 뷰 대신 방어적 복사본을 돌려준다. */
+    public static fn unmodifiableList(ArrayList<any>* list) -> ArrayList<any> {
+        ArrayList<any> out = new ArrayList<any>();
+        out.addAll(list.toArray());
+        return out;
+    }
+}

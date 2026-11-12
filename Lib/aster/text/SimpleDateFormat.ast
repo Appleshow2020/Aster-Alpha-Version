@@ -1,0 +1,329 @@
+/* aster.text.SimpleDateFormat: java.text.SimpleDateFormat 스타일 패턴 포매터.
+   지원 패턴 문자: y, M, d, H, h, m, s, S, E, a, Z, z.
+   포매팅은 strftime(_aster_format_time)으로 위임하고, SSS는 밀리초에서 직접
+   계산한다. 파싱은 y/M/d/H/h/m/s/S/a를 지원하며 결과는 UTC 기준 에포크
+   밀리초이다(로컬 시간대 보정은 하지 않는다). */
+
+import aster.text.DateFormat;
+import aster.text.ParseException;
+
+extern fn _aster_format_time(int epochSeconds, str pattern) -> str;
+
+export class SimpleDateFormat extends DateFormat {
+    private str patternText;
+    private int myDateStyle;
+    private int myTimeStyle;
+
+    constructor(str pattern) {
+        super();
+        self->patternText = pattern;
+        self->myDateStyle = DateFormat.DEFAULT;
+        self->myTimeStyle = DateFormat.DEFAULT;
+    }
+
+    public fn setStyles(int dateStyle, int timeStyle) -> void {
+        self->myDateStyle = dateStyle;
+        self->myTimeStyle = timeStyle;
+    }
+
+    public fn getDateStyle() -> int {
+        return self->myDateStyle;
+    }
+
+    public fn getTimeStyle() -> int {
+        return self->myTimeStyle;
+    }
+
+    public fn applyPattern(str pattern) -> void {
+        self->patternText = pattern;
+    }
+
+    public fn toPattern() -> str {
+        return self->patternText;
+    }
+
+    private fn _padLeft(int value, int width) -> str {
+        str s = str(value);
+        while (s.length() < width) {
+            s = "0" + s;
+        }
+        return s;
+    }
+
+    private fn _fraction(int millis, int width) -> str {
+        int value = millis;
+        int k = 3;
+        while (k > width) {
+            value = value / 10;
+            k = k - 1;
+        }
+        while (k < width) {
+            value = value * 10;
+            k = k + 1;
+        }
+        return self->_padLeft(value, width);
+    }
+
+    private fn _literal(str ch, str out) -> str {
+        if (ch == "%") { return out + "%%"; }
+        return out + ch;
+    }
+
+    private fn _translatePattern() -> str {
+        str p = self->patternText;
+        str out = "";
+        bool quoted = false;
+        int i = 0;
+        int n = p.length();
+        while (i < n) {
+            str c = p.charAt(i);
+            if (c == "'") {
+                if (quoted and i + 1 < n and p.charAt(i + 1) == "'") {
+                    out = self->_literal("'", out);
+                    i = i + 2;
+                    continue;
+                }
+                quoted = not quoted;
+                i = i + 1;
+                continue;
+            }
+            if (quoted) {
+                out = self->_literal(c, out);
+                i = i + 1;
+                continue;
+            }
+            if (c == "y" or c == "M" or c == "d" or c == "H" or c == "h"
+                or c == "m" or c == "s" or c == "E" or c == "a"
+                or c == "Z" or c == "z" or c == "S") {
+                int j = i;
+                while (j < n and p.charAt(j) == c) {
+                    j = j + 1;
+                }
+                int count = j - i;
+                if (c == "y") {
+                    if (count >= 4) { out = out + "%Y"; }
+                    else { out = out + "%y"; }
+                }
+                else if (c == "M") {
+                    if (count >= 4) { out = out + "%B"; }
+                    else if (count == 3) { out = out + "%b"; }
+                    else { out = out + "%m"; }
+                }
+                else if (c == "d") { out = out + "%d"; }
+                else if (c == "H") { out = out + "%H"; }
+                else if (c == "h") { out = out + "%I"; }
+                else if (c == "m") { out = out + "%M"; }
+                else if (c == "s") { out = out + "%S"; }
+                else if (c == "E") {
+                    if (count >= 4) { out = out + "%A"; }
+                    else { out = out + "%a"; }
+                }
+                else if (c == "a") { out = out + "%p"; }
+                else if (c == "Z") { out = out + "%z"; }
+                else if (c == "z") { out = out + "%Z"; }
+                else if (c == "S") {
+                    out = out + "@MS" + str(count) + "@";
+                }
+                i = j;
+                continue;
+            }
+            out = self->_literal(c, out);
+            i = i + 1;
+        }
+        return out;
+    }
+
+    public fn format(int epochMillis) -> str {
+        int seconds = epochMillis / 1000;
+        int millis = epochMillis % 1000;
+        if (millis < 0) {
+            seconds = seconds - 1;
+            millis = millis + 1000;
+        }
+        str pattern = self->_translatePattern();
+        str result = _aster_format_time(seconds, pattern);
+        int width = 1;
+        while (width <= 9) {
+            str token = "@MS" + str(width) + "@";
+            if (result.find(token) >= 0) {
+                result = result.replace(token, self->_fraction(millis, width));
+            }
+            width = width + 1;
+        }
+        return result;
+    }
+
+    /* --- 파싱 --- */
+
+    private static fn _isLeap(int year) -> bool {
+        if (year % 4 != 0) { return false; }
+        if (year % 100 != 0) { return true; }
+        return year % 400 == 0;
+    }
+
+    private static fn _daysFromEpoch(int year, int month, int day) -> int {
+        int days = 0;
+        int y = 1970;
+        if (year >= 1970) {
+            while (y < year) {
+                days = days + 365;
+                if (SimpleDateFormat._isLeap(y)) { days = days + 1; }
+                y = y + 1;
+            }
+        }
+        else {
+            y = year;
+            while (y < 1970) {
+                days = days - 365;
+                if (SimpleDateFormat._isLeap(y)) { days = days - 1; }
+                y = y + 1;
+            }
+        }
+        list<int> monthDays = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+        int m = 1;
+        while (m < month) {
+            days = days + monthDays[m - 1];
+            if (m == 2 and SimpleDateFormat._isLeap(year)) { days = days + 1; }
+            m = m + 1;
+        }
+        return days + day - 1;
+    }
+
+    private fn _parseDigits(str text, int pos, int maxCount) -> list<int> {
+        list<int> result = [];
+        int value = 0;
+        int count = 0;
+        while (pos < text.length() and count < maxCount and text.charAt(pos).isdigit()) {
+            value = value * 10 + text.charAt(pos).to_int();
+            pos = pos + 1;
+            count = count + 1;
+        }
+        if (count == 0) { value = -1; }
+        result.append(value);
+        result.append(pos);
+        return result;
+    }
+
+    public fn parse(str text) -> int {
+        str p = self->patternText;
+        int pi = 0;
+        int ti = 0;
+        int year = 1970;
+        int month = 1;
+        int day = 1;
+        int hour = 0;
+        int minute = 0;
+        int second = 0;
+        int millis = 0;
+        bool hasAmPm = false;
+        bool isPm = false;
+        while (pi < p.length()) {
+            str c = p.charAt(pi);
+            if (c == "'") {
+                if (pi + 1 < p.length() and p.charAt(pi + 1) == "'") {
+                    pi = pi + 2;
+                    if (ti < text.length()) { ti = ti + 1; }
+                    continue;
+                }
+                pi = pi + 1;
+                continue;
+            }
+            if (c == "y" or c == "M" or c == "d" or c == "H" or c == "h"
+                or c == "m" or c == "s" or c == "S" or c == "a" or c == "E"
+                or c == "Z" or c == "z") {
+                int run = 1;
+                while (pi + run < p.length() and p.charAt(pi + run) == c) {
+                    run = run + 1;
+                }
+                if (c == "a") {
+                    while (ti < text.length() and text.charAt(ti).isalpha()) {
+                        ti = ti + 1;
+                    }
+                    hasAmPm = true;
+                    if (ti > 0) {
+                        str marker = text.substring(ti - 2, ti).upper();
+                        if (marker == "PM") { isPm = true; }
+                    }
+                }
+                else if (c == "E" or c == "z") {
+                    while (ti < text.length() and text.charAt(ti).isalpha()) {
+                        ti = ti + 1;
+                    }
+                }
+                else if (c == "Z") {
+                    if (ti < text.length() and (text.charAt(ti) == "+" or text.charAt(ti) == "-")) {
+                        ti = ti + 1;
+                    }
+                    while (ti < text.length() and text.charAt(ti).isdigit()) {
+                        ti = ti + 1;
+                    }
+                }
+                else if (c == "S") {
+                    list<int> got = self->_parseDigits(text, ti, run);
+                    if (got[0] < 0) {
+                        throw ParseException("unparseable millisecond field");
+                    }
+                    int value = got[0];
+                    int digits = got[1] - ti;
+                    ti = got[1];
+                    int k = digits;
+                    while (k < 3) {
+                        value = value * 10;
+                        k = k + 1;
+                    }
+                    while (k > 3) {
+                        value = value / 10;
+                        k = k - 1;
+                    }
+                    millis = value;
+                }
+                else {
+                    int maxCount = run;
+                    list<int> got = self->_parseDigits(text, ti, maxCount);
+                    if (got[0] < 0) {
+                        throw ParseException("unparseable numeric field");
+                    }
+                    int value = got[0];
+                    int digits = got[1] - ti;
+                    ti = got[1];
+                    if (c == "y") {
+                        if (digits == 2) {
+                            if (value < 70) { year = 2000 + value; }
+                            else { year = 1900 + value; }
+                        }
+                        else {
+                            year = value;
+                        }
+                    }
+                    else if (c == "M") { month = value; }
+                    else if (c == "d") { day = value; }
+                    else if (c == "H") { hour = value; }
+                    else if (c == "h") { hour = value; }
+                    else if (c == "m") { minute = value; }
+                    else if (c == "s") { second = value; }
+                }
+                pi = pi + run;
+                continue;
+            }
+            if (c == " ") {
+                while (ti < text.length() and text.charAt(ti).isspace()) {
+                    ti = ti + 1;
+                }
+                pi = pi + 1;
+                continue;
+            }
+            if (ti >= text.length() or text.charAt(ti) != c) {
+                throw ParseException("unparseable date: \"" + text + "\"");
+            }
+            ti = ti + 1;
+            pi = pi + 1;
+        }
+        if (hasAmPm) {
+            if (isPm and hour < 12) { hour = hour + 12; }
+            if (not isPm and hour == 12) { hour = 0; }
+        }
+        int days = SimpleDateFormat._daysFromEpoch(year, month, day);
+        int seconds = days * 86400 + hour * 3600 + minute * 60 + second;
+        return seconds * 1000 + millis;
+    }
+}

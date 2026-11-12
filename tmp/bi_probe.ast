@@ -1,0 +1,35 @@
+import System.stdout.*;
+import aster.math.BigInteger;
+
+BigInteger a = new BigInteger("123456789012345678901234567890");
+BigInteger b = new BigInteger("-98765432109876543210");
+println(a.toString());
+println(b.toString());
+println(a.add(b).toString());
+println(a.subtract(b).toString());
+println(a.multiply(b).toString());
+list<BigInteger> qr = a.divideAndRemainder(new BigInteger("12345"));
+println(qr[0].toString());
+println(qr[1].toString());
+println(a.divide(new BigInteger("1000")).toString());
+println(a.remainder(new BigInteger("7")).toString());
+println(a.mod(new BigInteger("7")).toString());
+println(new BigInteger("-7").mod(new BigInteger("3")).toString());
+println(a.signum(), a.negate().signum(), a.compareTo(b));
+BigInteger f = new BigInteger(1);
+int i = 1;
+while (i <= 25) { f = f.multiply(new BigInteger(i)); i = i + 1; }
+println(f.toString());
+println(f.toString(16));
+println(f.bitLength());
+println(new BigInteger("255").toString(2));
+println(BigInteger.fromRadix("abcdef", 16).toString(10));
+println(BigInteger.fromRadix("z", 36).toString());
+println(new BigInteger(42).gcd(new BigInteger(30)).toString());
+println(new BigInteger(2).pow(100).toString());
+println(new BigInteger(-1).shiftRight(3).toString());
+println(new BigInteger(-8).shiftRight(1).toString());
+println(new BigInteger(5).setBit(3).toString(), new BigInteger(13).clearBit(2).toString(), new BigInteger(5).flipBit(0).toString());
+println(new BigInteger(-5).testBit(0), new BigInteger(-1).testBit(7));
+println(new BigInteger(97).isProbablePrime(10), new BigInteger(100).isProbablePrime(10));
+println(BigInteger.fromRadix("abc", 16).intValue(), new BigInteger("9223372036854775808").longValue());

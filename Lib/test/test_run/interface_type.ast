@@ -1,0 +1,44 @@
+import System.stdout.*;
+
+interface Named {
+    fn name() -> str;
+}
+
+interface Sized {
+    fn size() -> int;
+}
+
+class Dog implements Named {
+    public fn name() -> str { return "dog"; }
+}
+
+class Box implements Named, Sized {
+    public fn name() -> str { return "box"; }
+    public fn size() -> int { return 42; }
+}
+
+class Rock {
+    public fn name() -> str { return "rock"; }
+}
+
+fn label(Named n) -> str {
+    return n.name();
+}
+
+fn measure(Sized s) -> int {
+    return s.size();
+}
+
+println(label(new Dog()));
+println(label(new Box()));
+println(measure(new Box()));
+
+Named n = new Dog();
+if (n != null) {
+    println(n.name());
+}
+
+list<Named> items = [new Dog(), new Box()];
+for (Named it in items) {
+    println(it.name());
+}

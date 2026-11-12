@@ -1,0 +1,5 @@
+/* aster.util.function.IntConsumer: Java IntConsumer shape. */
+
+export interface IntConsumer {
+    fn accept(int value) -> void;
+}

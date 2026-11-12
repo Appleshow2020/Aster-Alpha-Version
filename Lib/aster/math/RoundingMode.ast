@@ -1,0 +1,37 @@
+/* aster.math.RoundingMode: Java java.math.RoundingMode 스타일 열거형.
+   Aster의 enum에는 메서드가 없으므로 이름/서수 헬퍼 함수를 함께 공개한다. */
+
+enum RoundingMode {
+    UP,
+    DOWN,
+    CEILING,
+    FLOOR,
+    HALF_UP,
+    HALF_DOWN,
+    HALF_EVEN,
+    UNNECESSARY
+}
+
+/* Java의 RoundingMode.name()에 해당한다. */
+fn roundingModeName(RoundingMode mode) -> str {
+    return mode.name;
+}
+
+/* Java의 RoundingMode.ordinal()에 해당한다. */
+fn roundingModeOrdinal(RoundingMode mode) -> int {
+    return mode.ordinal;
+}
+
+/* 문자열 이름으로 열거형 값을 찾는다. 없으면 null. */
+fn roundingModeFromName(str name) -> RoundingMode? {
+    str upper = name.upper();
+    if (upper == "UP") { return RoundingMode.UP; }
+    if (upper == "DOWN") { return RoundingMode.DOWN; }
+    if (upper == "CEILING") { return RoundingMode.CEILING; }
+    if (upper == "FLOOR") { return RoundingMode.FLOOR; }
+    if (upper == "HALF_UP") { return RoundingMode.HALF_UP; }
+    if (upper == "HALF_DOWN") { return RoundingMode.HALF_DOWN; }
+    if (upper == "HALF_EVEN") { return RoundingMode.HALF_EVEN; }
+    if (upper == "UNNECESSARY") { return RoundingMode.UNNECESSARY; }
+    return null;
+}

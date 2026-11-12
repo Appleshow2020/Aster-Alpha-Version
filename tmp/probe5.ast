@@ -1,0 +1,3 @@
+import System.stdout.*;
+import tmp.cyc.A;
+println(A.make().f());

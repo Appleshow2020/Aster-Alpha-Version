@@ -1,0 +1,21 @@
+/* aster.util.List: Java List 계약.
+
+   인터페이스 상속이 없으므로 Collection의 메서드를 그대로 다시 선언한다.
+   add/remove는 (값)과 (인덱스, 값) 두 형태를 모두 선언한다. */
+
+export interface List {
+    fn size() -> int;
+    fn isEmpty() -> bool;
+    fn contains(any value) -> bool;
+    fn add(any value) -> bool;
+    fn add(int index, any value) -> void;
+    fn remove(any value) -> bool;
+    fn remove(int index) -> any;
+    fn clear() -> void;
+    fn iterator() -> any;
+    fn toArray() -> list<any>;
+    fn get(int index) -> any;
+    fn set(int index, any value) -> any;
+    fn indexOf(any value) -> int;
+    fn lastIndexOf(any value) -> int;
+}

@@ -16,8 +16,7 @@ typedef struct {
 
 /* ---------------------------------------------------------------- 공통 */
 
-static void *xrealloc(void *p, size_t n)
-{
+static void *xrealloc(void *p, size_t n) {
     void *q = realloc(p, n);
     if (!q) {
         fputs("out of memory\n", stderr);
@@ -30,8 +29,7 @@ static void *xrealloc(void *p, size_t n)
  * pos부터 end까지 소비하면서 줄/열을 갱신한다.
  * UTF-8 연속 바이트(0x80~0xBF)는 열을 올리지 않는다 (문자 단위 열).
  */
-static void advance_to(Lexer *lx, size_t end)
-{
+static void advance_to(Lexer *lx, size_t end) {
     const unsigned char *s = (const unsigned char *)lx->src;
     while (lx->pos < end) {
         unsigned char c = s[lx->pos];
@@ -46,8 +44,7 @@ static void advance_to(Lexer *lx, size_t end)
     }
 }
 
-static int fail_here(Lexer *lx, int span, const char *fmt, ...)
-{
+static int fail_here(Lexer *lx, int span, const char *fmt, ...) {
     va_list ap;
     lx->err->line = lx->line;
     lx->err->col = lx->col;
@@ -58,8 +55,7 @@ static int fail_here(Lexer *lx, int span, const char *fmt, ...)
     return 0;
 }
 
-static int fail_at(Lexer *lx, size_t offset, int span, const char *fmt, ...)
-{
+static int fail_at(Lexer *lx, size_t offset, int span, const char *fmt, ...) {
     va_list ap;
     if (offset > lx->pos)
         advance_to(lx, offset);
@@ -72,8 +68,7 @@ static int fail_at(Lexer *lx, size_t offset, int span, const char *fmt, ...)
     return 0;
 }
 
-static int push_token(Lexer *lx, int type, size_t start, int sline, int scol)
-{
+static int push_token(Lexer *lx, int type, size_t start, int sline, int scol) {
     AsterTokenList *l = lx->out;
     AsterToken *t;
     if (l->count == l->cap) {
@@ -93,24 +88,20 @@ static int push_token(Lexer *lx, int type, size_t start, int sline, int scol)
 
 /* ------------------------------------------------------------- 문자 분류 */
 
-static int is_ascii_alpha(unsigned char c)
-{
+static int is_ascii_alpha(unsigned char c) {
     return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z');
 }
 
-static int is_ascii_digit(unsigned char c)
-{
+static int is_ascii_digit(unsigned char c) {
     return c >= '0' && c <= '9';
 }
 
-static int is_ascii_id_continue(unsigned char c)
-{
+static int is_ascii_id_continue(unsigned char c) {
     return is_ascii_alpha(c) || is_ascii_digit(c) || c == '_';
 }
 
 /* 이 자리에서 시작하는 UTF-8 문자의 바이트 수. 올바르지 않으면 -1. */
-static int utf8_len(const char *s, size_t n)
-{
+static int utf8_len(const char *s, size_t n) {
     unsigned char c = (unsigned char)s[0];
     int len, i;
     if (c < 0x80)
@@ -132,8 +123,7 @@ static int utf8_len(const char *s, size_t n)
 }
 
 /* 이름 시작 문자인가? (ASCII 영문/밑줄 또는 비ASCII UTF-8 문자) */
-static int name_start(const char *s, size_t n, int *len)
-{
+static int name_start(const char *s, size_t n, int *len) {
     unsigned char c = (unsigned char)s[0];
     int l;
     if (is_ascii_alpha(c) || c == '_') {
@@ -150,8 +140,7 @@ static int name_start(const char *s, size_t n, int *len)
 
 /* --------------------------------------------------------------- 주석 */
 
-static int skip_trivia(Lexer *lx)
-{
+static int skip_trivia(Lexer *lx) {
     for (;;) {
         unsigned char c;
         if (lx->pos >= lx->n)
@@ -183,8 +172,7 @@ static int skip_trivia(Lexer *lx)
 
 /* --------------------------------------------------------------- 토큰 */
 
-static int scan_name(Lexer *lx)
-{
+static int scan_name(Lexer *lx) {
     size_t j = lx->pos;
     int len = 0;
     name_start(lx->src + j, lx->n - j, &len);
@@ -205,8 +193,7 @@ static int scan_name(Lexer *lx)
     return 1;
 }
 
-static int scan_number(Lexer *lx, int *type)
-{
+static int scan_number(Lexer *lx, int *type) {
     size_t i = lx->pos, j = i;
     int is_float = 0;
 
@@ -231,8 +218,7 @@ static int scan_number(Lexer *lx, int *type)
 
 /* 이스케이프 하나를 검사한다. 성공하면 다음 위치를 *next에 둔다.
  * 실패하면 msg에 이유를 쓰고 0을 돌려준다 (위치는 호출자가 정한다). */
-static int scan_escape(Lexer *lx, size_t j, size_t *next, char *msg, size_t msgcap)
-{
+static int scan_escape(Lexer *lx, size_t j, size_t *next, char *msg, size_t msgcap) {
     const char *s = lx->src;
     size_t n = lx->n;
     size_t k = j + 1;
@@ -307,8 +293,7 @@ static int scan_escape(Lexer *lx, size_t j, size_t *next, char *msg, size_t msgc
     return 0;
 }
 
-static int scan_string(Lexer *lx)
-{
+static int scan_string(Lexer *lx) {
     size_t i = lx->pos, j = i + 1;
     char quote = lx->src[i];
 
@@ -334,8 +319,7 @@ static int scan_string(Lexer *lx)
     return 1;
 }
 
-static int scan_operator(Lexer *lx, int *type)
-{
+static int scan_operator(Lexer *lx, int *type) {
     const char *s = lx->src;
     size_t i = lx->pos;
     size_t rem = lx->n - i;
@@ -359,8 +343,6 @@ static int scan_operator(Lexer *lx, int *type)
     switch (s[i]) {
     case '!':
         return fail_here(lx, 1, "'!' is not used. Use 'not' for logical negation ('!=' is allowed)");
-    case '|':
-        return fail_here(lx, 1, "'|' cannot be used by itself (only '|>' is allowed)");
     default: {
         unsigned char c = (unsigned char)s[i];
         char repr[32];
@@ -375,8 +357,7 @@ static int scan_operator(Lexer *lx, int *type)
 
 /* ------------------------------------------------------------- 엔트리 */
 
-int Aster_Tokenize(const char *source, size_t length, AsterTokenList *out, AsterError *err)
-{
+int Aster_Tokenize(const char *source, size_t length, AsterTokenList *out, AsterError *err) {
     char *buf;
     size_t i = 0, m = 0;
     Lexer lx;
@@ -466,8 +447,7 @@ int Aster_Tokenize(const char *source, size_t length, AsterTokenList *out, Aster
     return 1;
 }
 
-void Aster_TokenList_Clear(AsterTokenList *list)
-{
+void Aster_TokenList_Clear(AsterTokenList *list) {
     free(list->items);
     free(list->source);
     memset(list, 0, sizeof *list);
@@ -475,8 +455,7 @@ void Aster_TokenList_Clear(AsterTokenList *list)
 
 /* ------------------------------------------------------------ 문자열 해독 */
 
-static int put_utf8(char *p, unsigned cp)
-{
+static int put_utf8(char *p, unsigned cp) {
     if (cp < 0x80) {
         p[0] = (char)cp;
         return 1;
@@ -499,8 +478,7 @@ static int put_utf8(char *p, unsigned cp)
     return 4;
 }
 
-char *Aster_DecodeString(const char *raw, int length, int *out_length, AsterError *err)
-{
+char *Aster_DecodeString(const char *raw, int length, int *out_length, AsterError *err) {
     char *out;
     size_t j, end, o = 0;
 

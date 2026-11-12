@@ -1,0 +1,5 @@
+/* aster.util.function.Predicate: Java Predicate<T> shape. */
+
+export interface Predicate {
+    fn test(any value) -> bool;
+}

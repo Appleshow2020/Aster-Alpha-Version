@@ -1,0 +1,12 @@
+import System.stdout.*;
+class P {
+    public static fn make(int a) -> int { return a; }
+    public static fn make(str a) -> str { return a + "!"; }
+    public fn f(int a) -> int { return a; }
+    public fn f(str a) -> str { return a + "?"; }
+}
+P p = new P();
+println(P.make(3));
+println(P.make("x"));
+println(p.f(4));
+println(p.f("y"));

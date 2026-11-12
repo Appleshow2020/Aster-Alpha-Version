@@ -1,0 +1,321 @@
+/* aster.time.Duration: 시간 기반 기간 (초 + 나노초). Java java.time.Duration과 같은 API. */
+
+import aster.time.Instant;
+import aster.time.DateTimeParseException;
+
+const int DURATION_NANOS_PER_SECOND = 1000000000;
+
+fn _durationIsDigit(str ch) -> bool {
+    if (ch.length() == 0) { return false; }
+    return "0123456789".find(ch) >= 0;
+}
+
+fn _durationPad9(int value) -> str {
+    str out = "";
+    int v = value;
+    int i = 0;
+    while (i < 9) {
+        out = str(v % 10) + out;
+        v = v / 10;
+        i = i + 1;
+    }
+    return out;
+}
+
+fn _durationParseError(str text) -> void {
+    throw ("Text '" + text + "' cannot be parsed as a Duration") as DateTimeParseException;
+}
+
+/* nano (0..999999999)를 초 뒤에 붙일 소수 문자열로. */
+fn _durationFraction(int nano) -> str {
+    if (nano == 0) { return ""; }
+    str digits = _durationPad9(nano);
+    while (digits.length() > 1 and digits.endswith("0")) {
+        digits = digits.substring(0, digits.length() - 1);
+    }
+    return "." + digits;
+}
+
+export class Duration {
+    private int secondValue;
+    private int nanoValue;
+
+    constructor(int seconds, int nanos) {
+        self->secondValue = seconds;
+        self->nanoValue = nanos;
+    }
+
+    public static fn ofSeconds(int seconds) -> Duration {
+        return new Duration(seconds, 0);
+    }
+
+    public static fn ofSeconds(int seconds, int nanoAdjustment) -> Duration {
+        int secs = seconds + nanoAdjustment // DURATION_NANOS_PER_SECOND;
+        int nanos = nanoAdjustment % DURATION_NANOS_PER_SECOND;
+        return new Duration(secs, nanos);
+    }
+
+    public static fn ofMillis(int millis) -> Duration {
+        return Duration.ofSeconds(millis // 1000, (millis % 1000) * 1000000);
+    }
+
+    public static fn ofNanos(int nanos) -> Duration {
+        return Duration.ofSeconds(nanos // DURATION_NANOS_PER_SECOND,
+                                  nanos % DURATION_NANOS_PER_SECOND);
+    }
+
+    public static fn ofMinutes(int minutes) -> Duration {
+        return new Duration(minutes * 60, 0);
+    }
+
+    public static fn ofHours(int hours) -> Duration {
+        return new Duration(hours * 3600, 0);
+    }
+
+    public static fn ofDays(int days) -> Duration {
+        return new Duration(days * 86400, 0);
+    }
+
+    public static fn ZERO() -> Duration {
+        return new Duration(0, 0);
+    }
+
+    /* 두 시각 사이의 기간 (end - start). */
+    public static fn between(Instant startInclusive, Instant endExclusive) -> Duration {
+        return Duration.ofSeconds(
+            endExclusive.getEpochSecond() - startInclusive.getEpochSecond(),
+            endExclusive.getNano() - startInclusive.getNano());
+    }
+
+    /* "PT1H30M", "P2DT3H", "-PT0.5S" 같은 ISO-8601 기간 문자열. */
+    public static fn parse(str text) -> Duration {
+        int n = text.length();
+        int i = 0;
+        int sign = 1;
+        if (n == 0) { _durationParseError(text); }
+        if (text.charAt(0) == "-") {
+            sign = -1;
+            i = 1;
+        }
+        else if (text.charAt(0) == "+") {
+            i = 1;
+        }
+        if (i >= n) { _durationParseError(text); }
+        if (text.charAt(i).lower() != "p") { _durationParseError(text); }
+        i = i + 1;
+        int days = 0;
+        int hours = 0;
+        int minutes = 0;
+        int seconds = 0;
+        int nano = 0;
+        bool inTime = false;
+        bool any = false;
+        while (i < n) {
+            str ch = text.charAt(i);
+            if (ch.lower() == "t") {
+                inTime = true;
+                i = i + 1;
+                continue;
+            }
+            int partSign = 1;
+            if (ch == "-") {
+                partSign = -1;
+                i = i + 1;
+            }
+            else if (ch == "+") {
+                i = i + 1;
+            }
+            int start = i;
+            while (i < n and _durationIsDigit(text.charAt(i))) { i = i + 1; }
+            if (start == i) { _durationParseError(text); }
+            int value = text.substring(start, i).to_int() * partSign;
+            int fractionNano = 0;
+            bool hasFraction = false;
+            if (i < n and text.charAt(i) == ".") {
+                hasFraction = true;
+                i = i + 1;
+                int fstart = i;
+                while (i < n and _durationIsDigit(text.charAt(i))) { i = i + 1; }
+                if (fstart == i or i - fstart > 9) { _durationParseError(text); }
+                str digits = text.substring(fstart, i);
+                while (digits.length() < 9) { digits = digits + "0"; }
+                fractionNano = digits.to_int() * partSign;
+            }
+            if (i >= n) { _durationParseError(text); }
+            str unit = text.charAt(i).lower();
+            i = i + 1;
+            if (unit == "d") {
+                if (inTime) { _durationParseError(text); }
+                days = days + value;
+            }
+            else if (unit == "h") {
+                if (not inTime) { _durationParseError(text); }
+                hours = hours + value;
+            }
+            else if (unit == "m") {
+                if (not inTime) { _durationParseError(text); }
+                minutes = minutes + value;
+            }
+            else if (unit == "s") {
+                if (not inTime) { _durationParseError(text); }
+                seconds = seconds + value;
+                nano = nano + fractionNano;
+            }
+            else {
+                _durationParseError(text);
+            }
+            if (hasFraction and unit != "s") { _durationParseError(text); }
+            any = true;
+        }
+        if (not any) { _durationParseError(text); }
+        int totalSeconds = sign * (days * 86400 + hours * 3600 + minutes * 60 + seconds);
+        int totalNano = sign * nano;
+        return Duration.ofSeconds(totalSeconds, totalNano);
+    }
+
+    public fn getSeconds() -> int {
+        return self->secondValue;
+    }
+
+    public fn getNano() -> int {
+        return self->nanoValue;
+    }
+
+    public fn toMillis() -> int {
+        return self->secondValue * 1000 + self->nanoValue / 1000000;
+    }
+
+    public fn toNanos() -> int {
+        return self->secondValue * DURATION_NANOS_PER_SECOND + self->nanoValue;
+    }
+
+    public fn toMinutes() -> int {
+        return self->secondValue / 60;
+    }
+
+    public fn toHours() -> int {
+        return self->secondValue / 3600;
+    }
+
+    public fn toDays() -> int {
+        return self->secondValue / 86400;
+    }
+
+    public fn isZero() -> bool {
+        return self->secondValue == 0 and self->nanoValue == 0;
+    }
+
+    public fn isNegative() -> bool {
+        return self->secondValue < 0;
+    }
+
+    public fn plus(Duration other) -> Duration {
+        return Duration.ofSeconds(self->secondValue + other.secondValue,
+                                  self->nanoValue + other.nanoValue);
+    }
+
+    public fn minus(Duration other) -> Duration {
+        return Duration.ofSeconds(self->secondValue - other.secondValue,
+                                  self->nanoValue - other.nanoValue);
+    }
+
+    public fn plusSeconds(int seconds) -> Duration {
+        return new Duration(self->secondValue + seconds, self->nanoValue);
+    }
+
+    public fn plusMillis(int millis) -> Duration {
+        return Duration.ofSeconds(self->secondValue, self->nanoValue + millis * 1000000);
+    }
+
+    public fn plusNanos(int nanos) -> Duration {
+        return Duration.ofSeconds(self->secondValue, self->nanoValue + nanos);
+    }
+
+    public fn plusMinutes(int minutes) -> Duration {
+        return new Duration(self->secondValue + minutes * 60, self->nanoValue);
+    }
+
+    public fn plusHours(int hours) -> Duration {
+        return new Duration(self->secondValue + hours * 3600, self->nanoValue);
+    }
+
+    public fn plusDays(int days) -> Duration {
+        return new Duration(self->secondValue + days * 86400, self->nanoValue);
+    }
+
+    public fn minusSeconds(int seconds) -> Duration {
+        return self->plusSeconds(-seconds);
+    }
+
+    public fn minusMillis(int millis) -> Duration {
+        return self->plusMillis(-millis);
+    }
+
+    public fn minusNanos(int nanos) -> Duration {
+        return self->plusNanos(-nanos);
+    }
+
+    public fn minusMinutes(int minutes) -> Duration {
+        return self->plusMinutes(-minutes);
+    }
+
+    public fn minusHours(int hours) -> Duration {
+        return self->plusHours(-hours);
+    }
+
+    public fn minusDays(int days) -> Duration {
+        return self->plusDays(-days);
+    }
+
+    public fn negated() -> Duration {
+        return Duration.ofSeconds(-self->secondValue, -self->nanoValue);
+    }
+
+    public fn compareTo(Duration other) -> int {
+        if (self->secondValue < other.secondValue) { return -1; }
+        if (self->secondValue > other.secondValue) { return 1; }
+        if (self->nanoValue < other.nanoValue) { return -1; }
+        if (self->nanoValue > other.nanoValue) { return 1; }
+        return 0;
+    }
+
+    public fn equals(Duration other) -> bool {
+        return self->secondValue == other.secondValue
+            and self->nanoValue == other.nanoValue;
+    }
+
+    public fn hashCode() -> int {
+        return self->secondValue * 31 + self->nanoValue;
+    }
+
+    public fn toString() -> str {
+        if (self->isZero()) { return "PT0S"; }
+        int sec = self->secondValue;
+        int nano = self->nanoValue;
+        bool negative = sec < 0;
+        if (negative) {
+            if (nano == 0) {
+                sec = -sec;
+            }
+            else {
+                sec = -(sec + 1);
+                nano = DURATION_NANOS_PER_SECOND - nano;
+            }
+        }
+        int hours = sec / 3600;
+        int minutes = (sec % 3600) / 60;
+        int seconds = sec % 60;
+        str out = "PT";
+        if (hours != 0) { out = out + str(hours) + "H"; }
+        if (minutes != 0) { out = out + str(minutes) + "M"; }
+        if (seconds != 0 or nano != 0) {
+            out = out + str(seconds) + _durationFraction(nano) + "S";
+        }
+        if (negative) { out = "-" + out; }
+        return out;
+    }
+
+    public fn __str__() -> str {
+        return self->toString();
+    }
+}

@@ -1,0 +1,109 @@
+/* aster.util.stream.Collectors: Java Collectors 스타일 정적 팩토리.
+   Aster 제네릭은 클래스 단위로만 쓰이고 정적 메서드의 타입 인자를 추론하지
+   못하므로 모든 수집기는 Collector<any, any>로 돌려준다. */
+
+import aster.util.stream.Collector;
+
+fn listFinish(list<any> xs) -> any {
+    list<any> out = [];
+    for (any x in xs) {
+        out.append(x);
+    }
+    return out;
+}
+
+fn setFinish(list<any> xs) -> any {
+    set<any> out = set();
+    for (any x in xs) {
+        out.add(x);
+    }
+    return out;
+}
+
+fn joinFinish(list<any> xs, str sep) -> any {
+    list<str> parts = [];
+    for (any x in xs) {
+        parts.append(str(x));
+    }
+    return sep.join(parts);
+}
+
+fn countFinish(list<any> xs) -> any {
+    return len(xs);
+}
+
+export class Collectors {
+    public static fn toList() -> Collector<any, any> {
+        return new Collector<any, any>(listFinish);
+    }
+
+    public static fn toSet() -> Collector<any, any> {
+        return new Collector<any, any>(setFinish);
+    }
+
+    public static fn joining() -> Collector<any, any> {
+        return Collectors.joining("");
+    }
+
+    public static fn joining(str sep) -> Collector<any, any> {
+        fn finish(list<any> xs) -> any {
+            return joinFinish(xs, sep);
+        }
+        return new Collector<any, any>(finish);
+    }
+
+    public static fn counting() -> Collector<any, any> {
+        return new Collector<any, any>(countFinish);
+    }
+
+    public static fn mapping(fn(any) -> any mapper, Collector<any, any> downstream) -> Collector<any, any> {
+        fn finish(list<any> xs) -> any {
+            list<any> mapped = [];
+            for (any x in xs) {
+                mapped.append(mapper(x));
+            }
+            return downstream.finish(mapped);
+        }
+        return new Collector<any, any>(finish);
+    }
+
+    public static fn summingInt(fn(any) -> int mapper) -> Collector<any, any> {
+        fn finish(list<any> xs) -> any {
+            int total = 0;
+            for (any x in xs) {
+                total = total + mapper(x);
+            }
+            return total;
+        }
+        return new Collector<any, any>(finish);
+    }
+
+    public static fn averagingDouble(fn(any) -> float mapper) -> Collector<any, any> {
+        fn finish(list<any> xs) -> any {
+            if (len(xs) == 0) {
+                return 0.0;
+            }
+            float total = 0.0;
+            for (any x in xs) {
+                total = total + mapper(x);
+            }
+            return total / (float)len(xs);
+        }
+        return new Collector<any, any>(finish);
+    }
+
+    public static fn groupingBy(fn(any) -> any classifier) -> Collector<any, any> {
+        fn finish(list<any> xs) -> any {
+            dict<any, list<any>> groups = {};
+            for (any x in xs) {
+                any key = classifier(x);
+                if (groups.get(key) == null) {
+                    groups[key] = [];
+                }
+                groups[key].append(x);
+            }
+            return groups;
+        }
+        return new Collector<any, any>(finish);
+    }
+}

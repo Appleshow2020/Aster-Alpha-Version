@@ -1,0 +1,34 @@
+import System.stdout.*;
+import aster.util.regex.Native;
+
+/* 정규식 컴파일 오류는 Python re.error와 같은 메시지를 담은 RegexError로 온다. */
+
+try {
+    Native.compile("(abc", 0);
+} catch (RegexError e) {
+    println(e.message);
+}
+
+try {
+    Native.compile("a{2,1}", 0);
+} catch (RegexError e) {
+    println(e.message);
+}
+
+try {
+    Native.compile("\\q", 0);
+} catch (RegexError e) {
+    println(e.message);
+}
+
+try {
+    Native.compile("(?P<x>a)(?P<x>b)", 0);
+} catch (RegexError e) {
+    println(e.message);
+}
+
+try {
+    Native.compile("(?<=a+)b", 0);
+} catch (RegexError e) {
+    println(e.message);
+}

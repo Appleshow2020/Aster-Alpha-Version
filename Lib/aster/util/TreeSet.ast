@@ -1,0 +1,85 @@
+/* aster.util.TreeSet: 정렬된 집합 (HashSet 상속).
+
+   toArray()/iterator()가 정렬 순서이고 first/last/headSet/tailSet을 더한다.
+   정렬은 리스트의 자연 순서 정렬을 쓴다. */
+
+import aster.util.HashSet;
+import aster.util.Iterator;
+import aster.util.ListIteratorImpl;
+import aster.util.Objects;
+
+export class TreeSet<E> extends HashSet<E> {
+    constructor() {
+        super();
+    }
+
+    public fn add(E value) -> bool {
+        return super.add(value);
+    }
+
+    public fn toArray() -> list<E> {
+        list<E> out = super.toArray();
+        out.sort();
+        return out;
+    }
+
+    public fn iterator() -> Iterator {
+        return new ListIteratorImpl<E>(self->toArray());
+    }
+
+    public fn first() -> E {
+        list<E> out = self->toArray();
+        if (len(out) == 0) {
+            throw "set is empty" as NoSuchElementError;
+        }
+        return out[0];
+    }
+
+    public fn last() -> E {
+        list<E> out = self->toArray();
+        if (len(out) == 0) {
+            throw "set is empty" as NoSuchElementError;
+        }
+        return out[len(out) - 1];
+    }
+
+    public fn headSet(E toElement) -> TreeSet<E> {
+        TreeSet<E> part = new TreeSet<E>();
+        list<E> out = self->toArray();
+        int i = 0;
+        while (i < len(out)) {
+            if (Objects.compare(out[i], toElement) < 0) {
+                part.add(out[i]);
+            }
+            i = i + 1;
+        }
+        return part;
+    }
+
+    public fn tailSet(E fromElement) -> TreeSet<E> {
+        TreeSet<E> part = new TreeSet<E>();
+        list<E> out = self->toArray();
+        int i = 0;
+        while (i < len(out)) {
+            if (Objects.compare(out[i], fromElement) >= 0) {
+                part.add(out[i]);
+            }
+            i = i + 1;
+        }
+        return part;
+    }
+
+    public fn subset(E fromElement, E toElement) -> TreeSet<E> {
+        TreeSet<E> part = new TreeSet<E>();
+        list<E> out = self->toArray();
+        int i = 0;
+        while (i < len(out)) {
+            if (Objects.compare(out[i], fromElement) >= 0 and
+                Objects.compare(out[i], toElement) < 0) {
+                part.add(out[i]);
+            }
+            i = i + 1;
+        }
+        return part;
+    }
+}

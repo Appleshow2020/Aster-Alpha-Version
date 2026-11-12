@@ -26,7 +26,8 @@ typedef enum {
     TY_STRUCT,
     TY_MODULE,
     TY_FUNC,
-    TY_OVERLOAD
+    TY_OVERLOAD,
+    TY_UNION
 } TyKind;
 
 typedef struct Ty Ty;
@@ -35,6 +36,7 @@ typedef struct Scope Scope;
 typedef struct Member Member;
 typedef struct ClassInfo ClassInfo;
 typedef struct StructInfo StructInfo;
+typedef struct EnumInfo EnumInfo;
 typedef struct FieldInfo FieldInfo;
 typedef struct Checker Checker;
 typedef struct ModuleInfo ModuleInfo;
@@ -53,11 +55,15 @@ struct Ty {
     /* TY_OVERLOAD */
     Ty **overloads;
     size_t noverloads;
+    /* TY_UNION */
+    Ty **members;
+    size_t nmembers;
 };
 
 struct Sym {
     const char *name;
     Ty *ty;
+    int narrowed;            /* 흐름 분석으로 좁혀진 임시 타입이면 1 */
     Sym *next;
 };
 
@@ -102,6 +108,15 @@ struct StructInfo {
     StructInfo *next;
 };
 
+struct EnumInfo {
+    const char *name;
+    const char **variants;
+    Ty ***params;            /* variants[i]의 페이로드 타입 배열 */
+    size_t *nparams;
+    size_t nvariants;
+    EnumInfo *next;
+};
+
 struct Checker {
     Arena *arena;
     const char *filename;
@@ -109,6 +124,7 @@ struct Checker {
     Scope *scope;
     ClassInfo *classes;
     StructInfo *structs;
+    EnumInfo *enums;
     ClassInfo *current_class;
     Ty *current_ret;
     int current_ret_known;
@@ -135,8 +151,7 @@ struct ModuleInfo {
 
 /* ------------------------------------------------------------------ 공통 */
 
-static Ty *ty_new(Checker *c, TyKind kind)
-{
+static Ty *ty_new(Checker *c, TyKind kind) {
     Ty *t = Arena_Alloc(c->arena, sizeof(Ty));
     memset(t, 0, sizeof(*t));
     t->kind = kind;
@@ -151,51 +166,44 @@ static Ty *ty_float(Checker *c) { return ty_new(c, TY_FLOAT); }
 static Ty *ty_bool(Checker *c) { return ty_new(c, TY_BOOL); }
 static Ty *ty_str(Checker *c) { return ty_new(c, TY_STR); }
 
-static Ty *ty_class(Checker *c, const char *name)
-{
+static Ty *ty_class(Checker *c, const char *name) {
     Ty *t = ty_new(c, TY_CLASS);
     t->name = name;
     return t;
 }
 
-static Ty *ty_struct(Checker *c, const char *name)
-{
+static Ty *ty_struct(Checker *c, const char *name) {
     Ty *t = ty_new(c, TY_STRUCT);
     t->name = name;
     return t;
 }
 
-static Ty *ty_module(Checker *c, const char *name)
-{
+static Ty *ty_module(Checker *c, const char *name) {
     Ty *t = ty_new(c, TY_MODULE);
     t->name = name;
     return t;
 }
 
-static Ty *ty_ptr(Checker *c, Ty *base)
-{
+static Ty *ty_ptr(Checker *c, Ty *base) {
     Ty *t = ty_new(c, TY_PTR);
     t->a = base;
     return t;
 }
 
-static Ty *ty_seq(Checker *c, TyKind kind, Ty *elem)
-{
+static Ty *ty_seq(Checker *c, TyKind kind, Ty *elem) {
     Ty *t = ty_new(c, kind);
     t->a = elem ? elem : ty_any(c);
     return t;
 }
 
-static Ty *ty_dict(Checker *c, Ty *key, Ty *value)
-{
+static Ty *ty_dict(Checker *c, Ty *key, Ty *value) {
     Ty *t = ty_new(c, TY_DICT);
     t->a = key ? key : ty_any(c);
     t->b = value ? value : ty_any(c);
     return t;
 }
 
-static Ty *ty_func(Checker *c, Ty **params, size_t nparams, Ty *ret, int varargs)
-{
+static Ty *ty_func(Checker *c, Ty **params, size_t nparams, Ty *ret, int varargs) {
     Ty *t = ty_new(c, TY_FUNC);
     t->params = params;
     t->nparams = nparams;
@@ -204,8 +212,7 @@ static Ty *ty_func(Checker *c, Ty **params, size_t nparams, Ty *ret, int varargs
     return t;
 }
 
-static Ty *ty_overload_append(Checker *c, Ty *existing, Ty *sig)
-{
+static Ty *ty_overload_append(Checker *c, Ty *existing, Ty *sig) {
     Ty *t;
     if (!existing)
         return sig;
@@ -228,8 +235,7 @@ static Ty *ty_overload_append(Checker *c, Ty *existing, Ty *sig)
     return t;
 }
 
-static Ty *ty_nullable(Checker *c, Ty *base)
-{
+static Ty *ty_nullable(Checker *c, Ty *base) {
     Ty *t;
     if (!base || base->kind == TY_ANY || base->nullable)
         return base ? base : ty_any(c);
@@ -239,8 +245,7 @@ static Ty *ty_nullable(Checker *c, Ty *base)
     return t;
 }
 
-static Ty *ty_non_null(Checker *c, Ty *base)
-{
+static Ty *ty_non_null(Checker *c, Ty *base) {
     Ty *t;
     if (!base || !base->nullable)
         return base;
@@ -250,8 +255,7 @@ static Ty *ty_non_null(Checker *c, Ty *base)
     return t;
 }
 
-static void ty_write(char *buf, size_t cap, size_t *o, Ty *t)
-{
+static void ty_write(char *buf, size_t cap, size_t *o, Ty *t) {
     size_t i;
 
     if (*o >= cap)
@@ -320,13 +324,26 @@ static void ty_write(char *buf, size_t cap, size_t *o, Ty *t)
     case TY_OVERLOAD:
         snprintf(buf + *o, cap - *o, "function");
         break;
+    case TY_UNION:
+        for (i = 0; i < t->nmembers; i++) {
+            if (i) {
+                snprintf(buf + *o, cap - *o, " | ");
+                *o += strlen(buf + *o);
+            }
+            ty_write(buf, cap, o, t->members[i]);
+        }
+        if (i == 0)
+            snprintf(buf + *o, cap - *o, "null");
+        break;
     }
     while (*o < cap && buf[*o])
         (*o)++;
+    if (t->nullable && t->kind != TY_NULL && t->kind != TY_UNION &&
+        t->kind != TY_ANY && t->kind != TY_FUNC && *o < cap)
+        snprintf(buf + *o, cap - *o, "?");
 }
 
-static const char *ty_name(Ty *t)
-{
+static const char *ty_name(Ty *t) {
     static char bufs[4][256];
     static int turn;
     size_t o = 0;
@@ -336,13 +353,11 @@ static const char *ty_name(Ty *t)
     return buf;
 }
 
-static int is_num(Ty *t)
-{
+static int is_num(Ty *t) {
     return t && (t->kind == TY_INT || t->kind == TY_FLOAT);
 }
 
-static int same_ty(Checker *c, Ty *a, Ty *b)
-{
+static int same_ty(Checker *c, Ty *a, Ty *b) {
     size_t i;
     (void)c;
     if (!a || !b)
@@ -371,20 +386,86 @@ static int same_ty(Checker *c, Ty *a, Ty *b)
                 return 0;
         }
         return same_ty(c, a->ret, b->ret);
+    case TY_UNION:
+        if (a->nmembers != b->nmembers)
+            return 0;
+        for (i = 0; i < a->nmembers; i++) {
+            if (!same_ty(c, a->members[i], b->members[i]))
+                return 0;
+        }
+        return 1;
     default:
         return 1;
     }
 }
 
-static int is_container(Ty *t)
-{
+/* 합집합 타입을 만든다. 중첩 합집합은 펼치고, null 멤버는 nullable 플래그로
+   옮기며, any가 있으면 any가 전체를 흡수한다. */
+static Ty *ty_union(Checker *c, Ty **items, size_t n) {
+    Ty **flat;
+    size_t nflat = 0, i, j;
+    int nullable = 0;
+    Ty *t;
+
+    if (n == 0)
+        return ty_any(c);
+    flat = Arena_Alloc(c->arena, n * sizeof(Ty *) + 1);
+    for (i = 0; i < n; i++) {
+        Ty *it = items[i];
+        if (!it)
+            continue;
+        if (it->kind == TY_ANY)
+            return ty_any(c);
+        if (it->nullable)
+            nullable = 1;
+        if (it->kind == TY_UNION) {
+            for (j = 0; j < it->nmembers; j++) {
+                Ty *m = it->members[j];
+                if (m->kind == TY_ANY)
+                    return ty_any(c);
+                if (m->nullable)
+                    nullable = 1;
+                if (m->kind != TY_NULL)
+                    flat[nflat++] = ty_non_null(c, m);
+            }
+            continue;
+        }
+        if (it->kind == TY_NULL) {
+            nullable = 1;
+            continue;
+        }
+        flat[nflat++] = ty_non_null(c, it);
+    }
+    for (i = 0; i < nflat; i++) {
+        for (j = i + 1; j < nflat; j++) {
+            if (same_ty(c, flat[i], flat[j])) {
+                size_t k;
+                for (k = j; k + 1 < nflat; k++)
+                    flat[k] = flat[k + 1];
+                nflat--;
+                j--;
+            }
+        }
+    }
+    if (nflat == 0)
+        return nullable ? ty_nullable(c, ty_null(c)) : ty_any(c);
+    if (nflat == 1)
+        return nullable ? ty_nullable(c, flat[0]) : flat[0];
+    t = ty_new(c, TY_UNION);
+    t->members = Arena_Alloc(c->arena, nflat * sizeof(Ty *));
+    memcpy(t->members, flat, nflat * sizeof(Ty *));
+    t->nmembers = nflat;
+    t->nullable = nullable;
+    return t;
+}
+
+static int is_container(Ty *t) {
     return t && (t->kind == TY_LIST || t->kind == TY_TUPLE ||
                  t->kind == TY_DICT || t->kind == TY_SET ||
                  t->kind == TY_FROZENSET);
 }
 
-static ClassInfo *find_class(Checker *c, const char *name)
-{
+static ClassInfo *find_class(Checker *c, const char *name) {
     ClassInfo *ci;
     for (ci = c->classes; ci; ci = ci->next) {
         if (!strcmp(ci->name, name))
@@ -393,8 +474,7 @@ static ClassInfo *find_class(Checker *c, const char *name)
     return NULL;
 }
 
-static StructInfo *find_struct(Checker *c, const char *name)
-{
+static StructInfo *find_struct(Checker *c, const char *name) {
     StructInfo *si;
     for (si = c->structs; si; si = si->next) {
         if (!strcmp(si->name, name) ||
@@ -404,8 +484,18 @@ static StructInfo *find_struct(Checker *c, const char *name)
     return NULL;
 }
 
-static Member *class_member(ClassInfo *ci, const char *name)
-{
+static EnumInfo *find_enum(Checker *c, const char *name) {
+    EnumInfo *ei;
+    if (!name)
+        return NULL;
+    for (ei = c->enums; ei; ei = ei->next) {
+        if (!strcmp(ei->name, name))
+            return ei;
+    }
+    return NULL;
+}
+
+static Member *class_member(ClassInfo *ci, const char *name) {
     for (; ci; ci = ci->base) {
         Member *m;
         for (m = ci->members; m; m = m->next) {
@@ -417,8 +507,7 @@ static Member *class_member(ClassInfo *ci, const char *name)
 }
 
 /* 멤버를 실제로 선언한 클래스(상속 체인에서). */
-static ClassInfo *member_owner(ClassInfo *ci, const char *name)
-{
+static ClassInfo *member_owner(ClassInfo *ci, const char *name) {
     for (; ci; ci = ci->base) {
         Member *m;
         for (m = ci->members; m; m = m->next) {
@@ -429,8 +518,7 @@ static ClassInfo *member_owner(ClassInfo *ci, const char *name)
     return NULL;
 }
 
-static int class_derives(Checker *c, const char *from, const char *to)
-{
+static int class_derives(Checker *c, const char *from, const char *to) {
     ClassInfo *ci = find_class(c, from);
     if (!ci)
         return 1;                    /* 바깥 클래스는 상속 관계를 모르므로 허용 */
@@ -441,10 +529,25 @@ static int class_derives(Checker *c, const char *from, const char *to)
     return 0;
 }
 
+/* 클래스(또는 그 조상)가 인터페이스를 구현하는지. */
+static int class_implements(Checker *c, const char *from, const char *iface) {
+    ClassInfo *ci = find_class(c, from);
+    if (!ci)
+        return 1;                    /* 바깥 클래스는 관계를 모르므로 허용 */
+    if (ci->is_interface)
+        return !strcmp(ci->name, iface);
+    for (; ci; ci = ci->base) {
+        size_t i;
+        for (i = 0; i < ci->ninterfaces; i++)
+            if (!strcmp(ci->interfaces[i], iface))
+                return 1;
+    }
+    return 0;
+}
+
 static void check_error(Checker *c, int line, int col, const char *fmt, ...);
 
-static int is_type_param(Checker *c, const char *name)
-{
+static int is_type_param(Checker *c, const char *name) {
     size_t i;
     for (i = 0; i < c->ntparams; i++) {
         if (!strcmp(c->tparams[i], name))
@@ -455,8 +558,7 @@ static int is_type_param(Checker *c, const char *name)
 
 static Ty *typeref_to_ty(Checker *c, typeref_ty ty);
 
-static Ty *named_to_ty(Checker *c, const char *name, asdl_seq *args)
-{
+static Ty *named_to_ty(Checker *c, const char *name, asdl_seq *args) {
     Ty *elem = NULL;
     size_t nargs = args ? asdl_seq_LEN(args) : 0;
 
@@ -489,8 +591,7 @@ static Ty *named_to_ty(Checker *c, const char *name, asdl_seq *args)
     return ty_class(c, name);
 }
 
-static Ty *typeref_to_ty(Checker *c, typeref_ty ty)
-{
+static Ty *typeref_to_ty(Checker *c, typeref_ty ty) {
     if (!ty)
         return ty_any(c);
     switch (ty->kind) {
@@ -513,6 +614,15 @@ static Ty *typeref_to_ty(Checker *c, typeref_ty ty)
         return ty_ptr(c, typeref_to_ty(c, ty->v.Pointer.base));
     case Nullable_kind:
         return ty_nullable(c, typeref_to_ty(c, ty->v.Nullable.base));
+    case UnionTy_kind: {
+        asdl_seq *members = ty->v.UnionTy.members;
+        size_t n = members ? asdl_seq_LEN(members) : 0;
+        Ty **tys = n ? Arena_Alloc(c->arena, n * sizeof(Ty *)) : NULL;
+        size_t i;
+        for (i = 0; i < n; i++)
+            tys[i] = typeref_to_ty(c, asdl_seq_GET(members, i));
+        return ty_union(c, tys, n);
+    }
     case FunctionTy_kind: {
         asdl_seq *params = ty->v.FunctionTy.params;
         size_t n = params ? asdl_seq_LEN(params) : 0;
@@ -530,8 +640,7 @@ static Ty *typeref_to_ty(Checker *c, typeref_ty ty)
     return ty_any(c);
 }
 
-static Ty *unify(Checker *c, Ty *a, Ty *b)
-{
+static Ty *unify(Checker *c, Ty *a, Ty *b) {
     if (!a)
         return b;
     if (!b)
@@ -548,6 +657,12 @@ static Ty *unify(Checker *c, Ty *a, Ty *b)
         a = ty_non_null(c, a);
     if (b->nullable)
         b = ty_non_null(c, b);
+    if (a->kind == TY_UNION || b->kind == TY_UNION) {
+        Ty *items[2];
+        items[0] = a;
+        items[1] = b;
+        return ty_union(c, items, 2);
+    }
     if (a->kind == b->kind) {
         if (is_num(a) && is_num(b))
             return (a->kind == TY_FLOAT || b->kind == TY_FLOAT) ? ty_float(c) : ty_int(c);
@@ -565,8 +680,7 @@ static Ty *unify(Checker *c, Ty *a, Ty *b)
     return ty_any(c);
 }
 
-static int assignable(Checker *c, Ty *dst, Ty *src)
-{
+static int assignable(Checker *c, Ty *dst, Ty *src) {
     if (!dst || !src)
         return 1;
     if (dst->kind == TY_ANY || src->kind == TY_ANY)
@@ -582,6 +696,22 @@ static int assignable(Checker *c, Ty *dst, Ty *src)
     }
     if (src->nullable)
         return 0;
+    if (src->kind == TY_UNION) {
+        size_t i;
+        for (i = 0; i < src->nmembers; i++) {
+            if (!assignable(c, dst, src->members[i]))
+                return 0;
+        }
+        return 1;
+    }
+    if (dst->kind == TY_UNION) {
+        size_t i;
+        for (i = 0; i < dst->nmembers; i++) {
+            if (assignable(c, dst->members[i], src))
+                return 1;
+        }
+        return 0;
+    }
     switch (dst->kind) {
     case TY_INT:
         return src->kind == TY_INT;
@@ -601,8 +731,14 @@ static int assignable(Checker *c, Ty *dst, Ty *src)
         }
         return assignable(c, dst->a, src);
     case TY_CLASS:
-        if (src->kind == TY_CLASS)
-            return !strcmp(dst->name, src->name) || class_derives(c, src->name, dst->name);
+        if (src->kind == TY_CLASS) {
+            ClassInfo *dst_ci = find_class(c, dst->name);
+            if (!strcmp(dst->name, src->name))
+                return 1;
+            if (dst_ci && dst_ci->is_interface)
+                return class_implements(c, src->name, dst->name);
+            return class_derives(c, src->name, dst->name);
+        }
         if (src->kind == TY_STRUCT)
             return !strcmp(dst->name, src->name);
         return 0;
@@ -635,45 +771,56 @@ static int assignable(Checker *c, Ty *dst, Ty *src)
 
 /* ------------------------------------------------------------------ 환경 */
 
-static void push_scope(Checker *c)
-{
+static void push_scope(Checker *c) {
     Scope *s = Arena_Alloc(c->arena, sizeof(Scope));
     s->parent = c->scope;
     s->syms = NULL;
     c->scope = s;
 }
 
-static void pop_scope(Checker *c)
-{
+static void pop_scope(Checker *c) {
     if (c->scope)
         c->scope = c->scope->parent;
 }
 
-static void define(Checker *c, const char *name, Ty *ty)
-{
+static void define(Checker *c, const char *name, Ty *ty) {
     Sym *s = Arena_Alloc(c->arena, sizeof(Sym));
     s->name = name;
     s->ty = ty ? ty : ty_any(c);
+    s->narrowed = 0;
     s->next = c->scope->syms;
     c->scope->syms = s;
 }
 
-static Ty *lookup(Checker *c, const char *name)
-{
+static void define_narrowed(Checker *c, const char *name, Ty *ty) {
+    Sym *s = Arena_Alloc(c->arena, sizeof(Sym));
+    s->name = name;
+    s->ty = ty ? ty : ty_any(c);
+    s->narrowed = 1;
+    s->next = c->scope->syms;
+    c->scope->syms = s;
+}
+
+/* skip_narrowed가 1이면 흐름 분석으로 좁힌 그림자를 건너뛴다. */
+static Sym *lookup_sym(Checker *c, const char *name, int skip_narrowed) {
     Scope *sc;
     for (sc = c->scope; sc; sc = sc->parent) {
         Sym *s;
         for (s = sc->syms; s; s = s->next) {
-            if (!strcmp(s->name, name))
-                return s->ty;
+            if (!strcmp(s->name, name) && !(skip_narrowed && s->narrowed))
+                return s;
         }
     }
     return NULL;
 }
 
+static Ty *lookup(Checker *c, const char *name) {
+    Sym *s = lookup_sym(c, name, 0);
+    return s ? s->ty : NULL;
+}
+
 /* 이름이 이미 있으면 타입만 갱신한다. */
-static void define_or_update(Checker *c, const char *name, Ty *ty)
-{
+static void define_or_update(Checker *c, const char *name, Ty *ty) {
     Scope *sc;
     for (sc = c->scope; sc; sc = sc->parent) {
         Sym *s;
@@ -688,9 +835,39 @@ static void define_or_update(Checker *c, const char *name, Ty *ty)
     define(c, name, ty);
 }
 
+/*
+ * 선언은 현재 스코프에만 넣는다. 바깥 스코프의 같은 이름(내장 함수 등)은
+ * 가려져야 하므로 define_or_update처럼 바깥 심볼을 고치면 안 된다.
+ */
+static void define_shadow(Checker *c, const char *name, Ty *ty) {
+    Sym *s;
+    for (s = c->scope->syms; s; s = s->next) {
+        if (!strcmp(s->name, name)) {
+            if (s->ty->kind == TY_ANY && ty && ty->kind != TY_ANY)
+                s->ty = ty;
+            return;
+        }
+    }
+    define(c, name, ty);
+}
+
+/* 같은 이름이 있으면 타입을 덮어쓴다(import 바인딩용). */
+static void define_binding(Checker *c, const char *name, Ty *ty) {
+    Scope *sc;
+    for (sc = c->scope; sc; sc = sc->parent) {
+        Sym *s;
+        for (s = sc->syms; s; s = s->next) {
+            if (!strcmp(s->name, name)) {
+                s->ty = ty;
+                return;
+            }
+        }
+    }
+    define(c, name, ty);
+}
+
 /* 같은 이름의 함수 선언은 오버로드로 합친다. */
-static void define_or_overload(Checker *c, const char *name, Ty *fn)
-{
+static void define_or_overload(Checker *c, const char *name, Ty *fn) {
     Scope *sc;
     for (sc = c->scope; sc; sc = sc->parent) {
         Sym *s;
@@ -706,8 +883,7 @@ static void define_or_overload(Checker *c, const char *name, Ty *fn)
 
 /* ------------------------------------------------------------------ 진단 */
 
-static void check_error(Checker *c, int line, int col, const char *fmt, ...)
-{
+static void check_error(Checker *c, int line, int col, const char *fmt, ...) {
     va_list ap;
     fprintf(stderr, "%s:%d:%d: error: ", c->filename ? c->filename : "<input>",
             line, col + 1);
@@ -718,8 +894,7 @@ static void check_error(Checker *c, int line, int col, const char *fmt, ...)
     c->errors++;
 }
 
-static void require_assignable(Checker *c, Ty *dst, Ty *src, expr_ty at, const char *what)
-{
+static void require_assignable(Checker *c, Ty *dst, Ty *src, expr_ty at, const char *what) {
     if (!assignable(c, dst, src)) {
         check_error(c, at->lineno, at->col_offset,
                     "%s: expected %s but got %s",
@@ -729,8 +904,7 @@ static void require_assignable(Checker *c, Ty *dst, Ty *src, expr_ty at, const c
 
 /* ------------------------------------------------------------------ 함수 시그니처 */
 
-static Ty *params_to_func(Checker *c, asdl_seq *params, ret_ty ret, int lambda_params)
-{
+static Ty *params_to_func(Checker *c, asdl_seq *params, ret_ty ret, int lambda_params) {
     size_t n = params ? asdl_seq_LEN(params) : 0;
     Ty **tys = n ? Arena_Alloc(c->arena, n * sizeof(Ty *)) : NULL;
     Ty *rt;
@@ -765,8 +939,7 @@ typedef struct {
     size_t saved_n;
 } TParamSave;
 
-static void push_tparams(Checker *c, asdl_seq *type_params, TParamSave *save)
-{
+static void push_tparams(Checker *c, asdl_seq *type_params, TParamSave *save) {
     size_t n = type_params ? asdl_seq_LEN(type_params) : 0;
     size_t i;
     save->saved = c->tparams;
@@ -783,8 +956,7 @@ static void push_tparams(Checker *c, asdl_seq *type_params, TParamSave *save)
     }
 }
 
-static void pop_tparams(Checker *c, TParamSave *save)
-{
+static void pop_tparams(Checker *c, TParamSave *save) {
     c->tparams = save->saved;
     c->ntparams = save->saved_n;
 }
@@ -792,9 +964,10 @@ static void pop_tparams(Checker *c, TParamSave *save)
 /* ------------------------------------------------------------------ 표현식 */
 
 static Ty *infer(Checker *c, expr_ty e);
+static void narrow_true(Checker *c, expr_ty e);
+static void narrow_false(Checker *c, expr_ty e);
 
-static Ty *constant_type(Checker *c, Value v)
-{
+static Ty *constant_type(Checker *c, Value v) {
     switch (v.tag) {
     case VT_NULL: return ty_null(c);
     case VT_BOOL: return ty_bool(c);
@@ -805,8 +978,7 @@ static Ty *constant_type(Checker *c, Value v)
     return ty_any(c);
 }
 
-static Ty *iter_element(Checker *c, Ty *t)
-{
+static Ty *iter_element(Checker *c, Ty *t) {
     if (!t)
         return ty_any(c);
     switch (t->kind) {
@@ -826,14 +998,13 @@ static Ty *iter_element(Checker *c, Ty *t)
     }
 }
 
-static Ty *str_method_type(Checker *c, const char *name)
-{
+static Ty *str_method_type(Checker *c, const char *name) {
     static const struct {
         const char *name;
         char ret;                /* i=int, f=float, s=str, b=bool, l=list<str>, v=void */
     } table[] = {
         {"upper", 's'}, {"lower", 's'}, {"strip", 's'}, {"trim", 's'},
-        {"toUpperCase", 's'}, {"toLowerCase", 's'}, {"replace", 's'},
+        {"toUpperCase", 's'}, {"toLowerCase", 's'}, {"replace", 's'}, {"format", 's'},
         {"join", 's'}, {"substring", 's'}, {"charAt", 's'}, {"toString", 's'},
         {"split", 'l'}, {"chars", 'l'},
         {"length", 'i'}, {"count", 'i'}, {"find", 'i'}, {"indexOf", 'i'},
@@ -866,8 +1037,7 @@ static void resolve_bases(Checker *c);
 static void init_builtins(Checker *c);
 static void check_interfaces(Checker *c);
 
-static const char *module_dotted_name(Checker *c, asdl_seq *path)
-{
+static const char *module_dotted_name(Checker *c, asdl_seq *path) {
     size_t i, n = path ? asdl_seq_LEN(path) : 0, total = 0, o = 0;
     char *name;
 
@@ -886,8 +1056,7 @@ static const char *module_dotted_name(Checker *c, asdl_seq *path)
     return name;
 }
 
-static ModuleInfo *find_module(Checker *c, const char *name)
-{
+static ModuleInfo *find_module(Checker *c, const char *name) {
     ModuleInfo *mi;
     for (mi = c->modules; mi; mi = mi->next) {
         if (!strcmp(mi->name, name))
@@ -896,8 +1065,7 @@ static ModuleInfo *find_module(Checker *c, const char *name)
     return NULL;
 }
 
-static Ty *module_export_type(ModuleInfo *mi, const char *name)
-{
+static Ty *module_export_type(ModuleInfo *mi, const char *name) {
     Sym *s;
     if (!mi)
         return NULL;
@@ -909,14 +1077,12 @@ static Ty *module_export_type(ModuleInfo *mi, const char *name)
 }
 
 /* C 런타임이 직접 제공해서 .ast 파일이 없는 모듈. */
-static int is_opaque_module(const char *name)
-{
+static int is_opaque_module(const char *name) {
     return !strcmp(name, "System") || !strncmp(name, "System.", 7) ||
-           !strcmp(name, "Files");
+           !strcmp(name, "Files") || !strcmp(name, "aster.util.regex.Native");
 }
 
-static char *read_source_file(const char *path, size_t *size)
-{
+static char *read_source_file(const char *path, size_t *size) {
     FILE *f = fopen(path, "rb");
     char *buf;
     size_t cap = 4096, len = 0;
@@ -952,8 +1118,7 @@ static char *read_source_file(const char *path, size_t *size)
     return buf;
 }
 
-static const char *exported_name(stmt_ty s)
-{
+static const char *exported_name(stmt_ty s) {
     switch (s->kind) {
     case FunctionDef_kind:
         return s->v.FunctionDef.name;
@@ -976,8 +1141,7 @@ static const char *exported_name(stmt_ty s)
     }
 }
 
-static void module_add_export(Checker *c, ModuleInfo *mi, const char *name)
-{
+static void module_add_export(Checker *c, ModuleInfo *mi, const char *name) {
     Sym *s;
     Ty *ty;
 
@@ -992,8 +1156,7 @@ static void module_add_export(Checker *c, ModuleInfo *mi, const char *name)
     mi->nexports++;
 }
 
-static int has_export_wrappers(asdl_seq *body)
-{
+static int has_export_wrappers(asdl_seq *body) {
     size_t i;
     for (i = 0; i < asdl_seq_LEN(body); i++) {
         if (((stmt_ty)asdl_seq_GET(body, i))->kind == Export_kind)
@@ -1002,8 +1165,7 @@ static int has_export_wrappers(asdl_seq *body)
     return 0;
 }
 
-static void snapshot_exports(Checker *c, ModuleInfo *mi, asdl_seq *body)
-{
+static void snapshot_exports(Checker *c, ModuleInfo *mi, asdl_seq *body) {
     size_t i;
 
     if (has_export_wrappers(body)) {
@@ -1027,8 +1189,7 @@ static void snapshot_exports(Checker *c, ModuleInfo *mi, asdl_seq *body)
     }
 }
 
-static ModuleInfo *load_module(Checker *c, const char *name, int line, int col)
-{
+static ModuleInfo *load_module(Checker *c, const char *name, int line, int col) {
     ModuleInfo *mi = find_module(c, name);
     Checker mc;
     char file[1024];
@@ -1104,8 +1265,7 @@ static ModuleInfo *load_module(Checker *c, const char *name, int line, int col)
 }
 
 /* 모듈의 공개 이름을 현재 스코프에 정의한다. */
-static void import_module_exports(Checker *c, ModuleInfo *mi)
-{
+static void import_module_exports(Checker *c, ModuleInfo *mi) {
     Sym *s;
     if (!mi || !mi->ok || mi->opaque)
         return;
@@ -1113,15 +1273,15 @@ static void import_module_exports(Checker *c, ModuleInfo *mi)
         define_or_update(c, s->name, s->ty);
 }
 
-static void handle_import(Checker *c, stmt_ty s)
-{
+static void handle_import(Checker *c, stmt_ty s) {
     size_t n = asdl_seq_LEN(s->v.Import.path);
     const char *dotted = module_dotted_name(c, s->v.Import.path);
     const char *bind = s->v.Import.alias
         ? s->v.Import.alias : asdl_seq_GET(s->v.Import.path, n - 1);
     ModuleInfo *mi = load_module(c, dotted, s->lineno, s->col_offset);
+    Ty *direct = mi && !mi->opaque ? module_export_type(mi, bind) : NULL;
 
-    define_or_update(c, bind, ty_module(c, dotted));
+    define_binding(c, bind, direct ? direct : ty_module(c, dotted));
     if (s->v.Import.wildcard) {
         if (!strcmp(dotted, "System.stdout") || !strcmp(dotted, "System.stderr")) {
             define_or_update(c, "print", ty_func(c, NULL, 0, ty_void(c), 1));
@@ -1134,8 +1294,7 @@ static void handle_import(Checker *c, stmt_ty s)
     }
 }
 
-static void handle_import_from(Checker *c, stmt_ty s)
-{
+static void handle_import_from(Checker *c, stmt_ty s) {
     const char *dotted = module_dotted_name(c, s->v.ImportFrom.module);
     ModuleInfo *mi = load_module(c, dotted, s->lineno, s->col_offset);
 
@@ -1159,8 +1318,7 @@ static void handle_import_from(Checker *c, stmt_ty s)
     }
 }
 
-static Ty *member_type(Checker *c, Ty *base, const char *name, int line, int col)
-{
+static Ty *member_type(Checker *c, Ty *base, const char *name, int line, int col) {
     if (!base || base->kind == TY_ANY)
         return ty_any(c);
     if (base->kind == TY_MODULE) {
@@ -1192,8 +1350,7 @@ static Ty *member_type(Checker *c, Ty *base, const char *name, int line, int col
     return ty_any(c);
 }
 
-static Ty *attr_type(Checker *c, expr_ty e, Ty *base)
-{
+static Ty *attr_type(Checker *c, expr_ty e, Ty *base) {
     const char *name;
     if (e->kind == Attribute_kind)
         name = e->v.Attribute.attr;
@@ -1202,6 +1359,12 @@ static Ty *attr_type(Checker *c, expr_ty e, Ty *base)
     else
         name = e->v.OptionalAttribute.attr;
 
+    if (e->kind != OptionalAttribute_kind && base && base->nullable) {
+        check_error(c, e->lineno, e->col_offset,
+                    "possible null access to member '%s': value is %s; "
+                    "check for null or use '?.'",
+                    name, ty_name(base));
+    }
     if (base && base->kind == TY_PTR)
         base = base->a ? base->a : ty_any(c);
 
@@ -1239,8 +1402,7 @@ static Ty *attr_type(Checker *c, expr_ty e, Ty *base)
     return member_type(c, base, name, e->lineno, e->col_offset);
 }
 
-static Ty *call_result(Checker *c, expr_ty call, Ty *callee)
-{
+static Ty *call_result(Checker *c, expr_ty call, Ty *callee) {
     asdl_seq *args = call->v.Call.args;
     size_t nargs = args ? asdl_seq_LEN(args) : 0;
     size_t i;
@@ -1319,8 +1481,7 @@ static Ty *call_result(Checker *c, expr_ty call, Ty *callee)
     return ty_any(c);
 }
 
-static const char *binop_hook(operator_ty op)
-{
+static const char *binop_hook(operator_ty op) {
     switch (op) {
     case Add: return "__add__";
     case Sub: return "__sub__";
@@ -1334,8 +1495,7 @@ static const char *binop_hook(operator_ty op)
 }
 
 /* 클래스가 연산자 훅을 정의했으면 그 반환 타입을 돌려준다. */
-static Ty *operator_hook_ret(Checker *c, Ty *base, const char *name)
-{
+static Ty *operator_hook_ret(Checker *c, Ty *base, const char *name) {
     ClassInfo *ci;
     Member *m;
     if (!base || base->kind != TY_CLASS || !name)
@@ -1349,8 +1509,7 @@ static Ty *operator_hook_ret(Checker *c, Ty *base, const char *name)
     return m->fn->ret;
 }
 
-static Ty *binop_type(Checker *c, operator_ty op, Ty *l, Ty *r)
-{
+static Ty *binop_type(Checker *c, operator_ty op, Ty *l, Ty *r) {
     Ty *hooked = operator_hook_ret(c, l, binop_hook(op));
     if (hooked)
         return hooked;
@@ -1378,8 +1537,7 @@ static Ty *binop_type(Checker *c, operator_ty op, Ty *l, Ty *r)
     return ty_any(c);
 }
 
-static Ty *infer_lambda(Checker *c, expr_ty e)
-{
+static Ty *infer_lambda(Checker *c, expr_ty e) {
     Ty *fn;
     size_t i, n = asdl_seq_LEN(e->v.Lambda.params);
     Ty *body_ty;
@@ -1398,8 +1556,7 @@ static Ty *infer_lambda(Checker *c, expr_ty e)
     return fn;
 }
 
-static Ty *infer(Checker *c, expr_ty e)
-{
+static Ty *infer(Checker *c, expr_ty e) {
     if (!e)
         return ty_any(c);
 
@@ -1429,7 +1586,13 @@ static Ty *infer(Checker *c, expr_ty e)
     }
     case BoolOp_kind:
         infer(c, e->v.BoolOp.left);
+        push_scope(c);
+        if (e->v.BoolOp.op == And)
+            narrow_true(c, e->v.BoolOp.left);
+        else
+            narrow_false(c, e->v.BoolOp.left);
         infer(c, e->v.BoolOp.right);
+        pop_scope(c);
         return ty_bool(c);
     case UnaryOp_kind: {
         Ty *operand = infer(c, e->v.UnaryOp.operand);
@@ -1466,6 +1629,11 @@ static Ty *infer(Checker *c, expr_ty e)
         return ty_ptr(c, infer(c, e->v.AddressOf.value));
     case Deref_kind: {
         Ty *t = infer(c, e->v.Deref.value);
+        if (t->nullable)
+            check_error(c, e->lineno, e->col_offset,
+                        "possible null dereference: value is %s; "
+                        "check for null before dereferencing",
+                        ty_name(t));
         if (t->kind == TY_PTR)
             return t->a ? t->a : ty_any(c);
         if (t->kind == TY_CLASS)
@@ -1476,6 +1644,12 @@ static Ty *infer(Checker *c, expr_ty e)
         return ty_int(c);
     case Call_kind: {
         Ty *callee = infer(c, e->v.Call.func);
+        if (callee && callee->nullable &&
+            e->v.Call.func->kind != OptionalAttribute_kind)
+            check_error(c, e->lineno, e->col_offset,
+                        "possible null call: value is %s; "
+                        "check for null or use '?.'",
+                        ty_name(callee));
         return call_result(c, e, callee);
     }
     case New_kind: {
@@ -1485,6 +1659,13 @@ static Ty *infer(Checker *c, expr_ty e)
         size_t i;
         if (si)
             return ty_struct(c, si->name);
+        if (ci && ci->is_interface) {
+            check_error(c, e->lineno, e->col_offset,
+                        "interface '%s' cannot be instantiated", e->v.New.cls);
+            for (i = 0; i < nargs; i++)
+                infer(c, asdl_seq_GET(e->v.New.args, i));
+            return ty_any(c);
+        }
         if (ci && ci->ctor) {
             for (i = 0; i < nargs && i < ci->ctor->nparams; i++) {
                 expr_ty arg = asdl_seq_GET(e->v.New.args, i);
@@ -1655,16 +1836,14 @@ static Ty *infer(Checker *c, expr_ty e)
 
 static void collect_stmt(Checker *c, stmt_ty s);
 
-static void collect_body(Checker *c, asdl_seq *body)
-{
+static void collect_body(Checker *c, asdl_seq *body) {
     size_t i;
     for (i = 0; i < asdl_seq_LEN(body); i++)
         collect_stmt(c, asdl_seq_GET(body, i));
 }
 
 static void class_add_member(Checker *c, ClassInfo *ci, const char *name, Ty *ty,
-                             Ty *fn, int is_method, access_ty access)
-{
+                             Ty *fn, int is_method, access_ty access) {
     Member *m = Arena_Alloc(c->arena, sizeof(Member));
     if (is_method) {
         Member *old = class_member(ci, name);
@@ -1682,8 +1861,7 @@ static void class_add_member(Checker *c, ClassInfo *ci, const char *name, Ty *ty
     ci->members = m;
 }
 
-static void collect_class(Checker *c, stmt_ty s)
-{
+static void collect_class(Checker *c, stmt_ty s) {
     ClassInfo *ci = find_class(c, s->v.ClassDef.name);
     size_t i, n = asdl_seq_LEN(s->v.ClassDef.members);
     TParamSave save;
@@ -1742,8 +1920,7 @@ static void collect_class(Checker *c, stmt_ty s)
     pop_tparams(c, &save);
 }
 
-static void collect_interface(Checker *c, stmt_ty s)
-{
+static void collect_interface(Checker *c, stmt_ty s) {
     ClassInfo *ci = find_class(c, s->v.InterfaceDef.name);
     size_t i, n = asdl_seq_LEN(s->v.InterfaceDef.methods);
 
@@ -1764,8 +1941,7 @@ static void collect_interface(Checker *c, stmt_ty s)
     }
 }
 
-static void collect_struct(Checker *c, stmt_ty s)
-{
+static void collect_struct(Checker *c, stmt_ty s) {
     StructInfo *si = find_struct(c, s->v.StructDef.tag);
     size_t i, n = asdl_seq_LEN(s->v.StructDef.members);
     size_t nfields = 0;
@@ -1796,8 +1972,7 @@ static void collect_struct(Checker *c, stmt_ty s)
     }
 }
 
-static Ty *shallow_type(Checker *c, expr_ty e)
-{
+static Ty *shallow_type(Checker *c, expr_ty e) {
     if (!e)
         return ty_any(c);
     switch (e->kind) {
@@ -1852,8 +2027,7 @@ static Ty *shallow_type(Checker *c, expr_ty e)
     }
 }
 
-static void collect_stmt(Checker *c, stmt_ty s)
-{
+static void collect_stmt(Checker *c, stmt_ty s) {
     switch (s->kind) {
     case FunctionDef_kind: {
         TParamSave save;
@@ -1892,6 +2066,36 @@ static void collect_stmt(Checker *c, stmt_ty s)
         define_or_update(c, s->v.ExceptionDef.name, ty_class(c, s->v.ExceptionDef.name));
         break;
     }
+    case EnumDef_kind: {
+        EnumInfo *ei = find_enum(c, s->v.EnumDef.name);
+        size_t i, j, n = asdl_seq_LEN(s->v.EnumDef.members);
+        if (!ei) {
+            ei = Arena_Alloc(c->arena, sizeof(EnumInfo));
+            memset(ei, 0, sizeof(*ei));
+            ei->name = s->v.EnumDef.name;
+            ei->nvariants = n;
+            if (n) {
+                ei->variants = Arena_Alloc(c->arena, n * sizeof(const char *));
+                ei->params = Arena_Alloc(c->arena, n * sizeof(Ty **));
+                ei->nparams = Arena_Alloc(c->arena, n * sizeof(size_t));
+            }
+            for (i = 0; i < n; i++) {
+                enum_member_ty em = asdl_seq_GET(s->v.EnumDef.members, i);
+                size_t np = asdl_seq_LEN(em->params);
+                ei->variants[i] = em->name;
+                ei->nparams[i] = np;
+                ei->params[i] = np ? Arena_Alloc(c->arena, np * sizeof(Ty *)) : NULL;
+                for (j = 0; j < np; j++) {
+                    param_ty p = asdl_seq_GET(em->params, j);
+                    ei->params[i][j] = p->ty ? typeref_to_ty(c, p->ty) : ty_any(c);
+                }
+            }
+            ei->next = c->enums;
+            c->enums = ei;
+        }
+        define_or_update(c, s->v.EnumDef.name, ty_class(c, s->v.EnumDef.name));
+        break;
+    }
     case VarDecl_kind: {
         Ty *ty;
         TParamSave save;
@@ -1901,7 +2105,7 @@ static void collect_stmt(Checker *c, stmt_ty s)
         if (ty->kind == TY_ANY && s->v.VarDecl.init &&
             s->v.VarDecl.init->kind == ExprInit_kind)
             ty = shallow_type(c, s->v.VarDecl.init->v.ExprInit.value);
-        define_or_update(c, s->v.VarDecl.name, ty);
+        define_shadow(c, s->v.VarDecl.name, ty);
         break;
     }
     case Assign_kind:
@@ -1939,8 +2143,7 @@ static void collect_stmt(Checker *c, stmt_ty s)
     }
 }
 
-static void resolve_bases(Checker *c)
-{
+static void resolve_bases(Checker *c) {
     ClassInfo *ci;
     for (ci = c->classes; ci; ci = ci->next) {
         if (ci->base_name)
@@ -1949,8 +2152,7 @@ static void resolve_bases(Checker *c)
 }
 
 /* implements한 인터페이스의 메서드가 모두 구현되었는지 확인한다. */
-static void check_interfaces(Checker *c)
-{
+static void check_interfaces(Checker *c) {
     ClassInfo *ci;
     for (ci = c->classes; ci; ci = ci->next) {
         size_t k;
@@ -1985,8 +2187,7 @@ static void check_stmt(Checker *c, stmt_ty s);
 
 static void check_function(Checker *c, asdl_seq *type_params, asdl_seq *params,
                            ret_ty ret, asdl_seq *body, expr_ty body_expr,
-                           ClassInfo *cls, int lambda)
-{
+                           ClassInfo *cls, int lambda) {
     ClassInfo *saved_class = c->current_class;
     Ty *saved_ret = c->current_ret;
     int saved_known = c->current_ret_known;
@@ -2036,8 +2237,7 @@ static void check_function(Checker *c, asdl_seq *type_params, asdl_seq *params,
     c->in_function = saved_in_fn;
 }
 
-static void check_class(Checker *c, stmt_ty s)
-{
+static void check_class(Checker *c, stmt_ty s) {
     ClassInfo *ci = find_class(c, s->v.ClassDef.name);
     size_t i, n = asdl_seq_LEN(s->v.ClassDef.members);
     ClassInfo *saved = c->current_class;
@@ -2089,8 +2289,7 @@ static void check_class(Checker *c, stmt_ty s)
     c->current_class = saved;
 }
 
-static void check_struct(Checker *c, stmt_ty s)
-{
+static void check_struct(Checker *c, stmt_ty s) {
     size_t i, n = asdl_seq_LEN(s->v.StructDef.members);
     for (i = 0; i < n; i++) {
         struct_member_ty m = asdl_seq_GET(s->v.StructDef.members, i);
@@ -2111,21 +2310,28 @@ static void check_struct(Checker *c, stmt_ty s)
     }
 }
 
-static void check_assign_target(Checker *c, expr_ty target, Ty *value)
-{
+static void check_assign_target(Checker *c, expr_ty target, Ty *value) {
     switch (target->kind) {
     case Name_kind: {
-        Ty *t = lookup(c, target->v.Name.id);
-        if (!t) {
+        Sym *cur = lookup_sym(c, target->v.Name.id, 0);
+        if (!cur) {
             if (is_container(value) || value->kind == TY_FUNC)
                 define(c, target->v.Name.id, value);
             return;
         }
-        if (t->kind == TY_ANY && value->kind != TY_ANY) {
+        if (cur->narrowed) {
+            /* 좁힌 그림자에 대입하면 선언 타입 기준으로 검사하고 그림자를 푼다. */
+            Sym *decl = lookup_sym(c, target->v.Name.id, 1);
+            Ty *base = decl ? decl->ty : ty_any(c);
+            require_assignable(c, base, value, target, "assignment");
+            define(c, target->v.Name.id, base);
+            break;
+        }
+        if (cur->ty->kind == TY_ANY && value->kind != TY_ANY) {
             define_or_update(c, target->v.Name.id, value);
             return;
         }
-        require_assignable(c, t, value, target, "assignment");
+        require_assignable(c, cur->ty, value, target, "assignment");
         break;
     }
     case Attribute_kind: {
@@ -2177,15 +2383,218 @@ static void check_assign_target(Checker *c, expr_ty target, Ty *value)
     }
 }
 
-static void check_body(Checker *c, asdl_seq *body)
-{
+static void check_body(Checker *c, asdl_seq *body) {
     size_t i;
     for (i = 0; i < asdl_seq_LEN(body); i++)
         check_stmt(c, asdl_seq_GET(body, i));
 }
 
-static void check_stmt(Checker *c, stmt_ty s)
-{
+/* 흐름 좁히기: 조건이 참/거짓일 때 이름의 null 여부를 정적으로 좁힌다. */
+
+static int is_null_literal(expr_ty e) {
+    return e && e->kind == Constant_kind && e->v.Constant.value.tag == VT_NULL;
+}
+
+static void narrow_name(Checker *c, expr_ty e) {
+    Ty *t;
+    if (!e || e->kind != Name_kind)
+        return;
+    t = lookup(c, e->v.Name.id);
+    if (!t || !t->nullable)
+        return;
+    define_narrowed(c, e->v.Name.id, ty_non_null(c, t));
+}
+
+static void narrow_true(Checker *c, expr_ty e);
+
+static void narrow_false(Checker *c, expr_ty e) {
+    if (!e)
+        return;
+    switch (e->kind) {
+    case Compare_kind:
+        if (e->v.Compare.op == Eq) {
+            if (is_null_literal(e->v.Compare.right))
+                narrow_name(c, e->v.Compare.left);
+            else if (is_null_literal(e->v.Compare.left))
+                narrow_name(c, e->v.Compare.right);
+        }
+        break;
+    case UnaryOp_kind:
+        if (e->v.UnaryOp.op == Not)
+            narrow_true(c, e->v.UnaryOp.operand);
+        break;
+    case BoolOp_kind:
+        if (e->v.BoolOp.op == Or) {
+            narrow_false(c, e->v.BoolOp.left);
+            narrow_false(c, e->v.BoolOp.right);
+        }
+        break;
+    default:
+        break;
+    }
+}
+
+static void narrow_true(Checker *c, expr_ty e) {
+    if (!e)
+        return;
+    switch (e->kind) {
+    case Compare_kind:
+        if (e->v.Compare.op == NotEq) {
+            if (is_null_literal(e->v.Compare.right))
+                narrow_name(c, e->v.Compare.left);
+            else if (is_null_literal(e->v.Compare.left))
+                narrow_name(c, e->v.Compare.right);
+        }
+        break;
+    case UnaryOp_kind:
+        if (e->v.UnaryOp.op == Not)
+            narrow_false(c, e->v.UnaryOp.operand);
+        break;
+    case BoolOp_kind:
+        if (e->v.BoolOp.op == And) {
+            narrow_true(c, e->v.BoolOp.left);
+            narrow_true(c, e->v.BoolOp.right);
+        }
+        break;
+    case Name_kind:
+        narrow_name(c, e);
+        break;
+    default:
+        break;
+    }
+}
+
+static int always_exits(asdl_seq *body) {
+    stmt_ty last;
+    size_t n = asdl_seq_LEN(body);
+    if (!n)
+        return 0;
+    last = asdl_seq_GET(body, n - 1);
+    if (!last)
+        return 0;
+    switch (last->kind) {
+    case Return_kind:
+    case Throw_kind:
+    case Break_kind:
+    case Continue_kind:
+        return 1;
+    case If_kind:
+        return asdl_seq_LEN(last->v.If.orelse) > 0 &&
+               always_exits(last->v.If.body) &&
+               always_exits(last->v.If.orelse);
+    default:
+        return 0;
+    }
+}
+
+/* case 패턴의 enum 이름과 변형 이름을 뽑는다 (Shape.Circle -> "Shape", "Circle"). */
+static const char *pattern_variant_name(expr_ty path, const char **enum_name) {
+    *enum_name = NULL;
+    if (!path || path->kind != Attribute_kind)
+        return NULL;
+    if (path->v.Attribute.value->kind == Name_kind)
+        *enum_name = path->v.Attribute.value->v.Name.id;
+    else if (path->v.Attribute.value->kind == Attribute_kind)
+        *enum_name = path->v.Attribute.value->v.Attribute.attr;
+    return path->v.Attribute.attr;
+}
+
+static void check_pattern(Checker *c, match_pattern_ty pat, Ty *expected,
+                          EnumInfo *subject_enum, int *covered, int *catch_all) {
+    switch (pat->kind) {
+    case PLiteral_kind: {
+        expr_ty lit = pat->v.PLiteral.value;
+        Ty *t = infer(c, lit);
+        if (expected && expected->kind != TY_ANY && !assignable(c, expected, t))
+            check_error(c, lit->lineno, lit->col_offset,
+                        "case value: expected %s but got %s",
+                        ty_name(expected), ty_name(t));
+        break;
+    }
+    case PBind_kind:
+        *catch_all = 1;
+        if (strcmp(pat->v.PBind.name, "_"))
+            define(c, pat->v.PBind.name, expected ? ty_non_null(c, expected) : ty_any(c));
+        break;
+    case PVariant_kind: {
+        const char *enum_name = NULL;
+        const char *variant = pattern_variant_name(pat->v.PVariant.path, &enum_name);
+        EnumInfo *ei = enum_name ? find_enum(c, enum_name) : NULL;
+        asdl_seq *items = pat->v.PVariant.items;
+        size_t nitems = asdl_seq_LEN(items), vi, i;
+
+        if (!variant) {
+            infer(c, pat->v.PVariant.path);
+            for (i = 0; i < nitems; i++)
+                check_pattern(c, asdl_seq_GET(items, i), ty_any(c), NULL, NULL, catch_all);
+            break;
+        }
+        if (!ei) {
+            /* enum이 아닌 경로: 일반 식으로 검사만 하고 바인딩은 any로 둔다. */
+            infer(c, pat->v.PVariant.path);
+            for (i = 0; i < nitems; i++)
+                check_pattern(c, asdl_seq_GET(items, i), ty_any(c), NULL, NULL, catch_all);
+            break;
+        }
+        for (vi = 0; vi < ei->nvariants; vi++)
+            if (!strcmp(ei->variants[vi], variant))
+                break;
+        if (vi == ei->nvariants) {
+            check_error(c, pat->v.PVariant.path->lineno,
+                        pat->v.PVariant.path->col_offset,
+                        "enum '%s' has no variant '%s'", enum_name, variant);
+            break;
+        }
+        if (covered && ei == subject_enum)
+            covered[vi] = 1;
+        if (nitems != ei->nparams[vi]) {
+            check_error(c, pat->v.PVariant.path->lineno,
+                        pat->v.PVariant.path->col_offset,
+                        "pattern '%s.%s' takes %zu value(s) but %zu given",
+                        enum_name, variant, ei->nparams[vi], nitems);
+            break;
+        }
+        for (i = 0; i < nitems; i++) {
+            Ty *pt = ei->params[vi][i];
+            EnumInfo *inner = pt->kind == TY_CLASS ? find_enum(c, pt->name) : NULL;
+            check_pattern(c, asdl_seq_GET(items, i), pt, inner, NULL, catch_all);
+        }
+        break;
+    }
+    }
+}
+
+static void check_switch(Checker *c, stmt_ty s) {
+    Ty *subject = infer(c, s->v.Switch.subject);
+    EnumInfo *ei = subject && subject->kind == TY_CLASS
+        ? find_enum(c, subject->name) : NULL;
+    asdl_seq *cases = s->v.Switch.cases;
+    size_t ncases = asdl_seq_LEN(cases), i, k;
+    int *covered = NULL;
+    int catch_all = 0;
+
+    if (ei && ei->nvariants) {
+        covered = Arena_Alloc(c->arena, ei->nvariants * sizeof(int));
+        memset(covered, 0, ei->nvariants * sizeof(int));
+    }
+    for (i = 0; i < ncases; i++) {
+        match_case_ty mc = asdl_seq_GET(cases, i);
+        push_scope(c);
+        check_pattern(c, mc->pattern, subject, ei, covered, &catch_all);
+        check_body(c, mc->body);
+        pop_scope(c);
+    }
+    if (ei && covered && !catch_all) {
+        for (k = 0; k < ei->nvariants; k++) {
+            if (!covered[k])
+                check_error(c, s->lineno, s->col_offset,
+                            "switch on enum '%s' is missing case '%s.%s'",
+                            ei->name, ei->name, ei->variants[k]);
+        }
+    }
+}
+
+static void check_stmt(Checker *c, stmt_ty s) {
     switch (s->kind) {
     case FunctionDef_kind:
         check_function(c, s->v.FunctionDef.type_params, s->v.FunctionDef.params,
@@ -2234,7 +2643,7 @@ static void check_stmt(Checker *c, stmt_ty s)
                                        "variable initializer");
             }
         }
-        define_or_update(c, s->v.VarDecl.name, declared);
+        define_shadow(c, s->v.VarDecl.name, declared);
         break;
     }
     case EnumDef_kind: {
@@ -2244,7 +2653,7 @@ static void check_stmt(Checker *c, stmt_ty s)
             if (em->value)
                 infer(c, em->value);
         }
-        define(c, s->v.EnumDef.name, ty_any(c));
+        define_or_update(c, s->v.EnumDef.name, ty_class(c, s->v.EnumDef.name));
         break;
     }
     case Destructure_kind: {
@@ -2275,18 +2684,30 @@ static void check_stmt(Checker *c, stmt_ty s)
         check_assign_target(c, s->v.Assign.target, value);
         break;
     }
-    case If_kind:
-        infer(c, s->v.If.test);
+    case If_kind: {
+        expr_ty test = s->v.If.test;
+        int then_exits, else_exits;
+        infer(c, test);
         push_scope(c);
+        narrow_true(c, test);
         check_body(c, s->v.If.body);
         pop_scope(c);
         push_scope(c);
+        narrow_false(c, test);
         check_body(c, s->v.If.orelse);
         pop_scope(c);
+        then_exits = always_exits(s->v.If.body);
+        else_exits = asdl_seq_LEN(s->v.If.orelse) ? always_exits(s->v.If.orelse) : 0;
+        if (then_exits && !else_exits)
+            narrow_false(c, test);
+        else if (else_exits && !then_exits)
+            narrow_true(c, test);
         break;
+    }
     case While_kind:
         infer(c, s->v.While.test);
         push_scope(c);
+        narrow_true(c, s->v.While.test);
         check_body(c, s->v.While.body);
         pop_scope(c);
         break;
@@ -2343,6 +2764,9 @@ static void check_stmt(Checker *c, stmt_ty s)
         pop_scope(c);
         break;
     }
+    case Switch_kind:
+        check_switch(c, s);
+        break;
     case Try_kind: {
         size_t i;
         push_scope(c);
@@ -2409,13 +2833,11 @@ static void check_stmt(Checker *c, stmt_ty s)
 
 /* ------------------------------------------------------------------ 내장 */
 
-static void define_builtin(Checker *c, const char *name, Ty *ty)
-{
+static void define_builtin(Checker *c, const char *name, Ty *ty) {
     define(c, name, ty);
 }
 
-static void register_exception_class(Checker *c, const char *name, const char *base)
-{
+static void register_exception_class(Checker *c, const char *name, const char *base) {
     ClassInfo *ci = Arena_Alloc(c->arena, sizeof(ClassInfo));
     memset(ci, 0, sizeof(*ci));
     ci->name = name;
@@ -2425,15 +2847,15 @@ static void register_exception_class(Checker *c, const char *name, const char *b
     c->classes = ci;
 }
 
-static void init_builtins(Checker *c)
-{
+static void init_builtins(Checker *c) {
     static const char *exceptions[] = {
         "Exception", "ArithmeticError", "ZeroDivisionError", "OverflowError",
         "ValueError", "TypeError", "NameError", "AttributeError", "KeyError",
         "IndexError", "RuntimeError", "NullPointerError", "LookupError",
         "AssertionError", "OSError", "EOFError", "IOException",
         "ImportError", "ModuleNotFoundError", "RecursionError", "NumberFormatError",
-        "NotImplementedError", "StopIteration"
+        "NotImplementedError", "StopIteration", "NoSuchElementError",
+        "RegexError"
     };
     static const char *exc_parents[][2] = {
         {"ArithmeticError", "Exception"},
@@ -2465,6 +2887,18 @@ static void init_builtins(Checker *c)
     define_builtin(c, "repr", ty_func(c, NULL, 0, ty_str(c), 1));
     define_builtin(c, "chr", ty_func(c, NULL, 0, ty_str(c), 1));
     define_builtin(c, "ord", ty_func(c, NULL, 0, ty_int(c), 1));
+    define_builtin(c, "abs", ty_func(c, NULL, 0, ty_any(c), 1));
+    define_builtin(c, "sum", ty_func(c, NULL, 0, ty_any(c), 1));
+    define_builtin(c, "min", ty_func(c, NULL, 0, ty_any(c), 1));
+    define_builtin(c, "max", ty_func(c, NULL, 0, ty_any(c), 1));
+    define_builtin(c, "all", ty_func(c, NULL, 0, ty_bool(c), 1));
+    define_builtin(c, "any", ty_func(c, NULL, 0, ty_bool(c), 1));
+    define_builtin(c, "zip", ty_func(c, NULL, 0, ty_seq(c, TY_LIST, ty_any(c)), 1));
+    define_builtin(c, "enumerate",
+                   ty_func(c, NULL, 0, ty_seq(c, TY_LIST, ty_any(c)), 1));
+    define_builtin(c, "sorted", ty_func(c, NULL, 0, ty_seq(c, TY_LIST, ty_any(c)), 1));
+    define_builtin(c, "round", ty_func(c, NULL, 0, ty_any(c), 1));
+    define_builtin(c, "input", ty_func(c, NULL, 0, ty_str(c), 1));
     define_builtin(c, "Scanner", ty_class(c, "Scanner"));
     define_builtin(c, "Files", ty_module(c, "Files"));
 
@@ -2485,8 +2919,7 @@ static void init_builtins(Checker *c)
 /* ------------------------------------------------------------------ 진입점 */
 
 int TypeCheck_ModuleEx(Arena *arena, mod_ty mod, const char *filename,
-                       const TypeCheckEnv *env)
-{
+                       const TypeCheckEnv *env) {
     Checker c;
     asdl_seq *body;
 
@@ -2513,7 +2946,6 @@ int TypeCheck_ModuleEx(Arena *arena, mod_ty mod, const char *filename,
     return c.errors > 0 ? 1 : 0;
 }
 
-int TypeCheck_Module(Arena *arena, mod_ty mod, const char *filename)
-{
+int TypeCheck_Module(Arena *arena, mod_ty mod, const char *filename) {
     return TypeCheck_ModuleEx(arena, mod, filename, NULL);
 }

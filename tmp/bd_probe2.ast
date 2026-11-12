@@ -1,0 +1,8 @@
+import System.stdout.*;
+import aster.math.BigDecimal;
+println("A");
+BigDecimal x = new BigDecimal("10.00");
+println(x.toString(), x.scale(), x.unscaledValue().toString());
+BigDecimal y = new BigDecimal("4");
+println(y.toString(), y.scale(), y.unscaledValue().toString());
+println(x.divide(y).toString());

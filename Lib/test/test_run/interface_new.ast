@@ -1,0 +1,5 @@
+interface Named {
+    fn name() -> str;
+}
+
+n = new Named();

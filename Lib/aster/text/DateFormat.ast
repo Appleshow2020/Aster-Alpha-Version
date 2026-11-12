@@ -1,0 +1,74 @@
+/* aster.text.DateFormat: java.text.DateFormat 스타일 날짜/시각 포맷 기반 클래스.
+   실제 패턴 처리는 SimpleDateFormat이 담당하고, 여기서는 스타일 상수와
+   기본 인스턴스 팩터리만 제공한다. */
+
+import aster.text.SimpleDateFormat;
+
+export class DateFormat {
+    public static int SHORT = 0;
+    public static int MEDIUM = 1;
+    public static int LONG = 2;
+    public static int FULL = 3;
+    public static int DEFAULT = 1;
+
+    protected int dateStyleValue;
+    protected int timeStyleValue;
+
+    constructor() {
+        self->dateStyleValue = DateFormat.DEFAULT;
+        self->timeStyleValue = DateFormat.DEFAULT;
+    }
+
+    public fn format(int epochMillis) -> str {
+        return "";
+    }
+
+    public fn parse(str text) -> int {
+        return 0;
+    }
+
+    public fn getDateStyle() -> int {
+        return self->dateStyleValue;
+    }
+
+    public fn getTimeStyle() -> int {
+        return self->timeStyleValue;
+    }
+
+    public static fn datePattern(int style) -> str {
+        if (style == DateFormat.SHORT) { return "M/d/yy"; }
+        if (style == DateFormat.LONG) { return "MMMM d, yyyy"; }
+        if (style == DateFormat.FULL) { return "EEEE, MMMM d, yyyy"; }
+        return "MMM d, yyyy";
+    }
+
+    public static fn timePattern(int style) -> str {
+        if (style == DateFormat.SHORT) { return "h:mm a"; }
+        if (style == DateFormat.MEDIUM) { return "h:mm:ss a"; }
+        return "h:mm:ss a z";
+    }
+
+    public static fn getDateInstance() -> SimpleDateFormat {
+        return new SimpleDateFormat(DateFormat.datePattern(DateFormat.DEFAULT));
+    }
+
+    public static fn getDateInstance(int style) -> SimpleDateFormat {
+        SimpleDateFormat result = new SimpleDateFormat(DateFormat.datePattern(style));
+        result->setStyles(style, DateFormat.DEFAULT);
+        return result;
+    }
+
+    public static fn getDateTimeInstance() -> SimpleDateFormat {
+        str pattern = DateFormat.datePattern(DateFormat.DEFAULT) + " "
+            + DateFormat.timePattern(DateFormat.DEFAULT);
+        return new SimpleDateFormat(pattern);
+    }
+
+    public static fn getDateTimeInstance(int dateStyle, int timeStyle) -> SimpleDateFormat {
+        str pattern = DateFormat.datePattern(dateStyle) + " "
+            + DateFormat.timePattern(timeStyle);
+        SimpleDateFormat result = new SimpleDateFormat(pattern);
+        result->setStyles(dateStyle, timeStyle);
+        return result;
+    }
+}

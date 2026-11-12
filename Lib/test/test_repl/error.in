@@ -1,0 +1,6 @@
+undefined_name
+1 + 1
+fn boom() -> int { throw "kaboom" as ValueError; }
+boom()
+2 + 2
+:quit

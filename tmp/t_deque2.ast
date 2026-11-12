@@ -1,0 +1,3 @@
+import aster.util.Deque;
+Deque<int>* d = new Deque<int>();
+println(d.size());

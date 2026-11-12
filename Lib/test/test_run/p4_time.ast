@@ -1,0 +1,257 @@
+import System.stdout.*;
+import aster.time.Instant;
+import aster.time.Duration;
+import aster.time.Period;
+import aster.time.DayOfWeek;
+from aster.time.DayOfWeek import dayOfWeekValue;
+from aster.time.DayOfWeek import dayOfWeekOf;
+from aster.time.DayOfWeek import dayOfWeekPlus;
+from aster.time.DayOfWeek import dayOfWeekMinus;
+import aster.time.Month;
+from aster.time.Month import monthValue;
+from aster.time.Month import monthOf;
+from aster.time.Month import monthLength;
+from aster.time.Month import monthFirstDayOfYear;
+from aster.time.Month import monthPlus;
+import aster.time.LocalDate;
+import aster.time.LocalTime;
+import aster.time.LocalDateTime;
+import aster.time.Year;
+import aster.time.YearMonth;
+import aster.time.MonthDay;
+import aster.time.ZoneOffset;
+import aster.time.ZoneId;
+import aster.time.DateTimeParseException;
+import aster.time.format.DateTimeFormatter;
+
+/* ---------- Instant ---------- */
+println("Instant");
+Instant epoch = Instant.parse("1970-01-01T00:00:00Z");
+println(epoch.toString());
+println(epoch.getEpochSecond());
+println(epoch.getNano());
+println(Instant.parse("2024-02-29T12:30:45Z").toString());
+println(Instant.parse("2024-02-29T12:30:45.123Z").toString());
+println(Instant.ofEpochSecond(1700000000).toString());
+println(Instant.ofEpochMilli(1500).toString());
+println(Instant.ofEpochSecond(1, 500000000).toEpochMilli());
+println(epoch.plusSeconds(90).toString());
+println(epoch.minusMillis(500).toString());
+println(epoch.isBefore(Instant.ofEpochSecond(1)));
+println(epoch.isAfter(Instant.ofEpochSecond(1)));
+println(epoch.compareTo(Instant.ofEpochSecond(1)));
+println(epoch.equals(Instant.ofEpochSecond(0)));
+println(epoch.hashCode() == Instant.ofEpochSecond(0).hashCode());
+println(Instant.parse("1969-12-31T23:59:59Z").getEpochSecond());
+println(Instant.now().getEpochSecond() > 1600000000);
+
+/* ---------- Duration ---------- */
+println("Duration");
+Duration halfHour = Duration.parse("PT1H30M");
+println(halfHour.toString());
+println(halfHour.getSeconds());
+println(halfHour.getNano());
+println(Duration.ofMillis(1500).toString());
+println(Duration.ofMillis(1500).toMillis());
+println(Duration.ofSeconds(3661).toMinutes());
+println(Duration.between(Instant.ofEpochSecond(100), Instant.ofEpochSecond(250)).toString());
+println(halfHour.plusMinutes(30).toString());
+println(halfHour.minusSeconds(1800).toString());
+println(Duration.ofNanos(1234567890).toString());
+println(Duration.parse("P1DT2H").toHours());
+println(Duration.ofSeconds(5).isNegative());
+println(Duration.ofSeconds(-5).isNegative());
+println(Duration.ofSeconds(0).isZero());
+println(Duration.ofSeconds(5).compareTo(Duration.ofSeconds(6)));
+println(Duration.parse("-PT0.5S").getSeconds());
+println(Duration.parse("-PT0.5S").getNano());
+
+/* ---------- Period ---------- */
+println("Period");
+Period period = Period.parse("P1Y2M3D");
+println(period.toString());
+println(period.getYears());
+println(period.getMonths());
+println(period.getDays());
+println(period.toTotalMonths());
+println(Period.ofWeeks(3).toString());
+println(Period.of(0, 0, 0).toString());
+println(period.plusMonths(10).toString());
+println(period.minusYears(1).toString());
+println(Period.parse("-P1Y").getYears());
+println(Period.ofDays(10).isNegative());
+println(period.equals(Period.of(1, 2, 3)));
+
+/* ---------- DayOfWeek / Month ---------- */
+println("DayOfWeek");
+println(DayOfWeek.MONDAY.name);
+println(dayOfWeekValue(DayOfWeek.SUNDAY));
+println(dayOfWeekOf(3).name);
+println(dayOfWeekPlus(DayOfWeek.SATURDAY, 2).name);
+println(dayOfWeekMinus(DayOfWeek.MONDAY, 1).name);
+println("Month");
+println(monthValue(Month.FEBRUARY));
+println(monthOf(12).name);
+println(monthLength(Month.FEBRUARY, true));
+println(monthLength(Month.FEBRUARY, false));
+println(monthFirstDayOfYear(Month.MARCH, false));
+println(monthFirstDayOfYear(Month.MARCH, true));
+println(monthPlus(Month.NOVEMBER, 3).name);
+
+/* ---------- LocalDate ---------- */
+println("LocalDate");
+LocalDate leap = LocalDate.of(2024, 2, 29);
+println(leap.toString());
+println(leap.isLeapYear());
+println(LocalDate.of(1900, 1, 1).isLeapYear());
+println(LocalDate.of(2000, 1, 1).isLeapYear());
+println(leap.plusDays(1).toString());
+println(leap.plusDays(365).toString());
+println(leap.plusMonths(1).toString());
+println(LocalDate.of(2024, 1, 31).plusMonths(1).toString());
+println(leap.plusYears(1).toString());
+println(LocalDate.of(2023, 12, 31).plusDays(1).toString());
+println(LocalDate.of(2024, 3, 1).minusDays(1).toString());
+println(leap.toEpochDay());
+println(LocalDate.ofEpochDay(19782).toString());
+println(LocalDate.ofEpochDay(0).toString());
+println(LocalDate.of(1969, 12, 31).toEpochDay());
+println(LocalDate.of(2000, 2, 29).getDayOfYear());
+println(leap.getDayOfWeek().name);
+println(LocalDate.parse("2024-07-04").getMonth().name);
+println(leap.lengthOfMonth());
+println(leap.lengthOfYear());
+println(leap.withYear(2025).toString());
+println(LocalDate.of(2024, 1, 31).withMonth(2).toString());
+println(leap.withDayOfMonth(15).toString());
+println(LocalDate.of(2024, 1, 1).isBefore(leap));
+println(LocalDate.of(2024, 1, 1).isAfter(leap));
+println(leap.compareTo(LocalDate.of(2024, 3, 1)));
+println(leap.atStartOfDay().toString());
+println(leap.atTime(LocalTime.of(6, 30)).toString());
+println(LocalDate.now().getYear() > 2000);
+
+/* ---------- LocalTime ---------- */
+println("LocalTime");
+LocalTime time = LocalTime.parse("13:05:09");
+println(time.toString());
+println(time.getHour());
+println(time.getMinute());
+println(time.getSecond());
+println(time.toSecondOfDay());
+println(time.toNanoOfDay());
+println(time.plusHours(12).toString());
+println(time.plusMinutes(56).toString());
+println(time.minusSeconds(10).toString());
+println(time.plusNanos(1500000000).toString());
+println(LocalTime.of(23, 59, 59).plusSeconds(1).toString());
+println(LocalTime.parse("12:30:45.123").getNano());
+println(LocalTime.parse("12:30:45.123").toString());
+println(LocalTime.ofSecondOfDay(3661).toString());
+println(LocalTime.ofNanoOfDay(1000000000).toString());
+println(time.isBefore(LocalTime.of(14, 0)));
+println(time.compareTo(LocalTime.of(14, 0)));
+println(LocalTime.now().getHour() < 24);
+
+/* ---------- LocalDateTime ---------- */
+println("LocalDateTime");
+LocalDateTime dateTime = LocalDateTime.parse("2024-02-29T12:30:45");
+println(dateTime.toString());
+println(dateTime.getYear());
+println(dateTime.getMonthValue());
+println(dateTime.getDayOfWeek().name);
+println(dateTime.getHour());
+println(dateTime.getMinute());
+println(dateTime.getSecond());
+println(dateTime.toLocalDate().toString());
+println(dateTime.toLocalTime().toString());
+println(dateTime.plusHours(12).toString());
+println(dateTime.minusMinutes(45).toString());
+println(dateTime.plusDays(1).toString());
+println(dateTime.plusMonths(12).toString());
+println(dateTime.isBefore(dateTime.plusSeconds(1)));
+println(dateTime.compareTo(dateTime.plusSeconds(1)));
+println(LocalDateTime.of(2024, 2, 29, 0, 0).toString());
+println(LocalDateTime.parse("2024-02-29T12:30:45.5").toString());
+println(LocalDateTime.now().getYear() > 2000);
+
+/* ---------- Year / YearMonth / MonthDay ---------- */
+println("Year");
+Year year = Year.parse("2024");
+println(year.toString());
+println(year.isLeap());
+println(year.length());
+println(year.atDay(60).toString());
+println(year.atMonth(2).toString());
+println(year.atMonth(Month.FEBRUARY).toString());
+println(year.atMonthDay(MonthDay.parse("--02-29")).toString());
+println(year.plusYears(1).toString());
+println(year.compareTo(Year.of(2023)));
+println("YearMonth");
+YearMonth yearMonth = YearMonth.parse("2024-02");
+println(yearMonth.toString());
+println(yearMonth.lengthOfMonth());
+println(yearMonth.atDay(29).toString());
+println(yearMonth.atEndOfMonth().toString());
+println(yearMonth.plusMonths(1).toString());
+println(yearMonth.minusMonths(14).toString());
+println(YearMonth.of(2024, 12).plusMonths(1).toString());
+println(YearMonth.of(2024, Month.DECEMBER).plusMonths(1).toString());
+println(yearMonth.getMonth().name);
+println(yearMonth.isBefore(YearMonth.of(2024, 3)));
+println("MonthDay");
+MonthDay monthDay = MonthDay.parse("--02-29");
+println(monthDay.toString());
+println(monthDay.getMonthValue());
+println(monthDay.getDayOfMonth());
+println(monthDay.atYear(2024).toString());
+println(monthDay.isValidYear(2023));
+println(MonthDay.of(Month.DECEMBER, 25).toString());
+
+/* ---------- ZoneOffset / ZoneId ---------- */
+println("Zone");
+ZoneOffset seoul = ZoneOffset.of("+09:00");
+println(seoul.getId());
+println(seoul.getTotalSeconds());
+println(ZoneOffset.of("-05:30").toString());
+println(ZoneOffset.ofHours(2).toString());
+println(ZoneOffset.of("Z").toString());
+println(seoul.compareTo(ZoneOffset.ofHours(2)));
+println(seoul.equals(ZoneOffset.of("+0900")));
+ZoneId zone = ZoneId.of("+09:00");
+println(zone.getId());
+println(zone.getTotalSeconds());
+println(ZoneId.of("UTC").getId());
+println(ZoneId.systemDefault().getId().length() > 0);
+
+/* ---------- DateTimeFormatter ---------- */
+println("Formatter");
+DateTimeFormatter dateFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd");
+println(dateFormatter.format(LocalDate.of(2024, 2, 29)));
+println(dateFormatter.parseDate("2024-07-04").toString());
+DateTimeFormatter timeFormatter = DateTimeFormatter.ofPattern("HH:mm:ss");
+println(timeFormatter.format(LocalTime.of(9, 5, 7)));
+println(timeFormatter.parseTime("23:59:59").toString());
+DateTimeFormatter dateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss");
+println(dateTimeFormatter.format(LocalDateTime.of(2024, 2, 29, 12, 30, 45)));
+println(dateTimeFormatter.parseDateTime("2024-02-29T12:30:45").toString());
+DateTimeFormatter textFormatter = DateTimeFormatter.ofPattern("EEEE, MMMM d, yyyy");
+println(textFormatter.format(LocalDate.of(2024, 2, 29)));
+println(textFormatter.parseDate("Thursday, February 29, 2024").toString());
+DateTimeFormatter slashFormatter = DateTimeFormatter.ofPattern("dd/MM/yyyy");
+println(slashFormatter.format(LocalDate.of(2024, 1, 5)));
+println(slashFormatter.parseDate("05/01/2024").toString());
+
+/* ---------- 오류 ---------- */
+try {
+    LocalDate.parse("not-a-date");
+    println("no error");
+} catch (DateTimeParseException e) {
+    println(e.name);
+}
+try {
+    DateTimeFormatter.ofPattern("yyyy-MM-dd").parseDate("2024-13-01");
+    println("no error");
+} catch (DateTimeParseException e) {
+    println(e.name);
+}

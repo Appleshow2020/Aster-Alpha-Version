@@ -1,0 +1,89 @@
+import System.stdout.*;
+
+enum Shape {
+    Circle(float r),
+    Rect(float w, float h),
+    Empty
+}
+
+fn describe(Shape s) -> str {
+    switch (s) {
+        case Shape.Circle(0.0) {
+            return "point";
+        }
+        case Shape.Circle(r) {
+            return "circle " + str(r);
+        }
+        case Shape.Rect(w, h) {
+            return "rect " + str(w) + "x" + str(h);
+        }
+        default {
+            return "empty";
+        }
+    }
+}
+
+println(describe(Shape.Circle(0.0)));
+println(describe(Shape.Circle(2.5)));
+println(describe(Shape.Rect(2.0, 5.0)));
+println(describe(Shape.Empty));
+
+fn grade(int score) -> str {
+    switch (score) {
+        case 100 {
+            return "perfect";
+        }
+        case 0 {
+            return "zero";
+        }
+        default {
+            return "other";
+        }
+    }
+    return "unreachable";
+}
+
+println(grade(100));
+println(grade(0));
+println(grade(55));
+
+fn classify(int | str value) -> str {
+    switch (value) {
+        case 7 {
+            return "seven";
+        }
+        case "hi" {
+            return "greeting";
+        }
+        case other {
+            return "bound " + str(typeName(other)) + ":" + str(other);
+        }
+    }
+}
+
+println(classify(7));
+println(classify("hi"));
+println(classify(9));
+
+fn countdown() -> int {
+    int total = 0;
+    int i = 0;
+    while (true) {
+        i = i + 1;
+        switch (i) {
+            case 2 {
+                continue;
+            }
+            case 4 {
+                break;
+            }
+            default {
+                total = total + i;
+            }
+        }
+        total = total + 100;
+    }
+    return total;
+}
+
+println(countdown());

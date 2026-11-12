@@ -1,0 +1,16 @@
+class Node {
+    public int value;
+    public fn get() -> int { return self->value; }
+}
+
+fn maybe() -> Node? { return null; }
+
+fn unsafe_access() -> int {
+    Node? node = maybe();
+    return node->get();
+}
+
+fn unsafe_assign() -> int {
+    Node? node = maybe();
+    return node->value;
+}

@@ -1,0 +1,5 @@
+/* aster.io.Closeable: Java Closeable contract. */
+
+export interface Closeable {
+    fn close() -> void;
+}

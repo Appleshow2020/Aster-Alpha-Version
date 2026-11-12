@@ -1,0 +1,16 @@
+import System.stdout.*;
+
+list<int> xs = [5, 3, 9, 1];
+xs.sort();
+println(xs);
+
+list<str> words = ["ccc", "a", "bb", "dddd"];
+words.sort(s -> int => 0 - s.length());
+println(words);
+
+words.sort(s -> str => s.charAt(0));
+println(words);
+
+list<int> nums = [10, 2, 33, 4];
+nums.sort(n -> int => n % 10);
+println(nums);

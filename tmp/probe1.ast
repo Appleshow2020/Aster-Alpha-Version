@@ -1,0 +1,12 @@
+import System.stdout.*;
+
+class Foo {
+    public int v;
+    constructor(int x) { self->v = x; }
+    public static fn zero() -> Foo { return new Foo(0); }
+    public static Foo ZERO = Foo.zero();
+}
+
+println(Foo.ZERO.v);
+export Foo ZERO = Foo.zero();
+println(ZERO.v);
