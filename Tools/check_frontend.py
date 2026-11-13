@@ -55,7 +55,7 @@ def find_binary() -> Path:
         candidate = ROOT / name
         if candidate.is_file():
             return candidate
-    sys.exit("aster 바이너리가 없습니다. 먼저 `make`를 실행하세요.")
+    sys.exit("Aster binary not found. Run `make` first.")
 
 
 def split_chunks(text: str) -> list[str]:
@@ -85,7 +85,7 @@ def run_binary(binary: Path, flag: str | None, source: str) -> subprocess.Comple
 def short_error(result: subprocess.CompletedProcess) -> str:
     lines = result.stderr.strip().splitlines()
     if not lines:
-        return "(출력 없음)"
+        return "(no output)"
     return " / ".join(line.strip() for line in lines[:3])
 
 
@@ -121,7 +121,7 @@ def check_invalid(binary: Path, verbose: bool) -> tuple[int, list[Failure]]:
 
         result = run_binary(binary, "--ast", source)
         if result.returncode == 0:
-            failures.append(Failure("ACCEPTED (should fail)", filename, index, "파싱이 성공했습니다", chunk))
+            failures.append(Failure("ACCEPTED (should fail)", filename, index, "Parsing succeeded", chunk))
             continue
 
         if verbose:
@@ -135,14 +135,14 @@ def main() -> int:
         if hasattr(stream, "reconfigure"):
             stream.reconfigure(encoding="utf-8")
 
-    parser = argparse.ArgumentParser(description="Aster C 프런트 엔드 검증")
-    parser.add_argument("--seed", type=int, default=None, help="무작위 검증 시드 (기본: 매번 새로 뽑음)")
-    parser.add_argument("--no-random", action="store_true", help="무작위 검증을 생략한다")
-    parser.add_argument("-v", "--verbose", action="store_true", help="통과한 조각과 실행 환경도 출력한다")
+    parser = argparse.ArgumentParser(description="Aster C frontend validation")
+    parser.add_argument("--seed", type=int, default=None, help="Random validation seed (default: newly generated each run)")
+    parser.add_argument("--no-random", action="store_true", help="Skip random validation")
+    parser.add_argument("-v", "--verbose", action="store_true", help="Also print passing fragments and the execution environment")
     args = parser.parse_args()
 
     if not VALID_DIR.is_dir() or not INVALID_DIR.is_dir():
-        sys.exit(f"테스트 코퍼스를 찾을 수 없습니다: {VALID_DIR.parent}")
+        sys.exit(f"Test corpus not found: {VALID_DIR.parent}")
 
     binary = find_binary()
     if args.verbose:
@@ -163,14 +163,14 @@ def main() -> int:
             property_only=True,
             seed=seed,
             verbose=args.verbose,
-            label="프런트엔드 무작위",
+            label="Frontend random",
             repro="python3 Tools/check_frontend.py",
         )
         negative_failed = random_suite.run_negative(
             binary,
             seed=seed,
             verbose=args.verbose,
-            label="프런트엔드 부정",
+            label="Frontend negative",
             repro="python3 Tools/check_frontend.py",
         )
 
@@ -180,15 +180,15 @@ def main() -> int:
 
     valid_ok = valid_total - len(valid_failures)
     invalid_ok = invalid_total - len(invalid_failures)
-    print(f"valid:   {valid_ok}/{valid_total} 파싱 성공")
-    print(f"invalid: {invalid_ok}/{invalid_total} 거부됨")
+    print(f"valid:   {valid_ok}/{valid_total} parsed successfully")
+    print(f"invalid: {invalid_ok}/{invalid_total} rejected")
 
     failures = valid_failures + invalid_failures
     if failures or random_failed or negative_failed:
         if failures:
-            print(f"\n실패 {len(failures)}건")
+            print(f"\n{len(failures)} failure(s)")
         return 1
-    print("\n모든 검증 통과")
+    print("\nAll validations passed")
     return 0
 
 

@@ -72,7 +72,7 @@ regen:
 install: $(BIN)
 	mkdir -p "$(DESTDIR)$(BINDIR)"
 	cp $(BIN) "$(DESTDIR)$(BINDIR)/aster$(EXE)"
-	@echo "설치 완료: $(DESTDIR)$(BINDIR)/aster$(EXE)  (PATH에 $(BINDIR)을 추가하세요)"
+	@echo "Install Complete: $(DESTDIR)$(BINDIR)/aster$(EXE)  (Add $(BINDIR) in PATH.)"
 
 clean:
 	rm -f aster aster.exe

@@ -19,6 +19,7 @@ import shutil
 import subprocess
 import tempfile
 import time
+import string
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -26,12 +27,32 @@ ROOT = Path(__file__).resolve().parent.parent
 BUILD_TMP = ROOT / "build" / "tmp"
 FAILURE_DIR = ROOT / "build" / "test-failures"
 
-WORDS = [
-    "alpha", "beta", "gamma", "delta", "epsilon", "aster", "orbit",
-    "lumen", "nova", "pixel", "quartz", "rave", "solar", "tango", "한글",
-]
-KEYS = ["name", "role", "kind", "size", "color", "tag", "mode", "level"]
+def default_seed() -> int:
+    env = os.environ.get("ASTER_TEST_SEED")
+    if env:
+        try:
+            return int(env)
+        except ValueError:
+            pass
+    return random.SystemRandom().randrange(2 ** 32)
 
+class _RandomNames:
+    def __init__(self, seed: int | None = None) -> None:
+        self.seed = default_seed() if seed is None else seed
+
+    def __call__(self, wordsorkeys: bool) -> list[str]:
+        rng = random.Random(self.seed * 2 + int(wordsorkeys))
+        length_range = tuple(sorted((rng.randint(10, 100), rng.randint(10, 100))))
+        word_range = tuple(sorted((rng.randint(5, 45), rng.randint(5, 45))))
+        return list(dict.fromkeys(
+            "".join(rng.choices(string.ascii_letters, k=rng.randint(*word_range)))
+            for _ in range(rng.randint(*length_range))
+        ))
+
+
+_random_names = _RandomNames()
+WORDS = _random_names(True)
+KEYS = _random_names(False)
 
 # ------------------------------------------------------------------ 값 표현
 
@@ -65,7 +86,7 @@ def fmt(value, top: bool = False) -> str:
         return "{" + ", ".join(
             f"{fmt(key)}: {fmt(item)}" for key, item in value.items()
         ) + "}"
-    raise TypeError(f"모델에 없는 값: {value!r}")
+    raise TypeError(f"value not in model: {value!r}")
 
 
 def trunc_div(a: int, b: int) -> int:
@@ -1362,14 +1383,6 @@ EXTENDED_CATEGORIES = [
 # ------------------------------------------------------------------ 실행
 
 
-def default_seed() -> int:
-    env = os.environ.get("ASTER_TEST_SEED")
-    if env:
-        try:
-            return int(env)
-        except ValueError:
-            pass
-    return random.SystemRandom().randrange(2 ** 32)
 
 
 def generate_cases(seed: int, count: int, categories=None) -> list[Case]:
@@ -1432,42 +1445,42 @@ def check_case(binary: Path, case: Case, directory: Path, property_only: bool) -
 
     parsed = _run(binary, ["--ast", str(main)])
     if parsed.returncode != 0:
-        problems.append(f"--ast 실패: {parsed.stderr.strip()[:400]}")
+        problems.append(f"--ast failed: {parsed.stderr.strip()[:400]}")
 
     formatted = _run(binary, ["--format", str(main)])
     if formatted.returncode != 0:
-        problems.append(f"--format 실패: {formatted.stderr.strip()[:400]}")
+        problems.append(f"--format failed: {formatted.stderr.strip()[:400]}")
     else:
         again = _run(binary, ["--format", "-"], formatted.stdout)
         if again.returncode != 0:
-            problems.append(f"--format - 실패: {again.stderr.strip()[:400]}")
+            problems.append(f"--format - failed: {again.stderr.strip()[:400]}")
         elif again.stdout != formatted.stdout:
-            problems.append("포매터 출력이 고정점이 아닙니다")
+            problems.append("formatter output is not a fixed point")
 
     if property_only:
         return problems
 
     result = _run(binary, [str(main)])
     if result.returncode != 0:
-        problems.append(f"실행 실패(exit {result.returncode}): {result.stderr.strip()[:400]}")
+        problems.append(f"run failed (exit {result.returncode}): {result.stderr.strip()[:400]}")
     elif result.stdout != case.expected:
         problems.append(
-            "실행 출력 불일치: " + _describe_output(case.expected, result.stdout)
+            "run output mismatch: " + _describe_output(case.expected, result.stdout)
         )
 
     checked = _run(binary, ["--check", str(main)])
     if checked.returncode != 0:
-        problems.append(f"--check 실패: {checked.stderr.strip()[:400]}")
+        problems.append(f"--check failed: {checked.stderr.strip()[:400]}")
 
     if formatted.returncode == 0:
         fmt_path = directory / "formatted.ast"
         fmt_path.write_text(formatted.stdout, encoding="utf-8")
         rerun = _run(binary, [str(fmt_path)])
         if rerun.returncode != 0:
-            problems.append(f"포맷본 실행 실패: {rerun.stderr.strip()[:400]}")
+            problems.append(f"formatted program failed to run: {rerun.stderr.strip()[:400]}")
         elif rerun.stdout != case.expected:
             problems.append(
-                "포맷본 실행 출력 불일치: " + _describe_output(case.expected, rerun.stdout)
+                "formatted program output mismatch: " + _describe_output(case.expected, rerun.stdout)
             )
 
     return problems
@@ -1478,8 +1491,8 @@ def _describe_output(expected: str, got: str) -> str:
     got_lines = got.splitlines()
     for index, (want, actual) in enumerate(zip(want_lines, got_lines)):
         if want != actual:
-            return f"{index + 1}행 got={actual!r} want={want!r}"
-    return f"줄 수 got={len(got_lines)} want={len(want_lines)}"
+            return f"line {index + 1}: got={actual!r} want={want!r}"
+    return f"line count: got={len(got_lines)} want={len(want_lines)}"
 
 
 def run_cases(binary: Path, cases: list[Case], seed: int, property_only: bool = False,
@@ -1496,7 +1509,7 @@ def run_cases(binary: Path, cases: list[Case], seed: int, property_only: bool = 
             if problems:
                 failures.append((case.name, problems))
                 saved = _save_failure(case, problems, seed)
-                print(f"FAIL: {case.name} (보존: {saved.relative_to(ROOT)})")
+                print(f"FAIL: {case.name} (saved: {saved.relative_to(ROOT)})")
                 for problem in problems:
                     print(f"    {problem}")
             else:
@@ -1505,7 +1518,7 @@ def run_cases(binary: Path, cases: list[Case], seed: int, property_only: bool = 
                     print(f"  ok random {case.name}")
     finally:
         if keep:
-            print(f"무작위 케이스 보존: {workdir.relative_to(ROOT)}")
+            print(f"random cases saved: {workdir.relative_to(ROOT)}")
         else:
             shutil.rmtree(workdir, ignore_errors=True)
     return passed, failures
@@ -1513,15 +1526,15 @@ def run_cases(binary: Path, cases: list[Case], seed: int, property_only: bool = 
 
 def run_random(binary: Path, count: int, seed: int | None = None, categories=None,
                property_only: bool = False, verbose: bool = False,
-               keep: bool = False, label: str = "무작위",
+               keep: bool = False, label: str = "Random",
                repro: str = "python3 Tools/check_random.py") -> int:
     seed = default_seed() if seed is None else seed
     cases = generate_cases(seed, count, categories)
     passed, failures = run_cases(binary, cases, seed, property_only, verbose, keep)
     print()
-    print(f"{label}: {passed}/{len(cases)} 통과 (seed={seed})")
+    print(f"{label}: {passed}/{len(cases)} passed (seed={seed})")
     if failures:
-        print(f"재현: {repro} --seed {seed}")
+        print(f"Reproduce: {repro} --seed {seed}")
         return 1
     return 0
 
@@ -1788,15 +1801,15 @@ def check_negative(binary: Path, case: NegativeCase, directory: Path) -> list[st
     result = _run(binary, ["--check", str(main)])
     problems: list[str] = []
     if result.returncode == 0:
-        problems.append("컴파일이 성공했습니다 (오류를 기대)")
+        problems.append("compilation succeeded (expected an error)")
     elif case.expect and case.expect not in result.stderr:
         detail = " / ".join(result.stderr.strip().splitlines()[:2])
-        problems.append(f"stderr에 {case.expect!r}가 없습니다: {detail}")
+        problems.append(f"missing {case.expect!r} in stderr: {detail}")
     return problems
 
 
 def run_negative(binary: Path, seed: int | None = None, verbose: bool = False,
-                 keep: bool = False, label: str = "부정 검증",
+                 keep: bool = False, label: str = "Negative validation",
                  repro: str = "python3 Tools/check_random.py") -> int:
     seed = default_seed() if seed is None else seed
     cases = negative_cases(seed)
@@ -1812,7 +1825,7 @@ def run_negative(binary: Path, seed: int | None = None, verbose: bool = False,
             if problems:
                 failed += 1
                 saved = _save_failure_files(case.name, case.files, problems, seed)
-                print(f"FAIL: {case.name} (보존: {saved.relative_to(ROOT)})")
+                print(f"FAIL: {case.name} (saved: {saved.relative_to(ROOT)})")
                 for problem in problems:
                     print(f"    {problem}")
             else:
@@ -1821,13 +1834,13 @@ def run_negative(binary: Path, seed: int | None = None, verbose: bool = False,
                     print(f"  ok negative {case.name}")
     finally:
         if keep:
-            print(f"부정 케이스 보존: {workdir.relative_to(ROOT)}")
+            print(f"negative cases saved: {workdir.relative_to(ROOT)}")
         else:
             shutil.rmtree(workdir, ignore_errors=True)
     print()
-    print(f"{label}: {passed}/{len(cases)} 거부됨 (seed={seed})")
+    print(f"{label}: {passed}/{len(cases)} rejected (seed={seed})")
     if failed:
-        print(f"재현: {repro} --seed {seed}")
+        print(f"Reproduce: {repro} --seed {seed}")
         return 1
     return 0
 
@@ -1860,9 +1873,9 @@ def run_repl_random(binary: Path, count: int, seed: int | None = None,
         elif verbose:
             print(f"  ok random repl_{index}")
     print()
-    print(f"REPL 무작위: {count - failures}/{count} 통과 (seed={seed})")
+    print(f"REPL random: {count - failures}/{count} passed (seed={seed})")
     if failures:
-        print(f"재현: {repro} --seed {seed}")
+        print(f"Reproduce: {repro} --seed {seed}")
         return 1
     return 0
 

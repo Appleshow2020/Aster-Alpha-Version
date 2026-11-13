@@ -36,7 +36,7 @@ def find_binary() -> Path:
         candidate = ROOT / name
         if candidate.is_file():
             return candidate
-    sys.exit("aster 바이너리가 없습니다. 먼저 `make`를 실행하세요.")
+    sys.exit("Aster binary not found. Run `make` first.")
 
 
 def run_program(binary: Path, path: Path, stdin_text: str | None) -> subprocess.CompletedProcess:
@@ -54,17 +54,17 @@ def first_difference(expected: str, got: str) -> str:
     got_lines = got.splitlines()
     for index, (want, actual) in enumerate(zip(want_lines, got_lines)):
         if want != actual:
-            return f"첫 차이 {index + 1}행: got={actual!r} want={want!r}"
+            return f"first difference at line {index + 1}: got={actual!r} want={want!r}"
     if len(want_lines) != len(got_lines):
-        return f"줄 수가 다름: got={len(got_lines)} want={len(want_lines)}"
-    return "차이 없음"
+        return f"line count differs: got={len(got_lines)} want={len(want_lines)}"
+    return "no difference"
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("-v", "--verbose", action="store_true")
-    parser.add_argument("--seed", type=int, default=None, help="무작위 검증 시드 (기본: 매번 새로 뽑음)")
-    parser.add_argument("--no-random", action="store_true", help="무작위 검증을 생략한다")
+    parser.add_argument("--seed", type=int, default=None, help="Random validation seed (default: newly generated each run)")
+    parser.add_argument("--no-random", action="store_true", help="Skip random validation")
     args = parser.parse_args()
 
     binary = find_binary()
@@ -72,7 +72,7 @@ def main() -> int:
         print(f"binary: {binary}")
 
     if not RUN_DIR.is_dir():
-        sys.exit(f"{RUN_DIR} 디렉터리가 없습니다")
+        sys.exit(f"directory not found: {RUN_DIR}")
 
     total = 0
     failures = []
@@ -89,13 +89,13 @@ def main() -> int:
 
         if expected_err is not None:
             if result.returncode == 0:
-                problems.append("실패해야 하는데 종료 코드가 0입니다")
+                problems.append("expected failure but exit code was 0")
             for line in expected_err.splitlines():
                 if line.strip() and line not in result.stderr:
-                    problems.append(f"stderr에 없음: {line!r}")
+                    problems.append(f"missing from stderr: {line!r}")
         else:
             if result.returncode != 0:
-                problems.append(f"종료 코드 {result.returncode}")
+                problems.append(f"exit code {result.returncode}")
                 detail = " / ".join(result.stderr.strip().splitlines()[:3])
                 if detail:
                     problems.append(detail)
@@ -114,7 +114,7 @@ def main() -> int:
             print(f"    {problem}")
 
     print()
-    print(f"실행: {total - len(failures)}/{total} 통과")
+    print(f"run: {total - len(failures)}/{total} passed")
 
     random_failed = 0
     if not args.no_random:
@@ -124,7 +124,7 @@ def main() -> int:
             count=6,
             seed=seed,
             verbose=args.verbose,
-            label="실행 무작위",
+            label="Runtime random",
             repro="python3 Tools/check_runtime.py",
         )
         # 예외/제너레이터/람다/구조체/컴프리헨션/null 문법을 매번 한 번씩 실행한다.
@@ -134,13 +134,13 @@ def main() -> int:
             categories=random_suite.EXTENDED_CATEGORIES,
             seed=seed,
             verbose=args.verbose,
-            label="확장 문법 무작위",
+            label="Extended syntax random",
             repro="python3 Tools/check_runtime.py",
         )
 
     if failures or random_failed:
         return 1
-    print("모든 실행 테스트 통과")
+    print("All runtime tests passed")
     return 0
 
 

@@ -35,7 +35,7 @@ def find_binary() -> Path:
         candidate = ROOT / name
         if candidate.is_file():
             return candidate
-    sys.exit("aster 바이너리가 없습니다. 먼저 `make`를 실행하세요.")
+    sys.exit("Aster binary not found. Run `make` first.")
 
 
 def main() -> int:
@@ -43,31 +43,31 @@ def main() -> int:
         if hasattr(stream, "reconfigure"):
             stream.reconfigure(encoding="utf-8")
 
-    parser = argparse.ArgumentParser(description="Aster 무작위 검증")
-    parser.add_argument("--seed", type=int, default=None, help="시드 (기본: 매번 새로 뽑음)")
-    parser.add_argument("--count", type=int, default=20, help="생성할 케이스 수 (기본 20)")
+    parser = argparse.ArgumentParser(description="Aster random validation")
+    parser.add_argument("--seed", type=int, default=None, help="Seed (default: newly generated each run)")
+    parser.add_argument("--count", type=int, default=20, help="Number of cases to generate (default: 20)")
     parser.add_argument(
         "--categories",
         default=None,
-        help="쉼표로 구분한 카테고리: " + ", ".join(random_suite.CATEGORY_ORDER),
+        help="Comma-separated categories: " + ", ".join(random_suite.CATEGORY_ORDER),
     )
     parser.add_argument("--property-only", action="store_true",
-                        help="파싱·포매팅 고정점만 검사한다")
+                        help="Check parsing and formatting fixed points only")
     parser.add_argument("--no-negative", action="store_true",
-                        help="컴파일러가 거부해야 하는 부정 케이스 검사를 생략한다")
-    parser.add_argument("--keep", action="store_true", help="생성한 케이스를 남긴다")
+                        help="Skip negative cases that the compiler should reject")
+    parser.add_argument("--keep", action="store_true", help="Keep generated cases")
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args()
 
     if args.count < 1:
-        sys.exit("--count는 1 이상이어야 합니다")
+        sys.exit("--count must be at least 1")
 
     categories = None
     if args.categories:
         categories = [item.strip() for item in args.categories.split(",") if item.strip()]
         unknown = [item for item in categories if item not in random_suite.CATEGORIES]
         if unknown:
-            sys.exit(f"알 수 없는 카테고리: {', '.join(unknown)}")
+            sys.exit(f"Unknown categories: {', '.join(unknown)}")
 
     binary = find_binary()
     seed = args.seed if args.seed is not None else random_suite.default_seed()
@@ -83,7 +83,7 @@ def main() -> int:
         property_only=args.property_only,
         verbose=args.verbose,
         keep=args.keep,
-        label="무작위 검증",
+        label="Random validation",
     )
 
     negative_failed = 0

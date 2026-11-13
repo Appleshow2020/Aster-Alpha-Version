@@ -50,7 +50,7 @@ def _tokens(text):
     while pos < len(text):
         m = _TOKEN.match(text, pos)
         if not m:
-            raise ValueError(f"ASDL 어휘 오류: {text[pos:pos + 20]!r}")
+            raise ValueError(f"ASDL lexical error: {text[pos:pos + 20]!r}")
         if m.group(1):
             out.append(m.group(1))
         pos = m.end()
@@ -67,14 +67,14 @@ class _Parser:
     def next(self):
         tok = self.peek()
         if tok is None:
-            raise ValueError("ASDL이 예상보다 일찍 끝났습니다")
+            raise ValueError("ASDL ended unexpectedly")
         self.i += 1
         return tok
 
     def expect(self, tok):
         got = self.next()
         if got != tok:
-            raise ValueError(f"ASDL: {tok!r}가 필요한데 {got!r}가 나왔습니다")
+            raise ValueError(f"ASDL: expected {tok!r} but got {got!r}")
 
     def module(self):
         self.expect("module")
@@ -84,7 +84,7 @@ class _Parser:
         while self.peek() != "}":
             dname = self.next()
             if dname in dfns:
-                raise ValueError(f"ASDL: {dname!r}가 두 번 정의되었습니다")
+                raise ValueError(f"ASDL: {dname!r} is defined twice")
             self.expect("=")
             dfns[dname] = self.definition(dname)
         self.expect("}")
@@ -137,5 +137,5 @@ def parse_asdl(text):
         fields = d.fields if isinstance(d, Product) else [f for c in d.constructors for f in c.fields]
         for f in fields + d.attributes:
             if f.type not in BUILTIN_TYPES and f.type not in dfns:
-                raise ValueError(f"ASDL: {d.name}.{f.name}의 타입 {f.type!r}가 정의되어 있지 않습니다")
+                raise ValueError(f"ASDL: {d.name}.{f.name} has undefined type {f.type!r}")
     return name, dfns

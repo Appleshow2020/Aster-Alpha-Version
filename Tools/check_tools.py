@@ -35,7 +35,7 @@ def find_binary() -> Path:
         candidate = ROOT / name
         if candidate.is_file():
             return candidate
-    sys.exit("aster 바이너리가 없습니다. 먼저 `make`를 실행하세요.")
+    sys.exit("Aster binary not found. Run `make` first.")
 
 
 def run(binary: Path, args: list[str], stdin_text: str | None = None) -> subprocess.CompletedProcess:
@@ -60,20 +60,20 @@ def check_format(binary: Path, verbose: bool) -> list[tuple[str, list[str]]]:
         total += 1
         expected_path = path.with_suffix(".fmt")
         if not expected_path.is_file():
-            failures.append((path.name, [f"{expected_path.name}이 없습니다"]))
+            failures.append((path.name, [f"missing {expected_path.name}"]))
             continue
         expected = read(expected_path)
         result = run(binary, ["--format", str(path)])
         problems = []
         if result.returncode != 0:
-            problems.append(f"종료 코드 {result.returncode}: {result.stderr.strip()[:200]}")
+            problems.append(f"exit code {result.returncode}: {result.stderr.strip()[:200]}")
         if result.stdout != expected:
-            problems.append("--format 결과가 .fmt와 다릅니다")
+            problems.append("--format output differs from .fmt")
         again = run(binary, ["--format", "-"], expected)
         if again.returncode != 0:
-            problems.append(f"고정점 재포맷 실패: {again.stderr.strip()[:200]}")
+            problems.append(f"fixed-point reformat failed: {again.stderr.strip()[:200]}")
         elif again.stdout != expected:
-            problems.append("포매팅이 고정점이 아닙니다 (두 번째 결과가 다름)")
+            problems.append("formatting is not a fixed point (second result differs)")
         if problems:
             failures.append((path.name, problems))
         elif verbose:
@@ -90,20 +90,20 @@ def check_lint(binary: Path, verbose: bool) -> list[tuple[str, list[str]]]:
         total += 1
         expected_path = path.with_suffix(".lint")
         if not expected_path.is_file():
-            failures.append((path.name, [f"{expected_path.name}이 없습니다"]))
+            failures.append((path.name, [f"missing {expected_path.name}"]))
             continue
         expected_lines = [line for line in read(expected_path).splitlines() if line.strip()]
         result = run(binary, ["--lint", str(path)])
         problems = []
         got_lines = [line for line in result.stderr.splitlines() if "warning:" in line]
         if len(got_lines) != len(expected_lines):
-            problems.append(f"경고 개수: got={len(got_lines)} want={len(expected_lines)}")
+            problems.append(f"warning count: got={len(got_lines)} want={len(expected_lines)}")
         for line in expected_lines:
             if line not in result.stderr:
-                problems.append(f"stderr에 없음: {line!r}")
+                problems.append(f"missing from stderr: {line!r}")
         want_code = 1 if expected_lines else 0
         if result.returncode != want_code:
-            problems.append(f"종료 코드: got={result.returncode} want={want_code}")
+            problems.append(f"exit code: got={result.returncode} want={want_code}")
         if problems:
             failures.append((path.name, problems))
         elif verbose:
@@ -122,19 +122,19 @@ def check_debug(binary: Path, verbose: bool) -> list[tuple[str, list[str]]]:
         out_path = path.with_suffix(".out")
         err_path = path.with_suffix(".err")
         if not in_path.is_file():
-            failures.append((path.name, [f"{in_path.name}이 없습니다"]))
+            failures.append((path.name, [f"missing {in_path.name}"]))
             continue
         expected_out = read(out_path) if out_path.is_file() else ""
         expected_err = read(err_path) if err_path.is_file() else ""
         result = run(binary, ["--debug", str(path)], read(in_path))
         problems = []
         if result.returncode != 0:
-            problems.append(f"종료 코드 {result.returncode}")
+            problems.append(f"exit code {result.returncode}")
         if expected_out and result.stdout != expected_out:
-            problems.append(f"stdout 불일치: got={result.stdout!r} want={expected_out!r}")
+            problems.append(f"stdout mismatch: got={result.stdout!r} want={expected_out!r}")
         for line in expected_err.splitlines():
             if line.strip() and line not in result.stderr:
-                problems.append(f"stderr에 없음: {line!r}")
+                problems.append(f"missing from stderr: {line!r}")
         if problems:
             failures.append((path.name, problems))
         elif verbose:
@@ -146,8 +146,8 @@ def check_debug(binary: Path, verbose: bool) -> list[tuple[str, list[str]]]:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("-v", "--verbose", action="store_true")
-    parser.add_argument("--seed", type=int, default=None, help="무작위 검증 시드 (기본: 매번 새로 뽑음)")
-    parser.add_argument("--no-random", action="store_true", help="무작위 검증을 생략한다")
+    parser.add_argument("--seed", type=int, default=None, help="Random validation seed (default: newly generated each run)")
+    parser.add_argument("--no-random", action="store_true", help="Skip random validation")
     args = parser.parse_args()
 
     binary = find_binary()
@@ -167,7 +167,7 @@ def main() -> int:
             print(f"    {problem}")
 
     print()
-    print(f"도구 테스트: {total - len(failures)}/{total} 통과")
+    print(f"tool tests: {total - len(failures)}/{total} passed")
 
     random_failed = 0
     if not args.no_random:
@@ -178,13 +178,13 @@ def main() -> int:
             seed=seed,
             property_only=True,
             verbose=args.verbose,
-            label="도구 무작위",
+            label="Tool random",
             repro="python3 Tools/check_tools.py",
         )
 
     if failures or random_failed:
         return 1
-    print("모든 도구 테스트 통과")
+    print("All tool tests passed")
     return 0
 
 
