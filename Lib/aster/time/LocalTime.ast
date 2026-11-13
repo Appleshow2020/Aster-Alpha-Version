@@ -261,8 +261,10 @@ export class LocalTime {
     }
 
     public fn toString() -> str {
-        str out = _pad2(self->hourValue) + ":" + _pad2(self->minuteValue)
-                + ":" + _pad2(self->secondValue);
+        str out = _pad2(self->hourValue) + ":" + _pad2(self->minuteValue);
+        if (self->secondValue != 0 or self->nanoValue != 0) {
+            out = out + ":" + _pad2(self->secondValue);
+        }
         if (self->nanoValue != 0) {
             str digits = _padNano(self->nanoValue);
             if (self->nanoValue % 1000000 == 0) {

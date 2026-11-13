@@ -58,12 +58,25 @@ HEADERS = Include/internal/token.h \
 $(BIN): $(SRCS) $(HEADERS)
 	$(CC) $(CFLAGS) $(SRCS) -o $@ $(LDLIBS)
 
+# make는 -v를 자체 --version 플래그로 먼저 처리하므로, 검사 스크립트의 -v는
+# make check VERBOSE=1 또는 make check-v로 전달한다.
+VERBOSE ?= $(V)
+CHECK_FLAGS = $(if $(filter 1 yes true on,$(VERBOSE)),-v,)
+
 check: $(BIN)
-	$(PYTHON) Tools/check_frontend.py
-	$(PYTHON) Tools/check_runtime.py
-	$(PYTHON) Tools/check_repl.py
-	$(PYTHON) Tools/check_tools.py
-	$(PYTHON) Tools/check_random.py
+	$(PYTHON) Tools/check_frontend.py $(CHECK_FLAGS)
+	$(PYTHON) Tools/check_runtime.py $(CHECK_FLAGS)
+	$(PYTHON) Tools/check_lib.py $(CHECK_FLAGS)
+	$(PYTHON) Tools/check_repl.py $(CHECK_FLAGS)
+	$(PYTHON) Tools/check_tools.py $(CHECK_FLAGS)
+	$(PYTHON) Tools/check_random.py $(CHECK_FLAGS)
+	$(PYTHON) Tools/check_java.py $(CHECK_FLAGS)
+
+check-v:
+	$(MAKE) check VERBOSE=1
+
+check-java: $(BIN)
+	$(PYTHON) Tools/check_java.py --require-jdk $(CHECK_FLAGS)
 
 regen:
 	$(PYTHON) Tools/build/generate_token.py Grammar/Tokens Include/internal/token.h Parser/token.c
@@ -77,4 +90,4 @@ install: $(BIN)
 clean:
 	rm -f aster aster.exe
 
-.PHONY: check regen clean install
+.PHONY: check check-v check-java regen clean install

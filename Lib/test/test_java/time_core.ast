@@ -1,0 +1,54 @@
+import System.stdout.*;
+import aster.time.LocalDate;
+import aster.time.LocalTime;
+import aster.time.Instant;
+import aster.time.Duration;
+import aster.time.Period;
+
+LocalDate d = LocalDate.of(2024, 2, 29);
+println(d.toString());
+println(d.plusDays(1).toString());
+println(d.plusDays(365).toString());
+println(d.plusMonths(1).toString());
+println(LocalDate.of(2024, 1, 31).plusMonths(1).toString());
+println(d.minusDays(1).toString());
+println(d.toEpochDay());
+println(LocalDate.ofEpochDay(19782).toString());
+println(d.getDayOfYear());
+println(d.getDayOfWeek().name);
+
+LocalTime t = LocalTime.of(23, 59, 59, 123000000);
+println(t.toString());
+println(LocalTime.of(21, 13).toString());
+println(LocalTime.of(21, 13, 0, 1).toString());
+println(LocalTime.of(1, 2, 3).toString());
+println(t.plusNanos(1000000).toString());
+println(t.plusSeconds(1).toString());
+println(t.toSecondOfDay());
+println(t.toNanoOfDay());
+println(LocalTime.parse("07:08:09.010").toString());
+
+Instant i = Instant.parse("2024-02-29T12:30:45.123Z");
+println(i.toString());
+println(Instant.parse("1998-07-04T08:01:00Z").toString());
+println(Instant.ofEpochSecond(1, 0).toString());
+println(Instant.ofEpochSecond(1, 123456789).toString());
+println(i.getEpochSecond());
+println(i.getNano());
+println(i.toEpochMilli());
+println(i.plusSeconds(90).toString());
+println(i.minusMillis(500).toString());
+
+Duration du = Duration.parse("PT1H30M");
+println(du.toString());
+println(du.getSeconds());
+println(du.getNano());
+println(Duration.ofMillis(1500).toString());
+println(Duration.ofNanos(1234567890).toString());
+println(Duration.parse("-PT0.5S").getSeconds());
+println(Duration.parse("-PT0.5S").getNano());
+
+Period p = Period.parse("P1Y2M3D");
+println(p.toString());
+println(p.toTotalMonths());
+println(p.plusMonths(10).toString());

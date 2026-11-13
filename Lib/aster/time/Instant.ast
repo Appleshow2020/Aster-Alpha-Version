@@ -9,6 +9,23 @@ extern fn _aster_now_ms() -> int;
 const int INSTANT_NANOS_PER_SECOND = 1000000000;
 const int INSTANT_SECONDS_PER_DAY = 86400;
 
+fn _instantPad2(int value) -> str {
+    if (value < 10) { return "0" + str(value); }
+    return str(value);
+}
+
+fn _instantPadNano(int value) -> str {
+    str out = "";
+    int v = value;
+    int i = 0;
+    while (i < 9) {
+        out = str(v % 10) + out;
+        v = v / 10;
+        i = i + 1;
+    }
+    return out;
+}
+
 fn _instantIsDigit(str ch) -> bool {
     if (ch.length() == 0) { return false; }
     return "0123456789".find(ch) >= 0;
@@ -173,14 +190,27 @@ export class Instant {
         return self->secondValue * 31 + self->nanoValue;
     }
 
-    /* ISO-8601 (UTC), 예: 1970-01-01T00:00:00Z */
+    /* ISO-8601 (UTC), 예: 1970-01-01T00:00:00Z. 초는 항상 출력한다. */
     public fn toString() -> str {
         int days = self->secondValue // INSTANT_SECONDS_PER_DAY;
         int secondOfDay = self->secondValue % INSTANT_SECONDS_PER_DAY;
         LocalDate date = LocalDate.ofEpochDay(days);
-        LocalTime time = LocalTime.ofNanoOfDay(
-            secondOfDay * INSTANT_NANOS_PER_SECOND + self->nanoValue);
-        return date.toString() + "T" + time.toString() + "Z";
+        int hour = secondOfDay / 3600;
+        int minute = (secondOfDay % 3600) / 60;
+        int second = secondOfDay % 60;
+        str out = date.toString() + "T" + _instantPad2(hour) + ":"
+                + _instantPad2(minute) + ":" + _instantPad2(second);
+        if (self->nanoValue != 0) {
+            str digits = _instantPadNano(self->nanoValue);
+            if (self->nanoValue % 1000000 == 0) {
+                digits = digits.substring(0, 3);
+            }
+            else if (self->nanoValue % 1000 == 0) {
+                digits = digits.substring(0, 6);
+            }
+            out = out + "." + digits;
+        }
+        return out + "Z";
     }
 
     public fn __str__() -> str {

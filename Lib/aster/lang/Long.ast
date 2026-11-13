@@ -155,6 +155,12 @@ export class Long extends Number {
         if (radix < 2 or radix > 36) {
             throw "radix out of range: " + str(radix) as ValueError;
         }
+        if (value < 0) {
+            if (value == -9223372036854775807 - 1) {
+                return "-" + _longUnsignedString(value, radix);
+            }
+            return "-" + _longUnsignedString(-value, radix);
+        }
         return _longUnsignedString(value, radix);
     }
 

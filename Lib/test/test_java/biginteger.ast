@@ -1,0 +1,35 @@
+import System.stdout.*;
+import aster.math.BigInteger;
+
+BigInteger a = new BigInteger("123456789012345678901234567890");
+BigInteger b = new BigInteger("9876543210");
+
+println(a.add(b).toString());
+println(a.subtract(b).toString());
+println(a.multiply(b).toString());
+println(a.divide(b).toString());
+println(a.remainder(b).toString());
+list<BigInteger> qr = a.divideAndRemainder(b);
+println(qr[0].toString() + " r " + qr[1].toString());
+
+println(BigInteger.valueOf(-42).abs().toString());
+println(BigInteger.valueOf(-42).signum());
+println(BigInteger.valueOf(2).pow(100).toString());
+println(BigInteger.valueOf(48).gcd(BigInteger.valueOf(18)).toString());
+println(BigInteger.valueOf(100).mod(BigInteger.valueOf(7)).toString());
+
+println(new BigInteger("255").toString(16));
+println(new BigInteger("255").toString(2));
+println(BigInteger.fromRadix("deadbeef", 16).toString());
+println(BigInteger.fromRadix("zz", 36).toString());
+
+println(BigInteger.valueOf(-8).shiftRight(1).toString());
+println(BigInteger.valueOf(5).setBit(3).toString());
+println(BigInteger.valueOf(13).clearBit(2).toString());
+println(BigInteger.valueOf(5).flipBit(0).toString());
+println(BigInteger.valueOf(-1).testBit(7));
+
+println(BigInteger.valueOf(97).isProbablePrime(10));
+println(BigInteger.valueOf(100).isProbablePrime(10));
+
+println(BigInteger.ZERO.toString() + BigInteger.ONE.toString() + BigInteger.TEN.toString());

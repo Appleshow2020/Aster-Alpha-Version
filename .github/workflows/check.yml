@@ -9,9 +9,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
       - name: Build
         run: make
       - name: Check
+        env:
+          ASTER_REQUIRE_JDK: "1"
         run: make check
 
   windows:
@@ -29,7 +35,13 @@ jobs:
             mingw-w64-ucrt-x86_64-gcc
             make
             python
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
       - name: Build
         run: make
       - name: Check
+        env:
+          ASTER_REQUIRE_JDK: "1"
         run: make check PYTHON=python

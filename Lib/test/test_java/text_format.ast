@@ -1,0 +1,29 @@
+import System.stdout.*;
+import aster.text.DecimalFormat;
+import aster.text.MessageFormat;
+
+DecimalFormat df = new DecimalFormat("#,##0.00");
+println(df.toPattern());
+println(df.format(1234567.891));
+println(df.format(-1234.5));
+println(df.format(0));
+
+DecimalFormat df2 = new DecimalFormat("0.###");
+println(df2.format(3.14159));
+println(df2.format(2.0));
+
+DecimalFormat df3 = new DecimalFormat("0.00%");
+println(df3.format(0.25));
+println(df3.parse("25.00%"));
+
+DecimalFormat df4 = new DecimalFormat("$#,##0.00");
+println(df4.format(1234.5));
+println(df4.format(-1234.5));
+println(df4.parse("-$1,234.50"));
+
+MessageFormat mf = new MessageFormat("Hello, {0}! You have {1} messages.");
+list<var> args = [];
+args.append("Aster");
+args.append(3);
+println(mf.format(args));
+println(MessageFormat.format("It''s {0} at {1}", ["Aster", 3]));

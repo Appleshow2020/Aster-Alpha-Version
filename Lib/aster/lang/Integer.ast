@@ -104,6 +104,9 @@ export class Integer extends Number {
         if (radix < 2 or radix > 36) {
             throw "radix out of range: " + str(radix) as ValueError;
         }
+        if (value < 0) {
+            return "-" + _intUnsignedString(-value, radix);
+        }
         return _intUnsignedString(value, radix);
     }
 
@@ -169,6 +172,9 @@ export class Integer extends Number {
             p = bit;
             bit = bit * 2;
         }
+        if (p == 2147483648) {
+            return -2147483648;
+        }
         return p;
     }
 
@@ -181,6 +187,9 @@ export class Integer extends Number {
         while (u % 2 == 0) {
             u = u / 2;
             p = p * 2;
+        }
+        if (p == 2147483648) {
+            return -2147483648;
         }
         return p;
     }

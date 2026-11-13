@@ -1,0 +1,36 @@
+import System.stdout.*;
+import aster.math.BigDecimal;
+import aster.math.RoundingMode;
+from aster.math.RoundingMode import roundingModeName;
+
+BigDecimal x = new BigDecimal("123.45");
+BigDecimal y = new BigDecimal("-0.0067");
+
+println(x.add(y).toString());
+println(x.subtract(y).toString());
+println(x.multiply(y).toString());
+println(new BigDecimal("1").divide(new BigDecimal("8")).toString());
+println(new BigDecimal("10.00").divide(new BigDecimal("4")).toString());
+println(new BigDecimal("1").divide(new BigDecimal("3"), 5, RoundingMode.HALF_UP).toString());
+
+list<RoundingMode> modes = [
+    RoundingMode.UP, RoundingMode.DOWN, RoundingMode.CEILING, RoundingMode.FLOOR,
+    RoundingMode.HALF_UP, RoundingMode.HALF_DOWN, RoundingMode.HALF_EVEN,
+];
+for (RoundingMode mode in modes) {
+    println(roundingModeName(mode).upper() + " "
+        + new BigDecimal("1").divide(new BigDecimal("3"), 3, mode).toString());
+    println(roundingModeName(mode).upper() + " "
+        + new BigDecimal("-2.5").setScale(0, mode).toString());
+}
+
+println(new BigDecimal("1.5").pow(3).toString());
+println(new BigDecimal("1.2300").stripTrailingZeros().toString());
+println(new BigDecimal("123.45").movePointLeft(2).toString());
+println(new BigDecimal("0.000123").movePointRight(3).toString());
+println(new BigDecimal("12.340").compareTo(new BigDecimal("12.34")));
+println(new BigDecimal("12.340").equals(new BigDecimal("12.34")));
+println(new BigDecimal("12.9").intValue());
+println(new BigDecimal("123.4500").scale());
+println(new BigDecimal("123.4500").precision());
+println(new BigDecimal("123.4500").unscaledValue().toString());
