@@ -239,13 +239,6 @@ typedef struct {
     size_t nparams;
 } AstEnumMember;
 
-struct AstEnumType {
-    const char *name;
-    AstEnumMember *members;
-    size_t nmembers;
-    Env *env;
-};
-
 struct AsterSuper {
     AstClass *owner;
     RValue *self;
@@ -263,6 +256,15 @@ typedef struct {
     AstFn *setter;
 } PropDesc;
 
+struct AstEnumType {
+    const char *name;
+    AstEnumMember *members;
+    size_t nmembers;
+    MethodDesc *methods;     /* enum 메서드 (선언된 순서) */
+    size_t nmethods;
+    Env *env;
+};
+
 struct AstClass {
     const char *name;
     const char *base_name;
@@ -274,7 +276,8 @@ struct AstClass {
     size_t nmethods;
     PropDesc *props;
     size_t nprops;
-    AstFn *ctor;
+    AstFn **ctors;           /* 생성자 오버로드. 같은 인자 수끼리는 모호하므로 수로 고른다. */
+    size_t nctors;
     Env *env;
     const char **interfaces;  /* implements 한 인터페이스 이름 */
     size_t ninterfaces;

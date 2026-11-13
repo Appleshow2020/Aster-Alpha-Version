@@ -40,6 +40,7 @@ typedef struct EnumInfo EnumInfo;
 typedef struct FieldInfo FieldInfo;
 typedef struct Checker Checker;
 typedef struct ModuleInfo ModuleInfo;
+typedef struct PendingModule PendingModule;
 
 struct Ty {
     TyKind kind;
@@ -52,18 +53,35 @@ struct Ty {
     size_t nparams;
     Ty *ret;
     int varargs;
+    /* TY_FUNC: 매개변수 이름, 기본값이 없는 앞쪽 매개변수 수, 가변 인자 */
+    const char **param_names;
+    size_t nrequired;
+    int has_vararg;
+    Ty *vararg_elem;
+    int has_varkwarg;
+    Ty *varkwarg_elem;
     /* TY_OVERLOAD */
     Ty **overloads;
     size_t noverloads;
     /* TY_UNION */
     Ty **members;
     size_t nmembers;
+    /* TY_CLASS, TY_STRUCT: 타입 인자 (Echoer<int>의 int) */
+    Ty **targs;
+    size_t ntargs;
+    /* TY_ANY: 제네릭 타입 매개변수의 경계 (T extends Number) */
+    Ty *bound;
+    /* TY_FUNC: 제네릭 함수의 타입 매개변수 */
+    const char **tparams;
+    Ty **tbounds;
+    size_t ntparams;
 };
 
 struct Sym {
     const char *name;
     Ty *ty;
     int narrowed;            /* 흐름 분석으로 좁혀진 임시 타입이면 1 */
+    int is_const;            /* const 선언이면 1. 재대입을 정적으로 거부한다. */
     Sym *next;
 };
 
@@ -89,9 +107,14 @@ struct ClassInfo {
     Ty *ctor;
     int is_exception;
     int is_interface;
+    int is_enum;             /* enum을 클래스처럼 다루기 위한 표식 (멤버는 변형/메서드) */
     int line, col;
     const char **interfaces;
+    typeref_ty *interface_uses;
     size_t ninterfaces;
+    const char **tparams;
+    Ty **tparam_bounds;
+    size_t ntparams;
     ClassInfo *next;
 };
 
@@ -129,11 +152,19 @@ struct Checker {
     Ty *current_ret;
     int current_ret_known;
     int in_function;
+    int in_generator;
+    int loop_depth;
     int allow_unknown;
+    int last_error_line;
+    int last_error_col;
+    char last_error_msg[512];
     const char **tparams;
+    Ty **tparam_bounds;
     size_t ntparams;
     const TypeCheckEnv *env;
     ModuleInfo *modules;
+    Checker *root;           /* 최상위 모듈 검사기 (순환 import 큐 공유) */
+    PendingModule *pending;  /* 상속·본문 검사를 기다리는 import 모듈들 */
 };
 
 /* import된 모듈의 export 심볼 타입. */
@@ -146,7 +177,19 @@ struct ModuleInfo {
     int resolved;            /* 파일을 찾아 검사까지 마쳤으면 1 */
     int ok;                  /* 모듈을 실제로 읽었다면 1 */
     int opaque;              /* 내장 모듈(System/Files)이나 검사 환경이 없을 때 1 */
+    ClassInfo *classes;      /* 모듈이 선언한 클래스/인터페이스 */
+    StructInfo *structs;
+    EnumInfo *enums;
     ModuleInfo *next;
+};
+
+/* 모양만 먼저 등록해 두고, 전체 모듈 그래프를 읽은 뒤 상속·본문을 검사한다.
+   C#처럼 순환 import에서 서로의 선언을 볼 수 있게 하기 위한 3단계 검사 큐. */
+struct PendingModule {
+    Checker *checker;
+    ModuleInfo *module;
+    asdl_seq *body;
+    PendingModule *next;
 };
 
 /* ------------------------------------------------------------------ 공통 */
@@ -266,7 +309,9 @@ static void ty_write(char *buf, size_t cap, size_t *o, Ty *t) {
         return;
     }
     switch (t->kind) {
-    case TY_ANY: snprintf(buf + *o, cap - *o, "any"); break;
+    case TY_ANY:
+        snprintf(buf + *o, cap - *o, "%s", t->name ? t->name : "any");
+        break;
     case TY_VOID: snprintf(buf + *o, cap - *o, "void"); break;
     case TY_NULL: snprintf(buf + *o, cap - *o, "null"); break;
     case TY_INT: snprintf(buf + *o, cap - *o, "int"); break;
@@ -275,6 +320,19 @@ static void ty_write(char *buf, size_t cap, size_t *o, Ty *t) {
     case TY_STR: snprintf(buf + *o, cap - *o, "str"); break;
     case TY_CLASS:
         snprintf(buf + *o, cap - *o, "%s", t->name ? t->name : "class");
+        *o += strlen(buf + *o);
+        if (t->ntargs) {
+            snprintf(buf + *o, cap - *o, "<");
+            *o += strlen(buf + *o);
+            for (i = 0; i < t->ntargs; i++) {
+                if (i) {
+                    snprintf(buf + *o, cap - *o, ", ");
+                    *o += strlen(buf + *o);
+                }
+                ty_write(buf, cap, o, t->targs[i]);
+            }
+            snprintf(buf + *o, cap - *o, ">");
+        }
         break;
     case TY_STRUCT:
         snprintf(buf + *o, cap - *o, "%s", t->name ? t->name : "struct");
@@ -467,6 +525,61 @@ static int is_container(Ty *t) {
 
 static ClassInfo *find_class(Checker *c, const char *name) {
     ClassInfo *ci;
+    ModuleInfo *mi;
+    for (ci = c->classes; ci; ci = ci->next) {
+        if (!strcmp(ci->name, name))
+            return ci;
+    }
+    /* import한 모듈이 선언한 클래스/인터페이스도 상속·인터페이스 해석에 쓴다. */
+    for (mi = c->modules; mi; mi = mi->next) {
+        for (ci = mi->classes; ci; ci = ci->next) {
+            if (!strcmp(ci->name, name))
+                return ci;
+        }
+    }
+    return NULL;
+}
+
+static StructInfo *find_struct(Checker *c, const char *name) {
+    StructInfo *si;
+    ModuleInfo *mi;
+    for (si = c->structs; si; si = si->next) {
+        if (!strcmp(si->name, name) ||
+            (si->alias && !strcmp(si->alias, name)))
+            return si;
+    }
+    for (mi = c->modules; mi; mi = mi->next) {
+        for (si = mi->structs; si; si = si->next) {
+            if (!strcmp(si->name, name) ||
+                (si->alias && !strcmp(si->alias, name)))
+                return si;
+        }
+    }
+    return NULL;
+}
+
+static EnumInfo *find_enum(Checker *c, const char *name) {
+    EnumInfo *ei;
+    ModuleInfo *mi;
+    if (!name)
+        return NULL;
+    for (ei = c->enums; ei; ei = ei->next) {
+        if (!strcmp(ei->name, name))
+            return ei;
+    }
+    for (mi = c->modules; mi; mi = mi->next) {
+        for (ei = mi->enums; ei; ei = ei->next) {
+            if (!strcmp(ei->name, name))
+                return ei;
+        }
+    }
+    return NULL;
+}
+
+/* 모듈 자신의 선언만 찾는다. 모양 선등록 단계에서 import한 사본과 헷갈리지
+   않도록 클래스/구조체/열거형을 로컬 목록에서만 조회한다. */
+static ClassInfo *local_class(Checker *c, const char *name) {
+    ClassInfo *ci;
     for (ci = c->classes; ci; ci = ci->next) {
         if (!strcmp(ci->name, name))
             return ci;
@@ -474,7 +587,7 @@ static ClassInfo *find_class(Checker *c, const char *name) {
     return NULL;
 }
 
-static StructInfo *find_struct(Checker *c, const char *name) {
+static StructInfo *local_struct(Checker *c, const char *name) {
     StructInfo *si;
     for (si = c->structs; si; si = si->next) {
         if (!strcmp(si->name, name) ||
@@ -484,10 +597,8 @@ static StructInfo *find_struct(Checker *c, const char *name) {
     return NULL;
 }
 
-static EnumInfo *find_enum(Checker *c, const char *name) {
+static EnumInfo *local_enum(Checker *c, const char *name) {
     EnumInfo *ei;
-    if (!name)
-        return NULL;
     for (ei = c->enums; ei; ei = ei->next) {
         if (!strcmp(ei->name, name))
             return ei;
@@ -518,10 +629,19 @@ static ClassInfo *member_owner(ClassInfo *ci, const char *name) {
     return NULL;
 }
 
+/* 순환 import로 로드 시점에 못 붙인 상위 클래스를 그때그때 다시 찾아 붙인다. */
+static void ensure_base(Checker *c, ClassInfo *ci) {
+    for (; ci; ci = ci->base) {
+        if (!ci->base && ci->base_name)
+            ci->base = find_class(c, ci->base_name);
+    }
+}
+
 static int class_derives(Checker *c, const char *from, const char *to) {
     ClassInfo *ci = find_class(c, from);
     if (!ci)
         return 1;                    /* 바깥 클래스는 상속 관계를 모르므로 허용 */
+    ensure_base(c, ci);
     for (; ci; ci = ci->base) {
         if (!strcmp(ci->name, to))
             return 1;
@@ -536,6 +656,7 @@ static int class_implements(Checker *c, const char *from, const char *iface) {
         return 1;                    /* 바깥 클래스는 관계를 모르므로 허용 */
     if (ci->is_interface)
         return !strcmp(ci->name, iface);
+    ensure_base(c, ci);
     for (; ci; ci = ci->base) {
         size_t i;
         for (i = 0; i < ci->ninterfaces; i++)
@@ -556,15 +677,29 @@ static int is_type_param(Checker *c, const char *name) {
     return 0;
 }
 
+static Ty *tparam_bound(Checker *c, const char *name) {
+    size_t i;
+    for (i = 0; i < c->ntparams; i++) {
+        if (!strcmp(c->tparams[i], name))
+            return c->tparam_bounds ? c->tparam_bounds[i] : NULL;
+    }
+    return NULL;
+}
+
 static Ty *typeref_to_ty(Checker *c, typeref_ty ty);
 
 static Ty *named_to_ty(Checker *c, const char *name, asdl_seq *args) {
     Ty *elem = NULL;
     size_t nargs = args ? asdl_seq_LEN(args) : 0;
 
-    if (!strcmp(name, "var") || !strcmp(name, "any") ||
-        !strcmp(name, "void") || is_type_param(c, name))
+    if (!strcmp(name, "var") || !strcmp(name, "any") || !strcmp(name, "void"))
         return ty_any(c);
+    if (is_type_param(c, name)) {
+        Ty *param = ty_any(c);
+        param->name = name;          /* 제네릭 인자 치환용 표식 */
+        param->bound = tparam_bound(c, name);
+        return param;
+    }
     if (!strcmp(name, "list") || !strcmp(name, "List") || !strcmp(name, "array")) {
         if (nargs > 0)
             elem = typeref_to_ty(c, asdl_seq_GET(args, 0));
@@ -588,7 +723,17 @@ static Ty *named_to_ty(Checker *c, const char *name, asdl_seq *args) {
     }
     if (find_struct(c, name))
         return ty_struct(c, name);
-    return ty_class(c, name);
+    {
+        Ty *t = ty_class(c, name);
+        if (nargs > 0) {
+            size_t i;
+            t->targs = Arena_Alloc(c->arena, nargs * sizeof(Ty *));
+            for (i = 0; i < nargs; i++)
+                t->targs[i] = typeref_to_ty(c, asdl_seq_GET(args, i));
+            t->ntargs = nargs;
+        }
+        return t;
+    }
 }
 
 static Ty *typeref_to_ty(Checker *c, typeref_ty ty) {
@@ -640,6 +785,87 @@ static Ty *typeref_to_ty(Checker *c, typeref_ty ty) {
     return ty_any(c);
 }
 
+/*
+ * 선언 쪽 타입(decl)의 타입 매개변수를 사용 쪽 인자(use)로 바꾼다.
+ * 예: Mapper<T>의 T를 Mapper<int>의 int로.
+ */
+static Ty *substitute_ty(Checker *c, Ty *t, ClassInfo *decl, Ty *use) {
+    size_t i;
+
+    if (!t || !decl || !use)
+        return t;
+    if (t->kind == TY_ANY && t->name) {
+        for (i = 0; i < decl->ntparams; i++) {
+            if (!strcmp(decl->tparams[i], t->name))
+                return i < use->ntargs ? use->targs[i] : t;
+        }
+        return t;
+    }
+    switch (t->kind) {
+    case TY_PTR:
+    case TY_LIST:
+    case TY_TUPLE:
+    case TY_SET:
+    case TY_FROZENSET: {
+        Ty *out = Arena_Alloc(c->arena, sizeof(Ty));
+        *out = *t;
+        out->a = substitute_ty(c, t->a, decl, use);
+        return out;
+    }
+    case TY_DICT: {
+        Ty *out = Arena_Alloc(c->arena, sizeof(Ty));
+        *out = *t;
+        out->a = substitute_ty(c, t->a, decl, use);
+        out->b = substitute_ty(c, t->b, decl, use);
+        return out;
+    }
+    case TY_UNION: {
+        Ty *out = Arena_Alloc(c->arena, sizeof(Ty));
+        *out = *t;
+        if (t->nmembers) {
+            out->members = Arena_Alloc(c->arena, t->nmembers * sizeof(Ty *));
+            for (i = 0; i < t->nmembers; i++)
+                out->members[i] = substitute_ty(c, t->members[i], decl, use);
+        }
+        return out;
+    }
+    case TY_FUNC: {
+        Ty *out = Arena_Alloc(c->arena, sizeof(Ty));
+        *out = *t;
+        if (t->nparams) {
+            out->params = Arena_Alloc(c->arena, t->nparams * sizeof(Ty *));
+            for (i = 0; i < t->nparams; i++)
+                out->params[i] = substitute_ty(c, t->params[i], decl, use);
+        }
+        out->ret = substitute_ty(c, t->ret, decl, use);
+        return out;
+    }
+    case TY_OVERLOAD: {
+        Ty *out = Arena_Alloc(c->arena, sizeof(Ty));
+        *out = *t;
+        if (t->noverloads) {
+            out->overloads = Arena_Alloc(c->arena, t->noverloads * sizeof(Ty *));
+            for (i = 0; i < t->noverloads; i++)
+                out->overloads[i] = substitute_ty(c, t->overloads[i], decl, use);
+        }
+        return out;
+    }
+    case TY_CLASS:
+    case TY_STRUCT:
+        if (t->ntargs) {
+            Ty *out = Arena_Alloc(c->arena, sizeof(Ty));
+            *out = *t;
+            out->targs = Arena_Alloc(c->arena, t->ntargs * sizeof(Ty *));
+            for (i = 0; i < t->ntargs; i++)
+                out->targs[i] = substitute_ty(c, t->targs[i], decl, use);
+            return out;
+        }
+        return t;
+    default:
+        return t;
+    }
+}
+
 static Ty *unify(Checker *c, Ty *a, Ty *b) {
     if (!a)
         return b;
@@ -680,15 +906,55 @@ static Ty *unify(Checker *c, Ty *a, Ty *b) {
     return ty_any(c);
 }
 
+/* 메서드가 하나뿐인 인터페이스(함수형 인터페이스)의 그 메서드. */
+static Member *interface_single_method(Checker *c, Ty *iface) {
+    ClassInfo *ci;
+    Member *m, *only = NULL;
+    size_t count = 0;
+
+    if (!iface || iface->kind != TY_CLASS)
+        return NULL;
+    ci = find_class(c, iface->name);
+    if (!ci || !ci->is_interface)
+        return NULL;
+    for (m = ci->members; m; m = m->next) {
+        if (!m->is_method)
+            continue;
+        if (m->fn && m->fn->kind == TY_OVERLOAD)
+            return NULL;              /* 추상 메서드가 둘 이상이다 */
+        count++;
+        only = m;
+    }
+    return count == 1 ? only : NULL;
+}
+
+static int lambda_fits_interface(Checker *c, Ty *iface, Ty *fn) {
+    Member *m = interface_single_method(c, iface);
+    ClassInfo *ci = find_class(c, iface->name);
+    Ty *want;
+    size_t i;
+
+    if (!m || !m->fn || m->fn->kind != TY_FUNC || fn->kind != TY_FUNC)
+        return 0;
+    want = substitute_ty(c, m->fn, ci, iface);
+    if (want->varargs || fn->varargs || want->nparams != fn->nparams)
+        return 0;
+    for (i = 0; i < fn->nparams; i++) {
+        if (!same_ty(c, want->params[i], fn->params[i]))
+            return 0;
+    }
+    return same_ty(c, want->ret, fn->ret);
+}
+
 static int assignable(Checker *c, Ty *dst, Ty *src) {
     if (!dst || !src)
         return 1;
-    if (dst->kind == TY_ANY || src->kind == TY_ANY)
+    if (src->kind == TY_ANY)
         return 1;
+    if (dst->kind == TY_ANY)
+        return dst->bound ? assignable(c, dst->bound, src) : 1;
     if (src->kind == TY_NULL)
-        return dst->nullable || dst->kind == TY_PTR || dst->kind == TY_CLASS ||
-               dst->kind == TY_STRUCT || dst->kind == TY_MODULE ||
-               is_container(dst);
+        return dst->nullable || dst->kind == TY_PTR || dst->kind == TY_NULL;
     if (dst->nullable) {
         if (src->kind == TY_NULL)
             return 1;
@@ -731,6 +997,12 @@ static int assignable(Checker *c, Ty *dst, Ty *src) {
         }
         return assignable(c, dst->a, src);
     case TY_CLASS:
+        if (src->kind == TY_PTR)
+            return assignable(c, dst, src->a ? src->a : ty_any(c));
+        if (src->kind == TY_INT || src->kind == TY_FLOAT) {
+            /* 원시 수 타입은 aster.lang.Number 경계를 만족한다. */
+            return !strcmp(dst->name, "Number");
+        }
         if (src->kind == TY_CLASS) {
             ClassInfo *dst_ci = find_class(c, dst->name);
             if (!strcmp(dst->name, src->name))
@@ -741,6 +1013,11 @@ static int assignable(Checker *c, Ty *dst, Ty *src) {
         }
         if (src->kind == TY_STRUCT)
             return !strcmp(dst->name, src->name);
+        if (src->kind == TY_FUNC) {
+            ClassInfo *dst_ci = find_class(c, dst->name);
+            return dst_ci && dst_ci->is_interface &&
+                   lambda_fits_interface(c, dst, src);
+        }
         return 0;
     case TY_STRUCT:
         if (src->kind == TY_STRUCT)
@@ -835,20 +1112,35 @@ static void define_or_update(Checker *c, const char *name, Ty *ty) {
     define(c, name, ty);
 }
 
+/* import한 const도 재대입 금지 정보를 함께 가져온다. */
+static void define_or_update_const(Checker *c, const char *name, Ty *ty,
+                                   int is_const) {
+    define_or_update(c, name, ty);
+    if (is_const) {
+        Sym *s = lookup_sym(c, name, 0);
+        if (s)
+            s->is_const = 1;
+    }
+}
+
 /*
  * 선언은 현재 스코프에만 넣는다. 바깥 스코프의 같은 이름(내장 함수 등)은
  * 가려져야 하므로 define_or_update처럼 바깥 심볼을 고치면 안 된다.
  */
-static void define_shadow(Checker *c, const char *name, Ty *ty) {
+static void define_shadow_const(Checker *c, const char *name, Ty *ty, int is_const) {
     Sym *s;
     for (s = c->scope->syms; s; s = s->next) {
         if (!strcmp(s->name, name)) {
             if (s->ty->kind == TY_ANY && ty && ty->kind != TY_ANY)
                 s->ty = ty;
+            if (is_const)
+                s->is_const = 1;
             return;
         }
     }
     define(c, name, ty);
+    if (is_const)
+        c->scope->syms->is_const = 1;
 }
 
 /* 같은 이름이 있으면 타입을 덮어쓴다(import 바인딩용). */
@@ -884,13 +1176,21 @@ static void define_or_overload(Checker *c, const char *name, Ty *fn) {
 /* ------------------------------------------------------------------ 진단 */
 
 static void check_error(Checker *c, int line, int col, const char *fmt, ...) {
+    char buf[512];
     va_list ap;
-    fprintf(stderr, "%s:%d:%d: error: ", c->filename ? c->filename : "<input>",
-            line, col + 1);
+
     va_start(ap, fmt);
-    vfprintf(stderr, fmt, ap);
+    vsnprintf(buf, sizeof buf, fmt, ap);
     va_end(ap);
-    fputc('\n', stderr);
+    /* 같은 식을 두 번 추론하면서 같은 진단이 반복되는 경우를 걸러낸다. */
+    if (line == c->last_error_line && col == c->last_error_col &&
+        !strcmp(c->last_error_msg, buf))
+        return;
+    c->last_error_line = line;
+    c->last_error_col = col;
+    snprintf(c->last_error_msg, sizeof c->last_error_msg, "%s", buf);
+    fprintf(stderr, "%s:%d:%d: error: %s\n",
+            c->filename ? c->filename : "<input>", line, col + 1, buf);
     c->errors++;
 }
 
@@ -907,20 +1207,51 @@ static void require_assignable(Checker *c, Ty *dst, Ty *src, expr_ty at, const c
 static Ty *params_to_func(Checker *c, asdl_seq *params, ret_ty ret, int lambda_params) {
     size_t n = params ? asdl_seq_LEN(params) : 0;
     Ty **tys = n ? Arena_Alloc(c->arena, n * sizeof(Ty *)) : NULL;
-    Ty *rt;
-    size_t i;
+    const char **names = n ? Arena_Alloc(c->arena, n * sizeof(const char *)) : NULL;
+    Ty *rt, *fn;
+    Ty *vararg_elem = NULL;
+    Ty *varkwarg_elem = NULL;
+    int has_vararg = 0;
+    int has_varkwarg = 0;
+    size_t count = 0, nrequired = 0, i;
 
     for (i = 0; i < n; i++) {
         typeref_ty ty;
+        const char *pname;
+        Ty *pt;
+
         if (lambda_params) {
             lparam_ty p = asdl_seq_GET(params, i);
             ty = p->ty;
+            pname = p->name;
+            pt = ty ? typeref_to_ty(c, ty) : ty_any(c);
         }
         else {
             param_ty p = asdl_seq_GET(params, i);
             ty = p->ty;
+            pname = p->name;
+            pt = ty ? typeref_to_ty(c, ty) : ty_any(c);
+            if (p->variadic == 1) {
+                has_vararg = 1;
+                vararg_elem = pt;
+                continue;
+            }
+            if (p->variadic == 2) {
+                has_varkwarg = 1;
+                varkwarg_elem = pt;
+                continue;
+            }
+            tys[count] = pt;
+            names[count] = pname;
+            if (!p->default_value)
+                nrequired = count + 1;
+            count++;
+            continue;
         }
-        tys[i] = ty ? typeref_to_ty(c, ty) : ty_any(c);
+        tys[count] = pt;
+        names[count] = pname;
+        nrequired = count + 1;
+        count++;
     }
     if (ret) {
         rt = ret->kind == ValueRet_kind ? typeref_to_ty(c, ret->v.ValueRet.ty)
@@ -929,35 +1260,71 @@ static Ty *params_to_func(Checker *c, asdl_seq *params, ret_ty ret, int lambda_p
     else {
         rt = ty_void(c);
     }
-    return ty_func(c, tys, n, rt, 0);
+    fn = ty_func(c, tys, count, rt, 0);
+    fn->param_names = names;
+    fn->nrequired = nrequired;
+    fn->has_vararg = has_vararg;
+    fn->vararg_elem = vararg_elem;
+    fn->has_varkwarg = has_varkwarg;
+    fn->varkwarg_elem = varkwarg_elem;
+    return fn;
+}
+
+/* 제네릭 함수의 타입 매개변수 정보를 함수 타입에 붙인다. */
+static void attach_tparams(Checker *c, Ty *fn, asdl_seq *type_params) {
+    size_t n = type_params ? asdl_seq_LEN(type_params) : 0;
+    size_t i;
+
+    if (!fn || fn->kind != TY_FUNC || n == 0)
+        return;
+    fn->tparams = Arena_Alloc(c->arena, n * sizeof(const char *));
+    fn->tbounds = Arena_Alloc(c->arena, n * sizeof(Ty *));
+    for (i = 0; i < n; i++) {
+        type_param_ty tp = asdl_seq_GET(type_params, i);
+        fn->tparams[i] = tp->name;
+        fn->tbounds[i] = tp->bound ? typeref_to_ty(c, tp->bound) : NULL;
+    }
+    fn->ntparams = n;
 }
 
 /* ------------------------------------------------------------------ 타입 파라미터 문맥 */
 
 typedef struct {
     const char **saved;
+    Ty **saved_bounds;
     size_t saved_n;
 } TParamSave;
 
 static void push_tparams(Checker *c, asdl_seq *type_params, TParamSave *save) {
     size_t n = type_params ? asdl_seq_LEN(type_params) : 0;
+    size_t nold = c->ntparams;
     size_t i;
     save->saved = c->tparams;
+    save->saved_bounds = c->tparam_bounds;
     save->saved_n = c->ntparams;
-    if (n > 0) {
-        c->tparams = Arena_Alloc(c->arena, n * sizeof(const char *));
-        for (i = 0; i < n; i++)
-            c->tparams[i] = asdl_seq_GET(type_params, i);
-        c->ntparams = n;
+    /* 새 타입 매개변수는 바깥 문맥(제네릭 클래스의 T 등) 위에 쌓인다. */
+    if (n == 0)
+        return;
+    c->tparams = Arena_Alloc(c->arena, (nold + n) * sizeof(const char *));
+    c->tparam_bounds = Arena_Alloc(c->arena, (nold + n) * sizeof(Ty *));
+    for (i = 0; i < nold; i++) {
+        c->tparams[i] = save->saved[i];
+        c->tparam_bounds[i] = save->saved_bounds ? save->saved_bounds[i] : NULL;
     }
-    else {
-        c->tparams = NULL;
-        c->ntparams = 0;
+    for (i = 0; i < n; i++) {
+        type_param_ty tp = asdl_seq_GET(type_params, i);
+        c->tparams[nold + i] = tp->name;
+    }
+    c->ntparams = nold + n;
+    for (i = 0; i < n; i++) {
+        type_param_ty tp = asdl_seq_GET(type_params, i);
+        c->tparam_bounds[nold + i] = tp->bound ? typeref_to_ty(c, tp->bound) : NULL;
     }
 }
 
 static void pop_tparams(Checker *c, TParamSave *save) {
     c->tparams = save->saved;
+    c->tparam_bounds = save->saved_bounds;
     c->ntparams = save->saved_n;
 }
 
@@ -1036,6 +1403,38 @@ static void check_body(Checker *c, asdl_seq *body);
 static void resolve_bases(Checker *c);
 static void init_builtins(Checker *c);
 static void check_interfaces(Checker *c);
+static void preload_imports(Checker *c, asdl_seq *body);
+
+static void pending_push(Checker *root, Checker *mc, ModuleInfo *mi,
+                         asdl_seq *body) {
+    PendingModule *pm = Arena_Alloc(root->arena, sizeof(PendingModule));
+    PendingModule **tail = &root->pending;
+
+    pm->checker = mc;
+    pm->module = mi;
+    pm->body = body;
+    pm->next = NULL;
+    while (*tail)
+        tail = &(*tail)->next;
+    *tail = pm;
+}
+
+/* 모듈 그래프를 모두 읽은 뒤 상속·인터페이스·본문을 순서대로 검사한다.
+   검사 중 새 모듈이 로드되면 큐 꼬리에 붙으므로 끝까지 따라간다. */
+static void flush_pending(Checker *c) {
+    PendingModule *pm = c->pending;
+
+    while (pm) {
+        Checker *mc = pm->checker;
+        resolve_bases(mc);
+        check_interfaces(mc);
+        check_body(mc, pm->body);
+        c->errors += mc->errors;
+        c->modules = mc->modules;
+        pm = pm->next;
+    }
+    c->pending = NULL;
+}
 
 static const char *module_dotted_name(Checker *c, asdl_seq *path) {
     size_t i, n = path ? asdl_seq_LEN(path) : 0, total = 0, o = 0;
@@ -1072,6 +1471,17 @@ static Ty *module_export_type(ModuleInfo *mi, const char *name) {
     for (s = mi->exports; s; s = s->next) {
         if (!strcmp(s->name, name))
             return s->ty;
+    }
+    return NULL;
+}
+
+static Sym *module_export_sym(ModuleInfo *mi, const char *name) {
+    Sym *s;
+    if (!mi)
+        return NULL;
+    for (s = mi->exports; s; s = s->next) {
+        if (!strcmp(s->name, name))
+            return s;
     }
     return NULL;
 }
@@ -1143,14 +1553,17 @@ static const char *exported_name(stmt_ty s) {
 
 static void module_add_export(Checker *c, ModuleInfo *mi, const char *name) {
     Sym *s;
+    Sym *local;
     Ty *ty;
 
     if (module_export_type(mi, name))
         return;
     ty = lookup(c, name);
+    local = lookup_sym(c, name, 0);
     s = Arena_Alloc(c->arena, sizeof(Sym));
     s->name = name;
     s->ty = ty ? ty : ty_any(c);
+    s->is_const = local ? local->is_const : 0;
     s->next = mi->exports;
     mi->exports = s;
     mi->nexports++;
@@ -1189,9 +1602,81 @@ static void snapshot_exports(Checker *c, ModuleInfo *mi, asdl_seq *body) {
     }
 }
 
+static void preregister_stmt(Checker *c, stmt_ty s) {
+    switch (s->kind) {
+    case ClassDef_kind:
+        if (!local_class(c, s->v.ClassDef.name)) {
+            ClassInfo *ci = Arena_Alloc(c->arena, sizeof(ClassInfo));
+            memset(ci, 0, sizeof(*ci));
+            ci->name = s->v.ClassDef.name;
+            ci->line = s->lineno;
+            ci->col = s->col_offset;
+            ci->next = c->classes;
+            c->classes = ci;
+        }
+        break;
+    case InterfaceDef_kind:
+        if (!local_class(c, s->v.InterfaceDef.name)) {
+            ClassInfo *ci = Arena_Alloc(c->arena, sizeof(ClassInfo));
+            memset(ci, 0, sizeof(*ci));
+            ci->name = s->v.InterfaceDef.name;
+            ci->is_interface = 1;
+            ci->line = s->lineno;
+            ci->col = s->col_offset;
+            ci->next = c->classes;
+            c->classes = ci;
+        }
+        break;
+    case ExceptionDef_kind:
+        if (!local_class(c, s->v.ExceptionDef.name)) {
+            ClassInfo *ci = Arena_Alloc(c->arena, sizeof(ClassInfo));
+            memset(ci, 0, sizeof(*ci));
+            ci->name = s->v.ExceptionDef.name;
+            ci->base_name = s->v.ExceptionDef.base ? s->v.ExceptionDef.base : "Exception";
+            ci->is_exception = 1;
+            ci->line = s->lineno;
+            ci->col = s->col_offset;
+            ci->next = c->classes;
+            c->classes = ci;
+        }
+        break;
+    case StructDef_kind:
+        if (!local_struct(c, s->v.StructDef.tag)) {
+            StructInfo *si = Arena_Alloc(c->arena, sizeof(StructInfo));
+            memset(si, 0, sizeof(*si));
+            si->name = s->v.StructDef.tag;
+            si->alias = s->v.StructDef.alias;
+            si->next = c->structs;
+            c->structs = si;
+        }
+        break;
+    case EnumDef_kind:
+        if (!local_enum(c, s->v.EnumDef.name)) {
+            EnumInfo *ei = Arena_Alloc(c->arena, sizeof(EnumInfo));
+            memset(ei, 0, sizeof(*ei));
+            ei->name = s->v.EnumDef.name;
+            ei->next = c->enums;
+            c->enums = ei;
+        }
+        break;
+    case Export_kind:
+        preregister_stmt(c, s->v.Export.body);
+        break;
+    default:
+        break;
+    }
+}
+
+/* 타입 이름과 위치만 먼저 등록한다. 순환 import에서 서로의 선언을
+   참조할 수 있도록 전체 모듈 그래프를 읽기 전에 실행한다. */
+static void preregister_shapes(Checker *c, asdl_seq *body) {
+    size_t i;
+    for (i = 0; i < asdl_seq_LEN(body); i++)
+        preregister_stmt(c, asdl_seq_GET(body, i));
+}
+
 static ModuleInfo *load_module(Checker *c, const char *name, int line, int col) {
     ModuleInfo *mi = find_module(c, name);
-    Checker mc;
     char file[1024];
     char *source;
     size_t size = 0;
@@ -1240,28 +1725,58 @@ static ModuleInfo *load_module(Checker *c, const char *name, int line, int col) 
     }
     {
         asdl_seq *body = mod->v.Module.body;
+        Checker *mc;
 
-        memset(&mc, 0, sizeof(mc));
-        mc.arena = c->arena;
-        mc.filename = Arena_Strndup(c->arena, file, strlen(file));
-        mc.env = c->env;
-        mc.modules = c->modules;
+        mc = Arena_Alloc(c->arena, sizeof(Checker));
+        memset(mc, 0, sizeof(*mc));
+        mc->arena = c->arena;
+        mc->filename = Arena_Strndup(c->arena, file, strlen(file));
+        mc->env = c->env;
+        mc->modules = c->modules;
+        mc->root = c->root ? c->root : c;
 
-        init_builtins(&mc);
-        push_scope(&mc);
-        collect_body(&mc, body);
-        resolve_bases(&mc);
-        snapshot_exports(&mc, mi, body);
-        check_interfaces(&mc);
-        check_body(&mc, body);
+        init_builtins(mc);
+        push_scope(mc);
+        /* 순환 import 중에도 이 모듈의 타입 이름을 먼저 보이게 한다. */
+        preregister_shapes(mc, body);
+        mi->classes = mc->classes;
+        mi->structs = mc->structs;
+        mi->enums = mc->enums;
+        c->modules = mc->modules;
 
-        c->errors += mc.errors;
-        c->modules = mc.modules;
+        /* 상속·인터페이스·본문 검사는 전체 그래프를 읽은 뒤로 미룬다. */
+        pending_push(mc->root, mc, mi, body);
+
+        preload_imports(mc, body);
+        collect_body(mc, body);
+        /* 전부 모았으니 다른 모듈이 이 모듈의 타입을 온전히 쓸 수 있다. */
+        mi->classes = mc->classes;
+        mi->structs = mc->structs;
+        mi->enums = mc->enums;
+        snapshot_exports(mc, mi, body);
+
+        c->modules = mc->modules;
     }
     mi->loading = 0;
     mi->resolved = 1;
     mi->ok = 1;
     return mi;
+}
+
+/* collect_body보다 먼저 import한 모듈을 읽어 클래스/인터페이스 정보를 준비한다. */
+static void preload_imports(Checker *c, asdl_seq *body) {
+    size_t i;
+    for (i = 0; i < asdl_seq_LEN(body); i++) {
+        stmt_ty s = asdl_seq_GET(body, i);
+        if (s->kind == Import_kind) {
+            const char *dotted = module_dotted_name(c, s->v.Import.path);
+            load_module(c, dotted, s->lineno, s->col_offset);
+        }
+        else if (s->kind == ImportFrom_kind) {
+            const char *dotted = module_dotted_name(c, s->v.ImportFrom.module);
+            load_module(c, dotted, s->lineno, s->col_offset);
+        }
+    }
 }
 
 /* 모듈의 공개 이름을 현재 스코프에 정의한다. */
@@ -1270,7 +1785,7 @@ static void import_module_exports(Checker *c, ModuleInfo *mi) {
     if (!mi || !mi->ok || mi->opaque)
         return;
     for (s = mi->exports; s; s = s->next)
-        define_or_update(c, s->name, s->ty);
+        define_or_update_const(c, s->name, s->ty, s->is_const);
 }
 
 static void handle_import(Checker *c, stmt_ty s) {
@@ -1297,16 +1812,30 @@ static void handle_import(Checker *c, stmt_ty s) {
 static void handle_import_from(Checker *c, stmt_ty s) {
     const char *dotted = module_dotted_name(c, s->v.ImportFrom.module);
     ModuleInfo *mi = load_module(c, dotted, s->lineno, s->col_offset);
+    asdl_seq *names = s->v.ImportFrom.names;
 
-    if (s->v.ImportFrom.name) {
-        const char *name = s->v.ImportFrom.name;
-        Ty *ty = module_export_type(mi, name);
+    if (asdl_seq_LEN(names) > 0) {
+        for (size_t i = 0; i < asdl_seq_LEN(names); i++) {
+            import_name_ty item = asdl_seq_GET(names, i);
+            const char *name = item->name;
+            Sym *exported = module_export_sym(mi, name);
+            Ty *ty = exported ? exported->ty : NULL;
 
-        if (!ty && mi && mi->ok && !mi->opaque && !mi->loading)
-            check_error(c, s->lineno, s->col_offset,
-                        "module '%s' has no member '%s'", dotted, name);
-        define_or_update(c, s->v.ImportFrom.alias ? s->v.ImportFrom.alias : name,
-                         ty ? ty : ty_any(c));
+            if (!ty && (!strcmp(dotted, "System.stdout") ||
+                        !strcmp(dotted, "System.stderr"))) {
+                if (!strcmp(name, "print") || !strcmp(name, "println"))
+                    ty = ty_func(c, NULL, 0, ty_void(c), 1);
+                else
+                    check_error(c, s->lineno, s->col_offset,
+                                "module '%s' has no member '%s'", dotted, name);
+            }
+            if (!ty && mi && mi->ok && !mi->opaque && !mi->loading)
+                check_error(c, s->lineno, s->col_offset,
+                            "module '%s' has no member '%s'", dotted, name);
+            define_or_update_const(c, item->alias ? item->alias : name,
+                                   ty ? ty : ty_any(c),
+                                   exported ? exported->is_const : 0);
+        }
     }
     else {
         if (!strcmp(dotted, "System.stdout") || !strcmp(dotted, "System.stderr")) {
@@ -1316,6 +1845,127 @@ static void handle_import_from(Checker *c, stmt_ty s) {
         import_module_exports(c, mi);
         c->allow_unknown = 1;
     }
+}
+
+/* 컬렉션 메서드의 함수 타입을 만든다. nrequired개는 생략할 수 없다. */
+static Ty **method_params(Checker *c, size_t n) {
+    return n ? Arena_Alloc(c->arena, n * sizeof(Ty *)) : NULL;
+}
+
+static Ty *method_func(Checker *c, size_t nrequired, size_t nparams,
+                       Ty **params, Ty *ret) {
+    Ty *t = ty_func(c, params, nparams, ret, 0);
+    t->nrequired = nrequired;
+    return t;
+}
+
+static Ty *one_param_func(Checker *c, Ty *param, Ty *ret) {
+    Ty **p = method_params(c, 1);
+    p[0] = param;
+    return method_func(c, 1, 1, p, ret);
+}
+
+static Ty *list_method_type(Checker *c, Ty *elem, const char *name) {
+    Ty **p;
+    if (!strcmp(name, "append"))
+        return one_param_func(c, elem, ty_void(c));
+    if (!strcmp(name, "extend"))
+        return one_param_func(c, ty_seq(c, TY_LIST, elem), ty_void(c));
+    if (!strcmp(name, "insert")) {
+        p = method_params(c, 2);
+        p[0] = ty_int(c);
+        p[1] = elem;
+        return method_func(c, 2, 2, p, ty_void(c));
+    }
+    if (!strcmp(name, "pop")) {
+        p = method_params(c, 1);
+        p[0] = ty_int(c);
+        return method_func(c, 0, 1, p, elem);
+    }
+    if (!strcmp(name, "remove"))
+        return one_param_func(c, elem, ty_void(c));
+    if (!strcmp(name, "clear") || !strcmp(name, "reverse"))
+        return method_func(c, 0, 0, NULL, ty_void(c));
+    if (!strcmp(name, "index") || !strcmp(name, "count"))
+        return one_param_func(c, elem, ty_int(c));
+    if (!strcmp(name, "copy"))
+        return method_func(c, 0, 0, NULL, ty_seq(c, TY_LIST, elem));
+    if (!strcmp(name, "map"))
+        return one_param_func(c, one_param_func(c, elem, ty_any(c)),
+                              ty_seq(c, TY_LIST, ty_any(c)));
+    if (!strcmp(name, "filter"))
+        return one_param_func(c, one_param_func(c, elem, ty_bool(c)),
+                              ty_seq(c, TY_LIST, elem));
+    if (!strcmp(name, "sort")) {
+        p = method_params(c, 1);
+        p[0] = one_param_func(c, elem, ty_any(c));
+        return method_func(c, 0, 1, p, ty_void(c));
+    }
+    return NULL;
+}
+
+static Ty *tuple_method_type(Checker *c, Ty *elem, const char *name) {
+    if (!strcmp(name, "index") || !strcmp(name, "count"))
+        return one_param_func(c, elem, ty_int(c));
+    return NULL;
+}
+
+static Ty *dict_method_type(Checker *c, Ty *key, Ty *value, const char *name) {
+    Ty **p;
+    if (!strcmp(name, "get")) {
+        p = method_params(c, 2);
+        p[0] = key;
+        p[1] = value;
+        return method_func(c, 1, 2, p, ty_nullable(c, value));
+    }
+    if (!strcmp(name, "keys"))
+        return method_func(c, 0, 0, NULL, ty_seq(c, TY_LIST, key));
+    if (!strcmp(name, "values"))
+        return method_func(c, 0, 0, NULL, ty_seq(c, TY_LIST, value));
+    if (!strcmp(name, "items"))
+        return method_func(c, 0, 0, NULL, ty_seq(c, TY_LIST, ty_any(c)));
+    if (!strcmp(name, "pop")) {
+        p = method_params(c, 2);
+        p[0] = key;
+        p[1] = value;
+        return method_func(c, 1, 2, p, value);
+    }
+    if (!strcmp(name, "setdefault")) {
+        p = method_params(c, 2);
+        p[0] = key;
+        p[1] = value;
+        return method_func(c, 2, 2, p, value);
+    }
+    if (!strcmp(name, "update"))
+        return one_param_func(c, ty_dict(c, key, value), ty_void(c));
+    if (!strcmp(name, "clear"))
+        return method_func(c, 0, 0, NULL, ty_void(c));
+    if (!strcmp(name, "copy"))
+        return method_func(c, 0, 0, NULL, ty_dict(c, key, value));
+    return NULL;
+}
+
+static Ty *set_method_type(Checker *c, TyKind kind, Ty *elem, const char *name) {
+    Ty *self = ty_seq(c, kind, elem);
+    if (!strcmp(name, "add") || !strcmp(name, "remove") ||
+        !strcmp(name, "discard") || !strcmp(name, "clear") ||
+        !strcmp(name, "pop")) {
+        if (kind == TY_FROZENSET)
+            return NULL;
+        if (!strcmp(name, "clear"))
+            return method_func(c, 0, 0, NULL, ty_void(c));
+        if (!strcmp(name, "pop"))
+            return method_func(c, 0, 0, NULL, elem);
+        return one_param_func(c, elem, ty_void(c));
+    }
+    if (!strcmp(name, "copy"))
+        return method_func(c, 0, 0, NULL, self);
+    if (!strcmp(name, "union") || !strcmp(name, "intersection") ||
+        !strcmp(name, "difference"))
+        return one_param_func(c, ty_any(c), self);
+    if (!strcmp(name, "issubset") || !strcmp(name, "issuperset"))
+        return one_param_func(c, ty_any(c), ty_bool(c));
+    return NULL;
 }
 
 static Ty *member_type(Checker *c, Ty *base, const char *name, int line, int col) {
@@ -1345,8 +1995,53 @@ static Ty *member_type(Checker *c, Ty *base, const char *name, int line, int col
         check_error(c, line, col, "str has no attribute '%s'", name);
         return ty_any(c);
     }
-    if (is_container(base) || base->kind == TY_STRUCT)
+    if (base->kind == TY_LIST || base->kind == TY_TUPLE ||
+        base->kind == TY_DICT || base->kind == TY_SET ||
+        base->kind == TY_FROZENSET) {
+        Ty *t = NULL;
+        const char *what = "list";
+        switch (base->kind) {
+        case TY_LIST:
+            what = "list";
+            t = list_method_type(c, base->a, name);
+            break;
+        case TY_TUPLE:
+            what = "tuple";
+            t = tuple_method_type(c, base->a, name);
+            break;
+        case TY_DICT:
+            what = "dict";
+            t = dict_method_type(c, base->a, base->b, name);
+            break;
+        case TY_SET:
+            what = "set";
+            t = set_method_type(c, TY_SET, base->a, name);
+            break;
+        case TY_FROZENSET:
+            what = "frozenset";
+            t = set_method_type(c, TY_FROZENSET, base->a, name);
+            break;
+        default:
+            break;
+        }
+        if (t)
+            return t;
+        check_error(c, line, col, "%s has no attribute '%s'", what, name);
         return ty_any(c);
+    }
+    if (base->kind == TY_STRUCT) {
+        StructInfo *si = find_struct(c, base->name);
+        if (si) {
+            size_t i;
+            for (i = 0; i < si->nfields; i++) {
+                if (!strcmp(si->fields[i].name, name))
+                    return si->fields[i].ty;
+            }
+            check_error(c, line, col, "struct '%s' has no member '%s'",
+                        base->name, name);
+        }
+        return ty_any(c);
+    }
     return ty_any(c);
 }
 
@@ -1367,11 +2062,16 @@ static Ty *attr_type(Checker *c, expr_ty e, Ty *base) {
     }
     if (base && base->kind == TY_PTR)
         base = base->a ? base->a : ty_any(c);
+    /* 경계가 있는 타입 매개변수는 경계 타입의 멤버를 쓸 수 있다. */
+    while (base && base->kind == TY_ANY && base->bound && base->bound != base)
+        base = base->bound;
 
     if (base && base->kind == TY_CLASS) {
         ClassInfo *ci = find_class(c, base->name);
         if (ci) {
-            Member *m = class_member(ci, name);
+            Member *m;
+            ensure_base(c, ci);
+            m = class_member(ci, name);
             if (m) {
                 ClassInfo *owner = member_owner(ci, name);
                 const char *owner_name = owner ? owner->name : base->name;
@@ -1389,10 +2089,40 @@ static Ty *attr_type(Checker *c, expr_ty e, Ty *base) {
                                     "'%s' member '%s' is protected and cannot be used outside '%s' and its subclasses",
                                     owner_name, name, owner_name);
                 }
-                return m->is_method ? m->fn : m->ty;
+                {
+                    Ty *mt = m->is_method ? m->fn : m->ty;
+                    if (ci->ntparams && base->ntargs)
+                        mt = substitute_ty(c, mt, ci, base);
+                    return mt;
+                }
             }
             if (ci->is_exception && (!strcmp(name, "name") || !strcmp(name, "message")))
                 return ty_str(c);
+            if (ci->is_enum) {
+                EnumInfo *ei;
+                size_t i;
+                if (!strcmp(name, "name") || !strcmp(name, "variant"))
+                    return ty_str(c);
+                if (!strcmp(name, "ordinal") || !strcmp(name, "arity") ||
+                    !strcmp(name, "value"))
+                    return ty_int(c);
+                if (!strcmp(name, "payload"))
+                    return ty_seq(c, TY_LIST, ty_any(c));
+                /* 변형 멤버는 위에서 이미 찾았다. 없는 이름이면 오류다. */
+                ei = find_enum(c, base->name);
+                if (ei) {
+                    for (i = 0; i < ei->nvariants; i++) {
+                        if (!strcmp(ei->variants[i], name))
+                            return ty_class(c, base->name);
+                    }
+                    check_error(c, e->lineno, e->col_offset,
+                                "enum '%s' has no member '%s'", base->name, name);
+                }
+                return ty_class(c, base->name);
+            }
+            /* 순환 import로 상위 클래스를 붙이지 못했으면 상속 멤버를 알 수 없다. */
+            if (ci->base_name && !ci->base)
+                return ty_any(c);
             check_error(c, e->lineno, e->col_offset,
                         "class '%s' has no member '%s'", base->name, name);
             return ty_any(c);
@@ -1402,13 +2132,338 @@ static Ty *attr_type(Checker *c, expr_ty e, Ty *base) {
     return member_type(c, base, name, e->lineno, e->col_offset);
 }
 
+/* 인자 타입에서 제네릭 함수의 타입 인자를 추론한다. */
+static void infer_targs_from(Checker *c, Ty *pat, Ty *actual,
+                             const char **names, Ty **found, size_t n) {
+    size_t i;
+
+    if (!pat || !actual || actual->kind == TY_ANY)
+        return;
+    if (pat->kind == TY_ANY && pat->name) {
+        for (i = 0; i < n; i++) {
+            if (!strcmp(names[i], pat->name)) {
+                if (!found[i])
+                    found[i] = actual;
+                else if (found[i]->kind == TY_INT && actual->kind == TY_FLOAT)
+                    found[i] = ty_float(c);
+                return;
+            }
+        }
+        return;
+    }
+    switch (pat->kind) {
+    case TY_PTR:
+        infer_targs_from(c, pat->a, actual->kind == TY_PTR ? actual->a : actual,
+                         names, found, n);
+        break;
+    case TY_LIST:
+    case TY_TUPLE:
+    case TY_SET:
+    case TY_FROZENSET:
+        if (actual->kind == pat->kind)
+            infer_targs_from(c, pat->a, actual->a, names, found, n);
+        break;
+    case TY_DICT:
+        if (actual->kind == TY_DICT) {
+            infer_targs_from(c, pat->a, actual->a, names, found, n);
+            infer_targs_from(c, pat->b, actual->b, names, found, n);
+        }
+        break;
+    case TY_FUNC:
+        if (actual->kind == TY_FUNC) {
+            for (i = 0; i < pat->nparams && i < actual->nparams; i++)
+                infer_targs_from(c, pat->params[i], actual->params[i], names, found, n);
+            infer_targs_from(c, pat->ret, actual->ret, names, found, n);
+        }
+        break;
+    case TY_CLASS:
+    case TY_STRUCT:
+        if (actual->kind == pat->kind && !strcmp(pat->name, actual->name)) {
+            for (i = 0; i < pat->ntargs && i < actual->ntargs; i++)
+                infer_targs_from(c, pat->targs[i], actual->targs[i], names, found, n);
+        }
+        break;
+    default:
+        break;
+    }
+}
+
+/* 추론한 타입 인자로 제네릭 함수의 반환 타입을 바꾼다. */
+static Ty *generic_ret(Checker *c, Ty *fn, Ty **found) {
+    ClassInfo fake;
+    Ty use;
+    Ty **targs;
+    size_t i;
+
+    memset(&fake, 0, sizeof(fake));
+    memset(&use, 0, sizeof(use));
+    targs = Arena_Alloc(c->arena, fn->ntparams * sizeof(Ty *));
+    for (i = 0; i < fn->ntparams; i++) {
+        if (found[i]) {
+            targs[i] = found[i];
+        }
+        else {
+            Ty *marker = ty_any(c);
+            marker->name = fn->tparams[i];
+            targs[i] = marker;
+        }
+    }
+    fake.tparams = fn->tparams;
+    fake.ntparams = fn->ntparams;
+    use.kind = TY_CLASS;
+    use.targs = targs;
+    use.ntargs = fn->ntparams;
+    return substitute_ty(c, fn->ret, &fake, &use);
+}
+
+/* 호출 인자를 시그니처의 매개변수 슬롯에 배치한 결과. */
+typedef struct {
+    expr_ty *slot;         /* 노멀 매개변수 수만큼, 빈 슬롯은 NULL */
+    unsigned char *given;
+    size_t nnormal;
+    Ty *vararg_elem;       /* 가변 위치 인자의 원소 타입 (없으면 NULL) */
+    expr_ty *extras;
+    size_t nextras;
+    size_t npos;
+    int err;               /* 1 위치 인자 과다, 2 모르는 키워드, 3 중복 키워드, 4 필수 인자 누락 */
+    const char *err_name;
+} ArgLayout;
+
+static int layout_call(Checker *c, Ty *sig, asdl_seq *args, asdl_seq *kws, ArgLayout *out) {
+    size_t nargs = args ? asdl_seq_LEN(args) : 0;
+    size_t nkw = kws ? asdl_seq_LEN(kws) : 0;
+    size_t i, j;
+
+    memset(out, 0, sizeof(*out));
+    out->npos = nargs;
+    out->nnormal = sig->nparams;
+    out->slot = sig->nparams ? Arena_Alloc(c->arena, sig->nparams * sizeof(expr_ty)) : NULL;
+    out->given = sig->nparams ? Arena_Alloc(c->arena, sig->nparams) : NULL;
+    if (sig->nparams)
+        memset(out->given, 0, sig->nparams);
+    if (sig->has_vararg || sig->varargs)
+        out->vararg_elem = sig->vararg_elem ? sig->vararg_elem : ty_any(c);
+
+    if (nargs > sig->nparams && !out->vararg_elem) {
+        out->err = 1;
+        return 0;
+    }
+    for (i = 0; i < nargs && i < sig->nparams; i++) {
+        out->slot[i] = asdl_seq_GET(args, i);
+        out->given[i] = 1;
+    }
+    if (nargs > sig->nparams) {
+        out->nextras = nargs - sig->nparams;
+        out->extras = Arena_Alloc(c->arena, out->nextras * sizeof(expr_ty));
+        for (i = sig->nparams; i < nargs; i++)
+            out->extras[i - sig->nparams] = asdl_seq_GET(args, i);
+    }
+    for (j = 0; j < nkw; j++) {
+        keyword_ty kw = asdl_seq_GET(kws, j);
+        int found = -1;
+        for (i = 0; i < sig->nparams; i++) {
+            if (sig->param_names && sig->param_names[i] &&
+                !strcmp(sig->param_names[i], kw->name)) {
+                found = (int)i;
+                break;
+            }
+        }
+        if (found >= 0) {
+            if (out->given[found]) {
+                out->err = 3;
+                out->err_name = kw->name;
+                return 0;
+            }
+            out->slot[found] = kw->value;
+            out->given[found] = 1;
+        }
+        else if (!sig->has_varkwarg) {
+            out->err = 2;
+            out->err_name = kw->name;
+            return 0;
+        }
+    }
+    for (i = 0; i < sig->nparams; i++) {
+        if (!out->given[i] && i < sig->nrequired) {
+            out->err = 4;
+            out->err_name = sig->param_names ? sig->param_names[i] : NULL;
+            return 0;
+        }
+    }
+    return 1;
+}
+
+static void report_layout_error(Checker *c, Ty *sig, ArgLayout *lay, expr_ty at) {
+    switch (lay->err) {
+    case 1:
+        check_error(c, at->lineno, at->col_offset,
+                    "function takes %zu argument(s) but %zu were given",
+                    sig->nparams, lay->npos);
+        break;
+    case 2:
+        check_error(c, at->lineno, at->col_offset,
+                    "unexpected keyword argument '%s'",
+                    lay->err_name ? lay->err_name : "");
+        break;
+    case 3:
+        check_error(c, at->lineno, at->col_offset,
+                    "got multiple values for argument '%s'",
+                    lay->err_name ? lay->err_name : "");
+        break;
+    case 4:
+        check_error(c, at->lineno, at->col_offset,
+                    "missing required argument '%s'",
+                    lay->err_name ? lay->err_name : "");
+        break;
+    default:
+        check_error(c, at->lineno, at->col_offset,
+                    "no function definition accepts %zu argument(s)", lay->npos);
+        break;
+    }
+}
+
+/* 시그니처에 맞춰 인자를 검사한다. report=0이면 진단 없이 성공 여부만 본다. */
+static int check_call_args(Checker *c, Ty *sig, asdl_seq *args, asdl_seq *kws,
+                           int report, expr_ty at, const char *what, Ty **found) {
+    ArgLayout lay;
+    size_t i, nkw;
+
+    if (!layout_call(c, sig, args, kws, &lay)) {
+        if (report)
+            report_layout_error(c, sig, &lay, at);
+        return 0;
+    }
+    for (i = 0; i < lay.nnormal; i++) {
+        Ty *arg_ty;
+        if (!lay.given[i])
+            continue;
+        arg_ty = infer(c, lay.slot[i]);
+        if (found && sig->tparams)
+            infer_targs_from(c, sig->params[i], arg_ty, sig->tparams, found, sig->ntparams);
+        if (report)
+            require_assignable(c, sig->params[i], arg_ty, lay.slot[i], what);
+        else if (!assignable(c, sig->params[i], arg_ty))
+            return 0;
+    }
+    if (lay.vararg_elem) {
+        for (i = 0; i < lay.nextras; i++) {
+            Ty *arg_ty = infer(c, lay.extras[i]);
+            if (found && sig->tparams)
+                infer_targs_from(c, lay.vararg_elem, arg_ty, sig->tparams,
+                                 found, sig->ntparams);
+            if (report)
+                require_assignable(c, lay.vararg_elem, arg_ty, lay.extras[i], what);
+            else if (!assignable(c, lay.vararg_elem, arg_ty))
+                return 0;
+        }
+    }
+    if (sig->has_varkwarg) {
+        Ty *want = sig->varkwarg_elem ? sig->varkwarg_elem : ty_any(c);
+        nkw = kws ? asdl_seq_LEN(kws) : 0;
+        for (i = 0; i < nkw; i++) {
+            keyword_ty kw = asdl_seq_GET(kws, i);
+            size_t k;
+            int is_normal = 0;
+            Ty *arg_ty;
+            for (k = 0; k < sig->nparams; k++) {
+                if (sig->param_names && sig->param_names[k] &&
+                    !strcmp(sig->param_names[k], kw->name)) {
+                    is_normal = 1;
+                    break;
+                }
+            }
+            if (is_normal)
+                continue;
+            arg_ty = infer(c, kw->value);
+            if (found && sig->tparams)
+                infer_targs_from(c, want, arg_ty, sig->tparams, found, sig->ntparams);
+            if (report)
+                require_assignable(c, want, arg_ty, kw->value, what);
+            else if (!assignable(c, want, arg_ty))
+                return 0;
+        }
+    }
+    return 1;
+}
+
+/* 생성자 호출(new)은 위치 인자만 받는다. */
+static int ctor_accepts(Checker *c, Ty *sig, asdl_seq *args, size_t nargs) {
+    size_t i;
+    int variadic = sig->has_vararg || sig->varargs;
+
+    if (nargs > sig->nparams && !variadic)
+        return 0;
+    if (nargs < sig->nrequired)
+        return 0;
+    for (i = 0; i < nargs; i++) {
+        Ty *at = infer(c, asdl_seq_GET(args, i));
+        Ty *want = i < sig->nparams ? sig->params[i] : sig->vararg_elem;
+        if (want && !assignable(c, want, at))
+            return 0;
+    }
+    return 1;
+}
+
+/* 생성자 오버로드 중 인자와 맞는 시그니처를 고르고 인자를 검사한다. */
+static void check_ctor_call(Checker *c, const char *cls, Ty *sig,
+                            asdl_seq *args, size_t nargs, int line, int col) {
+    size_t i, k;
+    Ty *fallback = NULL;
+
+    if (!sig)
+        return;
+    if (sig->kind == TY_OVERLOAD) {
+        for (k = 0; k < sig->noverloads; k++) {
+            Ty *s = sig->overloads[k];
+            if (!s || s->kind != TY_FUNC)
+                continue;
+            if (!fallback)
+                fallback = s;
+            if (ctor_accepts(c, s, args, nargs))
+                return;
+        }
+        if (fallback) {
+            for (i = 0; i < nargs; i++) {
+                Ty *want = i < fallback->nparams ? fallback->params[i]
+                                                 : fallback->vararg_elem;
+                if (want)
+                    require_assignable(c, want, infer(c, asdl_seq_GET(args, i)),
+                                       asdl_seq_GET(args, i), "constructor argument");
+            }
+        }
+        check_error(c, line, col, "no constructor of '%s' accepts %zu argument(s)",
+                    cls, nargs);
+        return;
+    }
+    if (nargs > sig->nparams && !sig->has_vararg) {
+        check_error(c, line, col, "constructor of '%s' takes %zu argument(s)",
+                    cls, sig->nparams);
+        return;
+    }
+    if (nargs < sig->nrequired) {
+        check_error(c, line, col, "constructor of '%s' requires at least %zu argument(s)",
+                    cls, sig->nrequired);
+        return;
+    }
+    for (i = 0; i < nargs; i++) {
+        Ty *want = i < sig->nparams ? sig->params[i] : sig->vararg_elem;
+        if (want)
+            require_assignable(c, want, infer(c, asdl_seq_GET(args, i)),
+                               asdl_seq_GET(args, i), "constructor argument");
+    }
+}
+
 static Ty *call_result(Checker *c, expr_ty call, Ty *callee) {
     asdl_seq *args = call->v.Call.args;
+    asdl_seq *kws = call->v.Call.keywords;
     size_t nargs = args ? asdl_seq_LEN(args) : 0;
+    size_t nkw = kws ? asdl_seq_LEN(kws) : 0;
     size_t i;
 
     for (i = 0; i < nargs; i++)
         infer(c, asdl_seq_GET(args, i));
+    for (i = 0; i < nkw; i++)
+        infer(c, ((keyword_ty)asdl_seq_GET(kws, i))->value);
 
     if (!callee || callee->kind == TY_ANY)
         return ty_any(c);
@@ -1417,28 +2472,16 @@ static Ty *call_result(Checker *c, expr_ty call, Ty *callee) {
         size_t k;
         for (k = 0; k < callee->noverloads; k++) {
             Ty *sig = callee->overloads[k];
-            int ok = 1;
+            ArgLayout lay;
             if (!sig || sig->kind != TY_FUNC)
                 continue;
-            if (!sig->varargs && nargs != sig->nparams)
-                continue;
-            for (i = 0; i < nargs && i < sig->nparams; i++) {
-                Ty *arg_ty = infer(c, asdl_seq_GET(args, i));
-                if (!assignable(c, sig->params[i], arg_ty)) {
-                    ok = 0;
-                    break;
-                }
-            }
-            if (ok)
-                return sig->ret;
-            if (!fallback)
+            if (layout_call(c, sig, args, kws, &lay) && !fallback)
                 fallback = sig;
+            if (check_call_args(c, sig, args, kws, 0, call, "argument", NULL))
+                return sig->ret;
         }
         if (fallback) {
-            for (i = 0; i < nargs && i < fallback->nparams; i++) {
-                expr_ty arg = asdl_seq_GET(args, i);
-                require_assignable(c, fallback->params[i], infer(c, arg), arg, "argument");
-            }
+            check_call_args(c, fallback, args, kws, 1, call, "argument", NULL);
             return fallback->ret;
         }
         check_error(c, call->lineno, call->col_offset,
@@ -1446,15 +2489,27 @@ static Ty *call_result(Checker *c, expr_ty call, Ty *callee) {
         return ty_any(c);
     }
     if (callee->kind == TY_FUNC) {
-        if (!callee->varargs && nargs != callee->nparams) {
-            check_error(c, call->lineno, call->col_offset,
-                        "function takes %zu argument(s) but %zu were given",
-                        callee->nparams, nargs);
+        Ty **found = NULL;
+        ArgLayout lay;
+        if (!layout_call(c, callee, args, kws, &lay)) {
+            report_layout_error(c, callee, &lay, call);
             return callee->ret;
         }
-        for (i = 0; i < nargs && i < callee->nparams; i++) {
-            expr_ty arg = asdl_seq_GET(args, i);
-            require_assignable(c, callee->params[i], infer(c, arg), arg, "argument");
+        if (callee->ntparams) {
+            found = Arena_Alloc(c->arena, callee->ntparams * sizeof(Ty *));
+            memset(found, 0, callee->ntparams * sizeof(Ty *));
+        }
+        check_call_args(c, callee, args, kws, 1, call, "argument", found);
+        if (found) {
+            for (i = 0; i < callee->ntparams; i++) {
+                if (found[i] && callee->tbounds[i] &&
+                    !assignable(c, callee->tbounds[i], found[i]))
+                    check_error(c, call->lineno, call->col_offset,
+                                "type argument '%s' must satisfy bound '%s' but got '%s'",
+                                callee->tparams[i], ty_name(callee->tbounds[i]),
+                                ty_name(found[i]));
+            }
+            return generic_ret(c, callee, found);
         }
         return callee->ret;
     }
@@ -1462,15 +2517,14 @@ static Ty *call_result(Checker *c, expr_ty call, Ty *callee) {
         ClassInfo *ci = find_class(c, callee->name);
         if (ci && ci->is_exception)
             return callee;
+        if (ci && ci->is_enum)
+            return callee;           /* 페이로드 변형 생성자: 인자는 런타임이 검사한다 */
         if (ci && ci->ctor) {
-            for (i = 0; i < nargs && i < ci->ctor->nparams; i++) {
-                expr_ty arg = asdl_seq_GET(args, i);
-                require_assignable(c, ci->ctor->params[i], infer(c, arg), arg, "constructor argument");
-            }
-            if (!ci->ctor->varargs && nargs != ci->ctor->nparams)
-                check_error(c, call->lineno, call->col_offset,
-                            "constructor of '%s' takes %zu argument(s)",
-                            callee->name, ci->ctor->nparams);
+            Ty *sig = ci->ctor;
+            if (ci->ntparams && callee->ntargs)
+                sig = substitute_ty(c, sig, ci, callee);
+            check_ctor_call(c, callee->name, sig, args, nargs,
+                            call->lineno, call->col_offset);
             return callee;
         }
         if (nargs != 0 && ci)
@@ -1573,6 +2627,21 @@ static Ty *infer(Checker *c, expr_ty e) {
         (void)value;
         return ty_any(c);
     }
+    case Ternary_kind: {
+        Ty *body, *orelse, *t;
+        int nullable;
+        infer(c, e->v.Ternary.test);
+        body = infer(c, e->v.Ternary.body);
+        orelse = infer(c, e->v.Ternary.orelse);
+        nullable = body->kind == TY_NULL || orelse->kind == TY_NULL ||
+                   body->nullable || orelse->nullable;
+        t = unify(c, ty_non_null(c, body), ty_non_null(c, orelse));
+        if (t->kind == TY_ANY && body->kind != TY_ANY && orelse->kind != TY_ANY)
+            check_error(c, e->lineno, e->col_offset,
+                        "ternary branches have incompatible types: %s and %s",
+                        ty_name(body), ty_name(orelse));
+        return nullable ? ty_nullable(c, t) : t;
+    }
     case Coalesce_kind: {
         Ty *left = infer(c, e->v.Coalesce.left);
         Ty *right = infer(c, e->v.Coalesce.right);
@@ -1656,7 +2725,15 @@ static Ty *infer(Checker *c, expr_ty e) {
         StructInfo *si = find_struct(c, e->v.New.cls);
         ClassInfo *ci = find_class(c, e->v.New.cls);
         size_t nargs = asdl_seq_LEN(e->v.New.args);
+        size_t ntype_args = asdl_seq_LEN(e->v.New.type_args);
+        Ty *result = ty_class(c, e->v.New.cls);
         size_t i;
+        if (ntype_args) {
+            result->targs = Arena_Alloc(c->arena, ntype_args * sizeof(Ty *));
+            for (i = 0; i < ntype_args; i++)
+                result->targs[i] = typeref_to_ty(c, asdl_seq_GET(e->v.New.type_args, i));
+            result->ntargs = ntype_args;
+        }
         if (si)
             return ty_struct(c, si->name);
         if (ci && ci->is_interface) {
@@ -1666,16 +2743,35 @@ static Ty *infer(Checker *c, expr_ty e) {
                 infer(c, asdl_seq_GET(e->v.New.args, i));
             return ty_any(c);
         }
-        if (ci && ci->ctor) {
-            for (i = 0; i < nargs && i < ci->ctor->nparams; i++) {
-                expr_ty arg = asdl_seq_GET(e->v.New.args, i);
-                require_assignable(c, ci->ctor->params[i], infer(c, arg), arg,
-                                   "constructor argument");
+        if (ci && ci->is_enum) {
+            check_error(c, e->lineno, e->col_offset,
+                        "enum '%s' cannot be instantiated; use a variant", e->v.New.cls);
+            for (i = 0; i < nargs; i++)
+                infer(c, asdl_seq_GET(e->v.New.args, i));
+            return ty_any(c);
+        }
+        if (ci && ci->ntparams != ntype_args) {
+            check_error(c, e->lineno, e->col_offset,
+                        "'%s' expects %zu type argument(s) but %zu were given",
+                        e->v.New.cls, ci->ntparams, ntype_args);
+        }
+        else if (ci && ci->tparam_bounds) {
+            for (i = 0; i < ntype_args; i++) {
+                if (ci->tparam_bounds[i] &&
+                    !assignable(c, ci->tparam_bounds[i], result->targs[i]))
+                    check_error(c, e->lineno, e->col_offset,
+                                "type argument '%s' of '%s' must satisfy bound '%s' but got '%s'",
+                                ci->tparams[i], e->v.New.cls,
+                                ty_name(ci->tparam_bounds[i]),
+                                ty_name(result->targs[i]));
             }
-            if (!ci->ctor->varargs && nargs != ci->ctor->nparams)
-                check_error(c, e->lineno, e->col_offset,
-                            "constructor of '%s' takes %zu argument(s)",
-                            e->v.New.cls, ci->ctor->nparams);
+        }
+        if (ci && ci->ctor) {
+            Ty *ctor_sig = ci->ctor;
+            if (ci->ntparams && ci->ntparams == ntype_args)
+                ctor_sig = substitute_ty(c, ci->ctor, ci, result);
+            check_ctor_call(c, e->v.New.cls, ctor_sig, e->v.New.args, nargs,
+                            e->lineno, e->col_offset);
         }
         else if (ci && nargs != 0) {
             check_error(c, e->lineno, e->col_offset,
@@ -1683,7 +2779,7 @@ static Ty *infer(Checker *c, expr_ty e) {
         }
         for (i = 0; i < nargs; i++)
             infer(c, asdl_seq_GET(e->v.New.args, i));
-        return ty_class(c, e->v.New.cls);
+        return result;
     }
     case Attribute_kind:
         return attr_type(c, e, infer(c, e->v.Attribute.value));
@@ -1738,7 +2834,29 @@ static Ty *infer(Checker *c, expr_ty e) {
             return is_container(container) || container->kind == TY_STR
                 ? container : ty_any(c);
         }
-        infer(c, e->v.Subscript.index);
+        {
+            Ty *index = infer(c, e->v.Subscript.index);
+            if (index && index->kind != TY_ANY) {
+                if (container->kind == TY_DICT) {
+                    if (container->a && container->a->kind != TY_ANY &&
+                        !assignable(c, container->a, index))
+                        check_error(c, e->lineno, e->col_offset,
+                                    "dict key: expected %s but got %s",
+                                    ty_name(container->a), ty_name(index));
+                }
+                else if ((container->kind == TY_LIST ||
+                          container->kind == TY_TUPLE ||
+                          container->kind == TY_STR) &&
+                         index->kind != TY_INT)
+                    check_error(c, e->lineno, e->col_offset,
+                                "index must be int but got %s", ty_name(index));
+                else if (container->kind == TY_SET ||
+                         container->kind == TY_FROZENSET)
+                    check_error(c, e->lineno, e->col_offset,
+                                "'%s' is not subscriptable",
+                                container->kind == TY_SET ? "set" : "frozenset");
+            }
+        }
         if (container->kind == TY_DICT)
             return container->b;
         if (container->kind == TY_LIST || container->kind == TY_TUPLE ||
@@ -1880,14 +2998,18 @@ static void collect_class(Checker *c, stmt_ty s) {
     ci->ninterfaces = asdl_seq_LEN(s->v.ClassDef.interfaces);
     if (ci->ninterfaces) {
         ci->interfaces = Arena_Alloc(c->arena, ci->ninterfaces * sizeof(const char *));
+        ci->interface_uses = Arena_Alloc(c->arena, ci->ninterfaces * sizeof(typeref_ty));
         for (i = 0; i < ci->ninterfaces; i++) {
             typeref_ty iface = asdl_seq_GET(s->v.ClassDef.interfaces, i);
             ci->interfaces[i] = iface && iface->kind == Named_kind
                 ? iface->v.Named.name : "";
+            ci->interface_uses[i] = iface;
         }
     }
-
+    ci->ntparams = asdl_seq_LEN(s->v.ClassDef.type_params);
     push_tparams(c, s->v.ClassDef.type_params, &save);
+    ci->tparams = c->tparams;
+    ci->tparam_bounds = c->tparam_bounds;
     for (i = 0; i < n; i++) {
         member_ty m = asdl_seq_GET(s->v.ClassDef.members, i);
         switch (m->kind) {
@@ -1899,13 +3021,20 @@ static void collect_class(Checker *c, stmt_ty s) {
             class_add_member(c, ci, m->v.Property.name, typeref_to_ty(c, m->v.Property.ty),
                              NULL, 0, m->v.Property.access);
             break;
-        case Method_kind:
-            class_add_member(c, ci, m->v.Method.name, NULL,
-                             params_to_func(c, m->v.Method.params, m->v.Method.returns, 0),
+        case Method_kind: {
+            TParamSave msave;
+            Ty *fn;
+            push_tparams(c, m->v.Method.type_params, &msave);
+            fn = params_to_func(c, m->v.Method.params, m->v.Method.returns, 0);
+            attach_tparams(c, fn, m->v.Method.type_params);
+            pop_tparams(c, &msave);
+            class_add_member(c, ci, m->v.Method.name, NULL, fn,
                              1, m->v.Method.access);
             break;
+        }
         case Constructor_kind:
-            ci->ctor = params_to_func(c, m->v.Constructor.params, NULL, 0);
+            ci->ctor = ty_overload_append(c, ci->ctor,
+                                          params_to_func(c, m->v.Constructor.params, NULL, 0));
             break;
         case Getter_kind:
             if (!class_member(ci, m->v.Getter.name))
@@ -1923,6 +3052,7 @@ static void collect_class(Checker *c, stmt_ty s) {
 static void collect_interface(Checker *c, stmt_ty s) {
     ClassInfo *ci = find_class(c, s->v.InterfaceDef.name);
     size_t i, n = asdl_seq_LEN(s->v.InterfaceDef.methods);
+    TParamSave save;
 
     if (!ci) {
         ci = Arena_Alloc(c->arena, sizeof(ClassInfo));
@@ -1934,11 +3064,16 @@ static void collect_interface(Checker *c, stmt_ty s) {
         ci->next = c->classes;
         c->classes = ci;
     }
+    ci->ntparams = asdl_seq_LEN(s->v.InterfaceDef.type_params);
+    push_tparams(c, s->v.InterfaceDef.type_params, &save);
+    ci->tparams = c->tparams;
+    ci->tparam_bounds = c->tparam_bounds;
     for (i = 0; i < n; i++) {
         signature_ty sig = asdl_seq_GET(s->v.InterfaceDef.methods, i);
         class_add_member(c, ci, sig->name, NULL,
                          params_to_func(c, sig->params, sig->returns, 0), 1, Public);
     }
+    pop_tparams(c, &save);
 }
 
 static void collect_struct(Checker *c, stmt_ty s) {
@@ -1978,6 +3113,10 @@ static Ty *shallow_type(Checker *c, expr_ty e) {
     switch (e->kind) {
     case Constant_kind:
         return constant_type(c, e->v.Constant.value);
+    case UnaryOp_kind:
+        if (e->v.UnaryOp.op == Not)
+            return ty_bool(c);
+        return shallow_type(c, e->v.UnaryOp.operand);
     case List_kind: {
         Ty *elem = NULL;
         size_t i;
@@ -2012,6 +3151,14 @@ static Ty *shallow_type(Checker *c, expr_ty e) {
     }
     case Lambda_kind:
         return params_to_func(c, e->v.Lambda.params, e->v.Lambda.returns, 1);
+    case Ternary_kind: {
+        Ty *body = shallow_type(c, e->v.Ternary.body);
+        Ty *orelse = shallow_type(c, e->v.Ternary.orelse);
+        int nullable = body->kind == TY_NULL || orelse->kind == TY_NULL ||
+                       body->nullable || orelse->nullable;
+        Ty *t = unify(c, ty_non_null(c, body), ty_non_null(c, orelse));
+        return nullable ? ty_nullable(c, t) : t;
+    }
     case New_kind: {
         StructInfo *si = find_struct(c, e->v.New.cls);
         if (si)
@@ -2034,6 +3181,7 @@ static void collect_stmt(Checker *c, stmt_ty s) {
         Ty *fn;
         push_tparams(c, s->v.FunctionDef.type_params, &save);
         fn = params_to_func(c, s->v.FunctionDef.params, s->v.FunctionDef.returns, 0);
+        attach_tparams(c, fn, s->v.FunctionDef.type_params);
         pop_tparams(c, &save);
         define_or_overload(c, s->v.FunctionDef.name, fn);
         break;
@@ -2073,6 +3221,10 @@ static void collect_stmt(Checker *c, stmt_ty s) {
             ei = Arena_Alloc(c->arena, sizeof(EnumInfo));
             memset(ei, 0, sizeof(*ei));
             ei->name = s->v.EnumDef.name;
+            ei->next = c->enums;
+            c->enums = ei;
+        }
+        if (!ei->variants) {
             ei->nvariants = n;
             if (n) {
                 ei->variants = Arena_Alloc(c->arena, n * sizeof(const char *));
@@ -2090,8 +3242,41 @@ static void collect_stmt(Checker *c, stmt_ty s) {
                     ei->params[i][j] = p->ty ? typeref_to_ty(c, p->ty) : ty_any(c);
                 }
             }
-            ei->next = c->enums;
-            c->enums = ei;
+        }
+        {
+            /* enum 값을 클래스처럼 다룬다: 변형은 값 멤버, 메서드는 메서드 멤버. */
+            ClassInfo *ci = find_class(c, s->v.EnumDef.name);
+            if (!ci) {
+                size_t k;
+                ci = Arena_Alloc(c->arena, sizeof(ClassInfo));
+                memset(ci, 0, sizeof(*ci));
+                ci->name = s->v.EnumDef.name;
+                ci->is_enum = 1;
+                ci->line = s->lineno;
+                ci->col = s->col_offset;
+                ci->next = c->classes;
+                c->classes = ci;
+                for (k = 0; k < n; k++) {
+                    enum_member_ty em = asdl_seq_GET(s->v.EnumDef.members, k);
+                    class_add_member(c, ci, em->name,
+                                     ty_class(c, s->v.EnumDef.name),
+                                     NULL, 0, Public);
+                }
+                for (k = 0; k < asdl_seq_LEN(s->v.EnumDef.methods); k++) {
+                    member_ty m = asdl_seq_GET(s->v.EnumDef.methods, k);
+                    if (m->kind == Method_kind) {
+                        TParamSave msave;
+                        Ty *fn;
+                        push_tparams(c, m->v.Method.type_params, &msave);
+                        fn = params_to_func(c, m->v.Method.params,
+                                            m->v.Method.returns, 0);
+                        attach_tparams(c, fn, m->v.Method.type_params);
+                        pop_tparams(c, &msave);
+                        class_add_member(c, ci, m->v.Method.name, NULL, fn, 1,
+                                         m->v.Method.access);
+                    }
+                }
+            }
         }
         define_or_update(c, s->v.EnumDef.name, ty_class(c, s->v.EnumDef.name));
         break;
@@ -2105,7 +3290,7 @@ static void collect_stmt(Checker *c, stmt_ty s) {
         if (ty->kind == TY_ANY && s->v.VarDecl.init &&
             s->v.VarDecl.init->kind == ExprInit_kind)
             ty = shallow_type(c, s->v.VarDecl.init->v.ExprInit.value);
-        define_shadow(c, s->v.VarDecl.name, ty);
+        define_shadow_const(c, s->v.VarDecl.name, ty, s->v.VarDecl.is_const);
         break;
     }
     case Assign_kind:
@@ -2121,20 +3306,23 @@ static void collect_stmt(Checker *c, stmt_ty s) {
         const char *bind = s->v.Import.alias
             ? s->v.Import.alias : asdl_seq_GET(s->v.Import.path, n - 1);
         define_or_update(c, bind, ty_module(c, dotted));
-        if (s->v.Import.wildcard)
+        if (s->v.Import.wildcard && strcmp(dotted, "System.stdout") &&
+            strcmp(dotted, "System.stderr"))
             c->allow_unknown = 1;
         break;
     }
-    case ImportFrom_kind:
-        if (s->v.ImportFrom.name) {
-            define_or_update(c, s->v.ImportFrom.alias ? s->v.ImportFrom.alias
-                                                      : s->v.ImportFrom.name,
-                             ty_any(c));
-        }
-        else {
+    case ImportFrom_kind: {
+        asdl_seq *names = s->v.ImportFrom.names;
+        if (asdl_seq_LEN(names) == 0) {
             c->allow_unknown = 1;
+            break;
+        }
+        for (size_t i = 0; i < asdl_seq_LEN(names); i++) {
+            import_name_ty item = asdl_seq_GET(names, i);
+            define_or_update(c, item->alias ? item->alias : item->name, ty_any(c));
         }
         break;
+    }
     case Export_kind:
         collect_stmt(c, s->v.Export.body);
         break;
@@ -2151,6 +3339,30 @@ static void resolve_bases(Checker *c) {
     }
 }
 
+/* 인터페이스 시그니처와 구현 메서드(오버로드 묶음)가 맞는지. */
+static int func_overload_matches(Checker *c, Ty *impl, Ty *want) {
+    size_t i;
+    if (!impl || !want)
+        return 0;
+    if (want->kind == TY_OVERLOAD) {
+        if (want->noverloads == 0)
+            return 0;
+        for (i = 0; i < want->noverloads; i++) {
+            if (!func_overload_matches(c, impl, want->overloads[i]))
+                return 0;
+        }
+        return 1;
+    }
+    if (impl->kind == TY_OVERLOAD) {
+        for (i = 0; i < impl->noverloads; i++) {
+            if (same_ty(c, impl->overloads[i], want))
+                return 1;
+        }
+        return 0;
+    }
+    return same_ty(c, impl, want);
+}
+
 /* implements한 인터페이스의 메서드가 모두 구현되었는지 확인한다. */
 static void check_interfaces(Checker *c) {
     ClassInfo *ci;
@@ -2160,21 +3372,75 @@ static void check_interfaces(Checker *c) {
             continue;
         for (k = 0; k < ci->ninterfaces; k++) {
             ClassInfo *iface = find_class(c, ci->interfaces[k]);
+            typeref_ty use = ci->interface_uses ? ci->interface_uses[k] : NULL;
+            size_t nargs = use && use->kind == Named_kind && use->v.Named.args
+                ? asdl_seq_LEN(use->v.Named.args) : 0;
             Member *im;
             if (!iface || !iface->is_interface)
                 continue;            /* 외부 인터페이스는 모양을 모르므로 넘어간다 */
+            if (iface->ntparams != nargs) {
+                check_error(c, ci->line, ci->col,
+                            "interface '%s' expects %zu type argument(s) but %zu were given",
+                            iface->name, iface->ntparams, nargs);
+                continue;
+            }
+            if (iface->tparam_bounds) {
+                size_t ai;
+                for (ai = 0; ai < nargs; ai++) {
+                    typeref_ty aty = asdl_seq_GET(use->v.Named.args, ai);
+                    const char *aname = aty && aty->kind == Named_kind
+                        ? aty->v.Named.name : NULL;
+                    Ty *arg_ty;
+                    size_t tj;
+                    int own = 0;
+                    if (!iface->tparam_bounds[ai])
+                        continue;
+                    if (aname) {
+                        for (tj = 0; tj < ci->ntparams; tj++) {
+                            if (!strcmp(ci->tparams[tj], aname)) {
+                                own = 1;
+                                break;
+                            }
+                        }
+                    }
+                    if (own)
+                        continue;
+                    arg_ty = typeref_to_ty(c, aty);
+                    if (!assignable(c, iface->tparam_bounds[ai], arg_ty))
+                        check_error(c, ci->line, ci->col,
+                                    "type argument '%s' of interface '%s' must satisfy bound '%s' but got '%s'",
+                                    iface->tparams[ai], iface->name,
+                                    ty_name(iface->tparam_bounds[ai]),
+                                    ty_name(arg_ty));
+                }
+            }
             for (im = iface->members; im; im = im->next) {
                 Member *impl = class_member(ci, im->name);
+                Ty *want;
                 if (!impl || !impl->is_method) {
                     check_error(c, ci->line, ci->col,
                                 "class '%s' does not implement interface '%s' method '%s'",
                                 ci->name, iface->name, im->name);
                     continue;
                 }
-                if (!same_ty(c, impl->fn, im->fn))
-                    check_error(c, ci->line, ci->col,
-                                "'%s' method '%s' does not match interface '%s'",
-                                ci->name, im->name, iface->name);
+                want = im->fn;
+                if (iface->ntparams && nargs == iface->ntparams) {
+                    Ty *use_ty = ty_class(c, iface->name);
+                    size_t ai;
+                    use_ty->targs = Arena_Alloc(c->arena, nargs * sizeof(Ty *));
+                    for (ai = 0; ai < nargs; ai++)
+                        use_ty->targs[ai] = typeref_to_ty(c, asdl_seq_GET(use->v.Named.args, ai));
+                    use_ty->ntargs = nargs;
+                    want = substitute_ty(c, want, iface, use_ty);
+                }
+                {
+                    /* 오버로드 묶음: 인터페이스의 모든 시그니처가 구현 쪽 하나와 맞아야 한다. */
+                    Ty *impl_fn = impl->fn;
+                    if (!func_overload_matches(c, impl_fn, want))
+                        check_error(c, ci->line, ci->col,
+                                    "'%s' method '%s' does not match interface '%s'",
+                                    ci->name, im->name, iface->name);
+                }
             }
         }
     }
@@ -2185,18 +3451,77 @@ static void check_interfaces(Checker *c) {
 static void check_body(Checker *c, asdl_seq *body);
 static void check_stmt(Checker *c, stmt_ty s);
 
+static int stmt_has_yield(stmt_ty s);
+static int body_has_yield(asdl_seq *body) {
+    size_t i;
+    if (!body)
+        return 0;
+    for (i = 0; i < asdl_seq_LEN(body); i++) {
+        if (stmt_has_yield(asdl_seq_GET(body, i)))
+            return 1;
+    }
+    return 0;
+}
+
+/* 중첩 함수·람다는 별도의 제너레이터이므로 여기서 내려가지 않는다. */
+static int stmt_has_yield(stmt_ty s) {
+    size_t i;
+    if (!s)
+        return 0;
+    switch (s->kind) {
+    case Yield_kind:
+        return 1;
+    case If_kind:
+        return body_has_yield(s->v.If.body) || body_has_yield(s->v.If.orelse);
+    case While_kind:
+        return body_has_yield(s->v.While.body);
+    case For_kind:
+        return body_has_yield(s->v.For.body);
+    case ForRange_kind:
+        return body_has_yield(s->v.ForRange.body);
+    case ForIn_kind:
+        return body_has_yield(s->v.ForIn.body);
+    case Switch_kind:
+        for (i = 0; i < asdl_seq_LEN(s->v.Switch.cases); i++) {
+            match_case_ty mc = asdl_seq_GET(s->v.Switch.cases, i);
+            if (body_has_yield(mc->body))
+                return 1;
+        }
+        return 0;
+    case Try_kind:
+        if (body_has_yield(s->v.Try.body) ||
+            body_has_yield(s->v.Try.finalbody))
+            return 1;
+        for (i = 0; i < asdl_seq_LEN(s->v.Try.handlers); i++) {
+            handler_ty h = asdl_seq_GET(s->v.Try.handlers, i);
+            if (body_has_yield(h->body))
+                return 1;
+        }
+        return 0;
+    default:
+        return 0;
+    }
+}
+
+static int always_exits(Checker *c, asdl_seq *body);
+static const char *pattern_variant_name(expr_ty path, const char **enum_name);
+
 static void check_function(Checker *c, asdl_seq *type_params, asdl_seq *params,
                            ret_ty ret, asdl_seq *body, expr_ty body_expr,
-                           ClassInfo *cls, int lambda) {
+                           ClassInfo *cls, int lambda, int line, int col) {
     ClassInfo *saved_class = c->current_class;
     Ty *saved_ret = c->current_ret;
     int saved_known = c->current_ret_known;
     int saved_in_fn = c->in_function;
+    int saved_gen = c->in_generator;
+    int saved_loop = c->loop_depth;
     TParamSave save;
     size_t i, n = params ? asdl_seq_LEN(params) : 0;
 
     c->current_class = cls;
     c->in_function = 1;
+    c->in_generator = !lambda && body_has_yield(body);
+    c->loop_depth = 0;
     if (ret) {
         c->current_ret = ret->kind == ValueRet_kind
             ? typeref_to_ty(c, ret->v.ValueRet.ty) : ty_void(c);
@@ -2218,12 +3543,33 @@ static void check_function(Checker *c, asdl_seq *type_params, asdl_seq *params,
         }
         else {
             param_ty p = asdl_seq_GET(params, i);
-            define(c, p->name, p->ty ? typeref_to_ty(c, p->ty) : ty_any(c));
+            Ty *pt = p->ty ? typeref_to_ty(c, p->ty) : ty_any(c);
+            if (p->variadic == 1)
+                define(c, p->name, ty_seq(c, TY_LIST, pt));
+            else if (p->variadic == 2)
+                define(c, p->name, ty_dict(c, ty_str(c), pt));
+            else
+                define(c, p->name, pt);
+        }
+    }
+    if (!lambda) {
+        for (i = 0; i < n; i++) {
+            param_ty p = asdl_seq_GET(params, i);
+            if (!p->default_value)
+                continue;
+            require_assignable(c, p->ty ? typeref_to_ty(c, p->ty) : ty_any(c),
+                               infer(c, p->default_value), p->default_value, "default argument");
         }
     }
     if (!lambda) {
         collect_body(c, body);
         check_body(c, body);
+        if (c->current_ret_known && c->current_ret &&
+            c->current_ret->kind != TY_VOID && !c->in_generator &&
+            !always_exits(c, body))
+            check_error(c, line, col,
+                        "missing return: function must return a value of type %s on all paths",
+                        ty_name(c->current_ret));
     }
     else {
         infer(c, body_expr);
@@ -2235,6 +3581,8 @@ static void check_function(Checker *c, asdl_seq *type_params, asdl_seq *params,
     c->current_ret = saved_ret;
     c->current_ret_known = saved_known;
     c->in_function = saved_in_fn;
+    c->in_generator = saved_gen;
+    c->loop_depth = saved_loop;
 }
 
 static void check_class(Checker *c, stmt_ty s) {
@@ -2256,11 +3604,12 @@ static void check_class(Checker *c, stmt_ty s) {
             break;
         case Method_kind:
             check_function(c, m->v.Method.type_params, m->v.Method.params,
-                           m->v.Method.returns, m->v.Method.body, NULL, ci, 0);
+                           m->v.Method.returns, m->v.Method.body, NULL, ci, 0,
+                           m->lineno, m->col_offset);
             break;
         case Constructor_kind:
             check_function(c, NULL, m->v.Constructor.params, NULL,
-                           m->v.Constructor.body, NULL, ci, 0);
+                           m->v.Constructor.body, NULL, ci, 0, 0, 0);
             break;
         case Getter_kind: {
             ret_ty ret = NULL;
@@ -2273,13 +3622,15 @@ static void check_class(Checker *c, stmt_ty s) {
                     break;
                 }
             }
-            check_function(c, NULL, NULL, ret, m->v.Getter.body, NULL, ci, 0);
+            check_function(c, NULL, NULL, ret, m->v.Getter.body, NULL, ci, 0,
+                           m->lineno, m->col_offset);
             break;
         }
         case Setter_kind: {
             asdl_seq *params = _Aster_seq_new(1, c->arena);
             asdl_seq_SET(params, 0, m->v.Setter.param);
-            check_function(c, NULL, params, NULL, m->v.Setter.body, NULL, ci, 0);
+            check_function(c, NULL, params, NULL, m->v.Setter.body, NULL, ci, 0,
+                           m->lineno, m->col_offset);
             break;
         }
         default:
@@ -2314,9 +3665,17 @@ static void check_assign_target(Checker *c, expr_ty target, Ty *value) {
     switch (target->kind) {
     case Name_kind: {
         Sym *cur = lookup_sym(c, target->v.Name.id, 0);
+        Sym *decl;
         if (!cur) {
             if (is_container(value) || value->kind == TY_FUNC)
                 define(c, target->v.Name.id, value);
+            return;
+        }
+        decl = cur->narrowed ? lookup_sym(c, target->v.Name.id, 1) : cur;
+        if (decl && decl->is_const) {
+            check_error(c, target->lineno, target->col_offset,
+                        "cannot assign to const variable '%s'",
+                        target->v.Name.id);
             return;
         }
         if (cur->narrowed) {
@@ -2336,6 +3695,17 @@ static void check_assign_target(Checker *c, expr_ty target, Ty *value) {
     }
     case Attribute_kind: {
         Ty *base = infer(c, target->v.Attribute.value);
+        if (base && base->kind == TY_MODULE) {
+            ModuleInfo *mi = load_module(c, base->name, target->lineno,
+                                         target->col_offset);
+            Sym *exported = module_export_sym(mi, target->v.Attribute.attr);
+            if (exported && exported->is_const) {
+                check_error(c, target->lineno, target->col_offset,
+                            "cannot assign to const variable '%s'",
+                            target->v.Attribute.attr);
+                return;
+            }
+        }
         Ty *member = attr_type(c, target, base);
         require_assignable(c, member, value, target, "property assignment");
         break;
@@ -2464,7 +3834,7 @@ static void narrow_true(Checker *c, expr_ty e) {
     }
 }
 
-static int always_exits(asdl_seq *body) {
+static int always_exits(Checker *c, asdl_seq *body) {
     stmt_ty last;
     size_t n = asdl_seq_LEN(body);
     if (!n)
@@ -2480,8 +3850,72 @@ static int always_exits(asdl_seq *body) {
         return 1;
     case If_kind:
         return asdl_seq_LEN(last->v.If.orelse) > 0 &&
-               always_exits(last->v.If.body) &&
-               always_exits(last->v.If.orelse);
+               always_exits(c, last->v.If.body) &&
+               always_exits(c, last->v.If.orelse);
+    case While_kind: {
+        expr_ty test = last->v.While.test;
+        return test && test->kind == Constant_kind &&
+               test->v.Constant.value.tag == VT_BOOL &&
+               test->v.Constant.value.u.i != 0;
+    }
+    case Try_kind: {
+        int ok = always_exits(c, last->v.Try.body);
+        size_t i;
+        for (i = 0; i < asdl_seq_LEN(last->v.Try.handlers); i++) {
+            handler_ty h = asdl_seq_GET(last->v.Try.handlers, i);
+            ok = ok && always_exits(c, h->body);
+        }
+        if (asdl_seq_LEN(last->v.Try.finalbody) &&
+            always_exits(c, last->v.Try.finalbody))
+            ok = 1;
+        return ok;
+    }
+    case Switch_kind: {
+        asdl_seq *cases = last->v.Switch.cases;
+        Ty *subject = infer(c, last->v.Switch.subject);
+        EnumInfo *ei = subject && subject->kind == TY_CLASS
+            ? find_enum(c, subject->name) : NULL;
+        int *covered = NULL;
+        int all = 1, catch_all = 0;
+        size_t i, k;
+
+        if (ei && ei->nvariants) {
+            covered = Arena_Alloc(c->arena, ei->nvariants * sizeof(int));
+            memset(covered, 0, ei->nvariants * sizeof(int));
+        }
+        for (i = 0; i < asdl_seq_LEN(cases); i++) {
+            match_case_ty mc = asdl_seq_GET(cases, i);
+            if (!always_exits(c, mc->body))
+                all = 0;
+            if (!mc->guard && mc->pattern &&
+                mc->pattern->kind == PBind_kind)
+                catch_all = 1;
+            if (ei && !mc->guard && mc->pattern &&
+                mc->pattern->kind == PVariant_kind) {
+                const char *ename = NULL;
+                const char *vname = pattern_variant_name(
+                    mc->pattern->v.PVariant.path, &ename);
+                if (vname && ename && !strcmp(ename, ei->name)) {
+                    for (k = 0; k < ei->nvariants; k++) {
+                        if (!strcmp(ei->variants[k], vname))
+                            covered[k] = 1;
+                    }
+                }
+            }
+        }
+        if (!all)
+            return 0;
+        if (catch_all)
+            return 1;
+        if (ei && covered) {
+            for (k = 0; k < ei->nvariants; k++) {
+                if (!covered[k])
+                    return 0;
+            }
+            return 1;
+        }
+        return 0;
+    }
     default:
         return 0;
     }
@@ -2500,7 +3934,8 @@ static const char *pattern_variant_name(expr_ty path, const char **enum_name) {
 }
 
 static void check_pattern(Checker *c, match_pattern_ty pat, Ty *expected,
-                          EnumInfo *subject_enum, int *covered, int *catch_all) {
+                          EnumInfo *subject_enum, int *covered, int *catch_all,
+                          int line, int col) {
     switch (pat->kind) {
     case PLiteral_kind: {
         expr_ty lit = pat->v.PLiteral.value;
@@ -2516,6 +3951,51 @@ static void check_pattern(Checker *c, match_pattern_ty pat, Ty *expected,
         if (strcmp(pat->v.PBind.name, "_"))
             define(c, pat->v.PBind.name, expected ? ty_non_null(c, expected) : ty_any(c));
         break;
+    case PList_kind: {
+        asdl_seq *items = pat->v.PList.items;
+        size_t nitems = asdl_seq_LEN(items), i;
+        Ty *elem = ty_any(c);
+        if (expected && (expected->kind == TY_LIST || expected->kind == TY_TUPLE))
+            elem = expected->a;
+        else if (expected && expected->kind != TY_ANY && expected->kind != TY_UNION)
+            check_error(c, line, col,
+                        "case pattern expects a list but the subject is %s",
+                        ty_name(expected));
+        for (i = 0; i < nitems; i++) {
+            int inner = 0;
+            check_pattern(c, asdl_seq_GET(items, i), elem, NULL, NULL, &inner, line, col);
+        }
+        if (pat->v.PList.rest && strcmp(pat->v.PList.rest, "_"))
+            define(c, pat->v.PList.rest, ty_seq(c, TY_LIST, elem));
+        break;
+    }
+    case PDict_kind: {
+        asdl_seq *items = pat->v.PDict.items;
+        size_t nitems = asdl_seq_LEN(items), i;
+        Ty *kt = ty_any(c), *vt = ty_any(c);
+        if (expected && expected->kind == TY_DICT) {
+            kt = expected->a;
+            vt = expected->b;
+        }
+        else if (expected && expected->kind != TY_ANY && expected->kind != TY_UNION) {
+            check_error(c, line, col,
+                        "case pattern expects a dict but the subject is %s",
+                        ty_name(expected));
+        }
+        for (i = 0; i < nitems; i++) {
+            pdict_item_ty d = asdl_seq_GET(items, i);
+            int inner = 0;
+            Ty *key_ty = infer(c, d->key);
+            if (kt && kt->kind != TY_ANY && !assignable(c, kt, key_ty))
+                check_error(c, d->key->lineno, d->key->col_offset,
+                            "case key: expected %s but got %s",
+                            ty_name(kt), ty_name(key_ty));
+            check_pattern(c, d->value, vt, NULL, NULL, &inner, line, col);
+        }
+        if (pat->v.PDict.rest && strcmp(pat->v.PDict.rest, "_"))
+            define(c, pat->v.PDict.rest, ty_dict(c, kt, vt));
+        break;
+    }
     case PVariant_kind: {
         const char *enum_name = NULL;
         const char *variant = pattern_variant_name(pat->v.PVariant.path, &enum_name);
@@ -2525,15 +4005,21 @@ static void check_pattern(Checker *c, match_pattern_ty pat, Ty *expected,
 
         if (!variant) {
             infer(c, pat->v.PVariant.path);
-            for (i = 0; i < nitems; i++)
-                check_pattern(c, asdl_seq_GET(items, i), ty_any(c), NULL, NULL, catch_all);
+            for (i = 0; i < nitems; i++) {
+                int inner = 0;
+                check_pattern(c, asdl_seq_GET(items, i), ty_any(c), NULL, NULL,
+                              &inner, line, col);
+            }
             break;
         }
         if (!ei) {
             /* enum이 아닌 경로: 일반 식으로 검사만 하고 바인딩은 any로 둔다. */
             infer(c, pat->v.PVariant.path);
-            for (i = 0; i < nitems; i++)
-                check_pattern(c, asdl_seq_GET(items, i), ty_any(c), NULL, NULL, catch_all);
+            for (i = 0; i < nitems; i++) {
+                int inner = 0;
+                check_pattern(c, asdl_seq_GET(items, i), ty_any(c), NULL, NULL,
+                              &inner, line, col);
+            }
             break;
         }
         for (vi = 0; vi < ei->nvariants; vi++)
@@ -2557,7 +4043,9 @@ static void check_pattern(Checker *c, match_pattern_ty pat, Ty *expected,
         for (i = 0; i < nitems; i++) {
             Ty *pt = ei->params[vi][i];
             EnumInfo *inner = pt->kind == TY_CLASS ? find_enum(c, pt->name) : NULL;
-            check_pattern(c, asdl_seq_GET(items, i), pt, inner, NULL, catch_all);
+            int sub_catch = 0;
+            check_pattern(c, asdl_seq_GET(items, i), pt, inner, NULL, &sub_catch,
+                          line, col);
         }
         break;
     }
@@ -2579,8 +4067,17 @@ static void check_switch(Checker *c, stmt_ty s) {
     }
     for (i = 0; i < ncases; i++) {
         match_case_ty mc = asdl_seq_GET(cases, i);
+        int this_catch = 0;
         push_scope(c);
-        check_pattern(c, mc->pattern, subject, ei, covered, &catch_all);
+        check_pattern(c, mc->pattern, subject, ei, mc->guard ? NULL : covered,
+                      &this_catch, s->lineno, s->col_offset);
+        if (mc->guard) {
+            Ty *gt = infer(c, mc->guard);
+            require_assignable(c, ty_bool(c), gt, mc->guard, "case guard");
+        }
+        else if (this_catch) {
+            catch_all = 1;
+        }
         check_body(c, mc->body);
         pop_scope(c);
     }
@@ -2597,9 +4094,10 @@ static void check_switch(Checker *c, stmt_ty s) {
 static void check_stmt(Checker *c, stmt_ty s) {
     switch (s->kind) {
     case FunctionDef_kind:
-        check_function(c, s->v.FunctionDef.type_params, s->v.FunctionDef.params,
-                       s->v.FunctionDef.returns, s->v.FunctionDef.body, NULL,
-                       c->current_class, 0);
+        if (!s->v.FunctionDef.is_extern)
+            check_function(c, s->v.FunctionDef.type_params, s->v.FunctionDef.params,
+                           s->v.FunctionDef.returns, s->v.FunctionDef.body, NULL,
+                           c->current_class, 0, s->lineno, s->col_offset);
         break;
     case ClassDef_kind:
         check_class(c, s);
@@ -2614,6 +4112,11 @@ static void check_stmt(Checker *c, stmt_ty s) {
     case VarDecl_kind: {
         Ty *declared;
         TParamSave save;
+        if (s->v.VarDecl.is_const &&
+            (!s->v.VarDecl.init || s->v.VarDecl.init->kind == NoInit_kind))
+            check_error(c, s->lineno, s->col_offset,
+                        "const declaration '%s' requires an initializer",
+                        s->v.VarDecl.name);
         push_tparams(c, NULL, &save);
         declared = typeref_to_ty(c, s->v.VarDecl.ty);
         pop_tparams(c, &save);
@@ -2624,17 +4127,29 @@ static void check_stmt(Checker *c, stmt_ty s) {
                 Ty *actual = infer(c, value);
                 if (value->kind == Lambda_kind) {
                     /* 람다는 함수 타입으로 선언하지 않는다: var 또는 반환 타입. */
-                    if (declared->kind == TY_FUNC)
+                    if (declared->kind == TY_FUNC) {
                         check_error(c, value->lineno, value->col_offset,
                                     "a lambda cannot be declared with a function type; "
                                     "use 'var' or the lambda's return type");
-                    else if (declared->kind != TY_ANY && actual->kind == TY_FUNC &&
-                             actual->ret && !assignable(c, declared, actual->ret))
+                        declared = actual;
+                    }
+                    else if (declared->kind == TY_ANY) {
+                        declared = actual;
+                    }
+                    else if (assignable(c, declared, actual)) {
+                        /* 함수형 인터페이스: 변수 타입은 인터페이스로 유지한다. */
+                    }
+                    else if (actual->kind == TY_FUNC && actual->ret &&
+                             assignable(c, declared, actual->ret)) {
+                        /* 반환 타입으로 선언한 기존 형태(var 대체). */
+                        declared = actual;
+                    }
+                    else {
                         check_error(c, value->lineno, value->col_offset,
-                                    "lambda return type: expected %s but got %s",
-                                    ty_name(declared), ty_name(actual->ret));
-                    /* 변수에는 람다 자체가 들어간다. */
-                    declared = actual;
+                                    "variable initializer: expected %s but got %s",
+                                    ty_name(declared), ty_name(actual));
+                        declared = actual;
+                    }
                 }
                 else if (declared->kind == TY_ANY)
                     declared = actual;
@@ -2643,15 +4158,25 @@ static void check_stmt(Checker *c, stmt_ty s) {
                                        "variable initializer");
             }
         }
-        define_shadow(c, s->v.VarDecl.name, declared);
+        define_shadow_const(c, s->v.VarDecl.name, declared,
+                           s->v.VarDecl.is_const);
         break;
     }
     case EnumDef_kind: {
         size_t i;
+        ClassInfo *ci;
         for (i = 0; i < asdl_seq_LEN(s->v.EnumDef.members); i++) {
             enum_member_ty em = asdl_seq_GET(s->v.EnumDef.members, i);
             if (em->value)
                 infer(c, em->value);
+        }
+        ci = find_class(c, s->v.EnumDef.name);
+        for (i = 0; i < asdl_seq_LEN(s->v.EnumDef.methods); i++) {
+            member_ty m = asdl_seq_GET(s->v.EnumDef.methods, i);
+            if (m->kind == Method_kind)
+                check_function(c, m->v.Method.type_params, m->v.Method.params,
+                               m->v.Method.returns, m->v.Method.body, NULL,
+                               ci, 0, m->lineno, m->col_offset);
         }
         define_or_update(c, s->v.EnumDef.name, ty_class(c, s->v.EnumDef.name));
         break;
@@ -2696,8 +4221,9 @@ static void check_stmt(Checker *c, stmt_ty s) {
         narrow_false(c, test);
         check_body(c, s->v.If.orelse);
         pop_scope(c);
-        then_exits = always_exits(s->v.If.body);
-        else_exits = asdl_seq_LEN(s->v.If.orelse) ? always_exits(s->v.If.orelse) : 0;
+        then_exits = always_exits(c, s->v.If.body);
+        else_exits = asdl_seq_LEN(s->v.If.orelse)
+            ? always_exits(c, s->v.If.orelse) : 0;
         if (then_exits && !else_exits)
             narrow_false(c, test);
         else if (else_exits && !then_exits)
@@ -2708,7 +4234,9 @@ static void check_stmt(Checker *c, stmt_ty s) {
         infer(c, s->v.While.test);
         push_scope(c);
         narrow_true(c, s->v.While.test);
+        c->loop_depth++;
         check_body(c, s->v.While.body);
+        c->loop_depth--;
         pop_scope(c);
         break;
     case For_kind:
@@ -2716,7 +4244,9 @@ static void check_stmt(Checker *c, stmt_ty s) {
         check_stmt(c, s->v.For.init);
         infer(c, s->v.For.test);
         push_scope(c);
+        c->loop_depth++;
         check_body(c, s->v.For.body);
+        c->loop_depth--;
         pop_scope(c);
         check_stmt(c, s->v.For.step);
         pop_scope(c);
@@ -2736,7 +4266,9 @@ static void check_stmt(Checker *c, stmt_ty s) {
         pop_tparams(c, &save);
         define(c, s->v.ForRange.name, declared->kind == TY_ANY ? ty_int(c) : declared);
         push_scope(c);
+        c->loop_depth++;
         check_body(c, s->v.ForRange.body);
+        c->loop_depth--;
         pop_scope(c);
         pop_scope(c);
         break;
@@ -2759,7 +4291,9 @@ static void check_stmt(Checker *c, stmt_ty s) {
         }
         define(c, s->v.ForIn.name, declared);
         push_scope(c);
+        c->loop_depth++;
         check_body(c, s->v.ForIn.body);
+        c->loop_depth--;
         pop_scope(c);
         pop_scope(c);
         break;
@@ -2790,8 +4324,12 @@ static void check_stmt(Checker *c, stmt_ty s) {
         if (!c->in_function)
             check_error(c, s->lineno, s->col_offset,
                         "'yield' is only allowed inside functions");
-        if (s->v.Yield.value)
-            infer(c, s->v.Yield.value);
+        if (s->v.Yield.value) {
+            Ty *value = infer(c, s->v.Yield.value);
+            if (c->current_ret_known && c->current_ret->kind == TY_LIST)
+                require_assignable(c, c->current_ret->a, value, s->v.Yield.value,
+                                   "yield value");
+        }
         break;
     case Return_kind:
         if (s->v.Return.value) {
@@ -2805,7 +4343,7 @@ static void check_stmt(Checker *c, stmt_ty s) {
                             "cannot return a value from a void function");
             }
         }
-        else if (c->current_ret_known) {
+        else if (c->current_ret_known && !c->in_generator) {
             check_error(c, s->lineno, s->col_offset,
                         "must return a value of type %s", ty_name(c->current_ret));
         }
@@ -2815,6 +4353,10 @@ static void check_stmt(Checker *c, stmt_ty s) {
         break;
     case Break_kind:
     case Continue_kind:
+        if (c->loop_depth == 0)
+            check_error(c, s->lineno, s->col_offset,
+                        "'%s' is only allowed inside a loop",
+                        s->kind == Break_kind ? "break" : "continue");
         break;
     case Import_kind:
         handle_import(c, s);
@@ -2934,14 +4476,24 @@ int TypeCheck_ModuleEx(Arena *arena, mod_ty mod, const char *filename,
 
     init_builtins(&c);
     push_scope(&c);              /* 모듈 전역 스코프 */
+    c.root = &c;
 
-    /* 1단계: 전역 선언과 타입 이름 수집 */
+    /* 1단계: 타입 이름을 먼저 등록하고 import 모듈을 읽는다. 순환 import도
+       서로의 선언을 볼 수 있도록 모듈 그래프 전체를 먼저 모은다. */
+    preregister_shapes(&c, body);
+    preload_imports(&c, body);
     collect_body(&c, body);
+
+    /* 2단계: import한 모듈의 상속·인터페이스·본문을 검사한다. */
+    flush_pending(&c);
+
+    /* 3단계: 최상위 모듈의 상속·본문 검사 */
     resolve_bases(&c);
     check_interfaces(&c);
-
-    /* 2단계: 문장 검사 (같은 전역 스코프 위에서) */
     check_body(&c, body);
+
+    /* 본문 검사 중 지연 로드된 모듈이 있으면 마저 검사한다. */
+    flush_pending(&c);
 
     return c.errors > 0 ? 1 : 0;
 }

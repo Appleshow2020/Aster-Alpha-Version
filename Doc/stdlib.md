@@ -522,28 +522,31 @@ Stream<int> s = Stream.of([1, 2, 3, 4]);
 println(s.filter((int x) -> bool => x % 2 == 0).toList());  # [2, 4]
 ```
 
-Aster 언어 제약 때문에 다음과 같이 적응했습니다.
+Aster 쪽 사정에 맞춰 다음과 같이 적응했습니다.
 
-- **인터페이스에는 제네릭을 쓸 수 없습니다.** `List`, `Map`, `Set`,
-  `Collection`, `Iterable`, `Comparator`, `Function` 등 계약 인터페이스는
-  타입 인자 없이 `any` 기반으로 선언되어 있습니다. 구현 클래스
-  (`ArrayList<E>`, `HashMap<K, V>`, `TreeSet<E>` 등)는 제네릭을 그대로
-  받습니다.
-- **람다는 인터페이스 타입에 대입할 수 없습니다.** 스트림과 유틸리티는
-  `fn(T) -> R` 함수 값을 받습니다. `aster.util.function`의 인터페이스는
-  API 모양을 맞추기 위한 계약으로만 둡니다.
+- **계약 인터페이스는 `any` 기반으로 선언했습니다.** 언어는 제네릭 인터페이스와
+  람다 대입을 지원하지만(언어 문서 §6, §7), `Collection`, `Iterable`,
+  `Comparator`, `Function` 같은 java.base 계약은 여러 구현 클래스가 공유해야
+  해서 타입 인자 없이 두었습니다. 사용자 코드에서는
+  `interface Mapper<T> { ... }`처럼 제네릭 인터페이스를 직접 만들 수 있습니다.
+- **람다는 메서드 서명이 맞으면 인터페이스 타입 값으로 쓸 수 있습니다.**
+  스트림과 유틸리티 API는 Java와 같은 함수 인터페이스(`Function`,
+  `Predicate` 등)와 `fn(T) -> R` 오버로드를 모두 제공합니다.
 - **`char`/`byte` 타입이 없습니다.** 문자열은 유니코드 코드포인트이고,
   바이트는 `list<int>`(0..255)로 다룹니다. `Character`는 한 글자 문자열을
   받습니다.
 - **비트 연산자가 없습니다.** 정수 비트 유틸리티와 `BitSet`은 산술
   연산으로 구현했으며, `BitSet.and/or/xor/andNot`은 키워드와 겹치지 않도록
   `andWith/orWith/xorWith/andNotWith`로 이름을 바꿨습니다.
-- **`enum`에는 메서드를 둘 수 없습니다.** `DayOfWeek`, `Month`,
-  `RoundingMode` 등은 상수 목록과 컴패니언 함수(예: `dayOfWeekOf(1)`,
-  `monthOf(1)`, `roundingModeFromName("HALF_UP")`)로 제공합니다.
-- **생성자 오버로딩이 제한적입니다.** 여러 입력 형태를 받는 클래스는
-  정적 팩토리를 함께 제공합니다(예: `Random.withSeed(seed)`,
-  `Date.fromMillis(ms)`, `PrintWriter(any target)`).
+- **`enum`은 메서드를 가질 수 있습니다.** `DayOfWeek`과 `Month`는
+  `getValue`, `plus`, `minus`, `fullName`, `length`, `firstDayOfYear` 같은
+  Java 인스턴스 메서드를 enum 메서드로 제공합니다. 정적 생성
+  (`DayOfWeek.of`)에 해당하는 `dayOfWeekOf`/`monthOf`만 컴패니언 함수로
+  둡니다. `RoundingMode`는 Java에도 인스턴스 메서드가 없어 이름 조회만
+  컴패니언 함수로 제공합니다.
+- **생성자는 여러 개를 오버로드할 수 있습니다.** java.base 포팅 클래스는
+  Java와 같은 생성자를 제공하고, 추가 입력 형태는 `Random.withSeed(seed)`
+  같은 정적 팩토리로도 제공합니다.
 - **JVM 전용 영역은 제외했습니다.** 리플렉션(`java.lang.reflect`,
   `MethodHandle`), 모듈 시스템, 클래스 로더, 스레드/동시성
   (`java.util.concurrent`), `java.nio` 채널, 네트워크, 보안·암호,

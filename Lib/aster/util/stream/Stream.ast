@@ -1,6 +1,6 @@
 /* aster.util.stream.Stream: Java Stream을 흉내 낸 즉시(eager) 스트림.
    모든 중간 연산은 새 Stream을 돌려주고, 원본 리스트는 바뀌지 않는다.
-   람다는 `fn(T) -> R` 값으로만 받는다(인터페이스 타입 대입 불가).
+   함수 인자는 `fn(T) -> R` 값과 메서드가 하나인 함수 인터페이스 둘 다 받는다.
    findFirst/findAny/reduce는 Java처럼 Optional<T>를 돌려준다. */
 
 import aster.util.stream.Collector;

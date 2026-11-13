@@ -1,0 +1,39 @@
+import System.stdout.*;
+enum Shape { Circle(float r), Rect(float w, float h), Empty }
+fn describe(Shape s) -> str {
+    switch (s) {
+        case Shape.Circle(r) when r == 0.0 {
+            return 'point';
+        }
+        case Shape.Rect(w, h) when w == h {
+            return 'square ' + (str)w;
+        }
+        default {
+            return 'other';
+        }
+    }
+}
+fn tags(list<str> xs) -> str {
+    switch (xs) {
+        case [] {
+            return 'none';
+        }
+        case [a, *rest] {
+            return a;
+        }
+    }
+    return '?';
+}
+fn person(dict<str, str> p) -> str {
+    switch (p) {
+        case {'name': n, 'role': r} {
+            return n + '/' + r;
+        }
+        case {'name': n, **others} {
+            return n;
+        }
+        default {
+            return 'anonymous';
+        }
+    }
+}

@@ -1,0 +1,7 @@
+default argument: expected int but got str
+missing required argument 'name'
+function takes 3 argument(s) but 4 were given
+unexpected keyword argument 'nick'
+got multiple values for argument 'name'
+missing required argument 'b'
+function takes 2 argument(s) but 3 were given

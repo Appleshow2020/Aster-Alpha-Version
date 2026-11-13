@@ -8,19 +8,20 @@
 /* 파서의 우선순위 단계. 숫자가 클수록 더 단단히 묶인다. */
 enum {
     P_LAMBDA = 0,
-    P_PIPE = 1,
-    P_COALESCE = 2,
-    P_OR = 3,
-    P_AND = 4,
-    P_NOT = 5,
-    P_CMP = 6,
-    P_RANGE = 7,
-    P_ADD = 8,
-    P_MUL = 9,
-    P_UNARY = 10,
-    P_POW = 11,
-    P_POSTFIX = 12,
-    P_PRIMARY = 13
+    P_TERNARY = 1,
+    P_PIPE = 2,
+    P_COALESCE = 3,
+    P_OR = 4,
+    P_AND = 5,
+    P_NOT = 6,
+    P_CMP = 7,
+    P_RANGE = 8,
+    P_ADD = 9,
+    P_MUL = 10,
+    P_UNARY = 11,
+    P_POW = 12,
+    P_POSTFIX = 13,
+    P_PRIMARY = 14
 };
 
 static void fmt_expr(FILE *out, expr_ty e, int min_prec);
@@ -70,10 +71,20 @@ static void fmt_dotted(FILE *out, asdl_seq *parts) {
 }
 
 static void fmt_type_params(FILE *out, asdl_seq *type_params) {
+    size_t i;
     if (asdl_seq_LEN(type_params) == 0)
         return;
     fputc('<', out);
-    fmt_name_list(out, type_params);
+    for (i = 0; i < asdl_seq_LEN(type_params); i++) {
+        type_param_ty tp = asdl_seq_GET(type_params, i);
+        if (i)
+            fputs(", ", out);
+        fputs(tp->name, out);
+        if (tp->bound) {
+            fputs(" extends ", out);
+            fmt_type(out, tp->bound);
+        }
+    }
     fputc('>', out);
 }
 
@@ -151,9 +162,17 @@ static void fmt_params(FILE *out, asdl_seq *params) {
         param_ty p = (param_ty)asdl_seq_GET(params, i);
         if (i)
             fputs(", ", out);
+        if (p->variadic == 1)
+            fputs("vararg ", out);
+        else if (p->variadic == 2)
+            fputs("varkwarg ", out);
         fmt_type(out, p->ty);
         fputc(' ', out);
         fputs(p->name, out);
+        if (p->default_value) {
+            fputs(" = ", out);
+            fmt_expr(out, p->default_value, P_LAMBDA);
+        }
     }
 }
 
@@ -346,6 +365,19 @@ static void fmt_expr(FILE *out, expr_ty e, int min_prec) {
         fputs(" |> ", out);
         fmt_expr(out, e->v.Pipe.func, P_COALESCE);
         break;
+    case Ternary_kind:
+        if (min_prec > P_TERNARY) {
+            fputc('(', out);
+            fmt_expr(out, e, P_TERNARY);
+            fputc(')', out);
+            break;
+        }
+        fmt_expr(out, e->v.Ternary.test, P_PIPE);
+        fputs(" ? ", out);
+        fmt_expr(out, e->v.Ternary.body, P_LAMBDA);
+        fputs(" : ", out);
+        fmt_expr(out, e->v.Ternary.orelse, P_TERNARY);
+        break;
     case Coalesce_kind:
         if (min_prec > P_COALESCE) {
             fputc('(', out);
@@ -518,12 +550,26 @@ static void fmt_expr(FILE *out, expr_ty e, int min_prec) {
         fmt_type(out, e->v.SizeOf.ty);
         fputc(')', out);
         break;
-    case Call_kind:
+    case Call_kind: {
+        size_t j;
         fmt_binop_paren(out, e->v.Call.func, P_POSTFIX);
         fputc('(', out);
-        fmt_seq_exprs(out, e->v.Call.args);
+        for (i = 0; i < asdl_seq_LEN(e->v.Call.args); i++) {
+            if (i)
+                fputs(", ", out);
+            fmt_expr(out, (expr_ty)asdl_seq_GET(e->v.Call.args, i), P_LAMBDA);
+        }
+        for (j = 0; j < asdl_seq_LEN(e->v.Call.keywords); j++) {
+            keyword_ty kw = asdl_seq_GET(e->v.Call.keywords, j);
+            if (i + j)
+                fputs(", ", out);
+            fputs(kw->name, out);
+            fputs(" = ", out);
+            fmt_expr(out, kw->value, P_LAMBDA);
+        }
         fputc(')', out);
         break;
+    }
     case New_kind:
         fputs("new ", out);
         fputs(e->v.New.cls, out);
@@ -874,6 +920,39 @@ static void fmt_pattern(FILE *out, match_pattern_ty p) {
             fputc(')', out);
         }
         break;
+    case PList_kind:
+        fputc('[', out);
+        for (i = 0; i < asdl_seq_LEN(p->v.PList.items); i++) {
+            if (i)
+                fputs(", ", out);
+            fmt_pattern(out, (match_pattern_ty)asdl_seq_GET(p->v.PList.items, i));
+        }
+        if (p->v.PList.rest) {
+            if (i)
+                fputs(", ", out);
+            fputc('*', out);
+            fputs(p->v.PList.rest, out);
+        }
+        fputc(']', out);
+        break;
+    case PDict_kind:
+        fputc('{', out);
+        for (i = 0; i < asdl_seq_LEN(p->v.PDict.items); i++) {
+            pdict_item_ty d = asdl_seq_GET(p->v.PDict.items, i);
+            if (i)
+                fputs(", ", out);
+            fmt_expr(out, d->key, P_LAMBDA);
+            fputs(": ", out);
+            fmt_pattern(out, d->value);
+        }
+        if (p->v.PDict.rest) {
+            if (i)
+                fputs(", ", out);
+            fputs("**", out);
+            fputs(p->v.PDict.rest, out);
+        }
+        fputc('}', out);
+        break;
     }
 }
 
@@ -1040,6 +1119,7 @@ static void fmt_stmt(FILE *out, stmt_ty s, int indent) {
         ind(out, indent);
         fputs("interface ", out);
         fputs(s->v.InterfaceDef.name, out);
+        fmt_type_params(out, s->v.InterfaceDef.type_params);
         fputs(" {\n", out);
         for (i = 0; i < asdl_seq_LEN(s->v.InterfaceDef.methods); i++) {
             signature_ty m = (signature_ty)asdl_seq_GET(s->v.InterfaceDef.methods, i);
@@ -1093,7 +1173,8 @@ static void fmt_stmt(FILE *out, stmt_ty s, int indent) {
         fmt_initializer(out, s->v.VarDecl.init);
         fputs(";\n", out);
         break;
-    case EnumDef_kind:
+    case EnumDef_kind: {
+        size_t nmethods = asdl_seq_LEN(s->v.EnumDef.methods);
         ind(out, indent);
         fputs("enum ", out);
         fputs(s->v.EnumDef.name, out);
@@ -1113,8 +1194,18 @@ static void fmt_stmt(FILE *out, stmt_ty s, int indent) {
                 fmt_expr(out, m->value, 0);
             }
         }
-        fputs(" }\n", out);
+        if (nmethods == 0) {
+            fputs(" }\n", out);
+            break;
+        }
+        fputs(";\n", out);
+        for (i = 0; i < nmethods; i++)
+            fmt_class_member(out, (member_ty)asdl_seq_GET(s->v.EnumDef.methods, i),
+                             indent + 1);
+        ind(out, indent);
+        fputs("}\n", out);
         break;
+    }
     case Destructure_kind:
         ind(out, indent);
         fputs("var (", out);
@@ -1205,13 +1296,17 @@ static void fmt_stmt(FILE *out, stmt_ty s, int indent) {
         for (i = 0; i < asdl_seq_LEN(s->v.Switch.cases); i++) {
             match_case_ty c = (match_case_ty)asdl_seq_GET(s->v.Switch.cases, i);
             ind(out, indent + 1);
-            if (c->pattern->kind == PBind_kind &&
+            if (!c->guard && c->pattern->kind == PBind_kind &&
                 strcmp(c->pattern->v.PBind.name, "_") == 0) {
                 fputs("default ", out);
             }
             else {
                 fputs("case ", out);
                 fmt_pattern(out, c->pattern);
+                if (c->guard) {
+                    fputs(" when ", out);
+                    fmt_expr(out, c->guard, P_LAMBDA);
+                }
                 fputc(' ', out);
             }
             fmt_block_no_nl(out, c->body, indent + 1);
@@ -1287,21 +1382,30 @@ static void fmt_stmt(FILE *out, stmt_ty s, int indent) {
         }
         fputs(";\n", out);
         break;
-    case ImportFrom_kind:
+    case ImportFrom_kind: {
+        asdl_seq *names = s->v.ImportFrom.names;
         ind(out, indent);
         fputs("from ", out);
         fmt_dotted(out, s->v.ImportFrom.module);
         fputs(" import ", out);
-        if (s->v.ImportFrom.name)
-            fputs(s->v.ImportFrom.name, out);
-        else
+        if (asdl_seq_LEN(names) == 0) {
             fputc('*', out);
-        if (s->v.ImportFrom.alias) {
-            fputs(" as ", out);
-            fputs(s->v.ImportFrom.alias, out);
+        }
+        else {
+            for (size_t i = 0; i < asdl_seq_LEN(names); i++) {
+                import_name_ty item = asdl_seq_GET(names, i);
+                if (i)
+                    fputs(", ", out);
+                fputs(item->name, out);
+                if (item->alias) {
+                    fputs(" as ", out);
+                    fputs(item->alias, out);
+                }
+            }
         }
         fputs(";\n", out);
         break;
+    }
     case Export_kind:
         ind(out, indent);
         fputs("export ", out);

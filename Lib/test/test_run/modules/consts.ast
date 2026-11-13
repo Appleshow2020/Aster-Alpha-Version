@@ -1,0 +1,7 @@
+export const int MAX = 10;
+export fn cap(int x) -> int {
+    if (x > MAX) {
+        return MAX;
+    }
+    return x;
+}

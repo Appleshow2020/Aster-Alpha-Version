@@ -1,0 +1,20 @@
+import System.stdout.*;
+
+fn myuser(str name, int age = 20, str role = "user") -> void {
+    println(name, age, role);
+}
+
+fn add2(int a, int b) -> int {
+    return a + b;
+}
+
+fn baddef(int x = "s") -> int {
+    return x;
+}
+
+myuser();
+myuser("A", 1, "x", 2);
+myuser(nick = "A");
+myuser("A", name = "B");
+add2(1);
+add2(1, 2, 3);

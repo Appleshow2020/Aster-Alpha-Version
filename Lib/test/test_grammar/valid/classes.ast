@@ -67,7 +67,7 @@ class A {
 }
 int constructor = 1;
 #---
-# 제네릭 클래스와 메서드 [D16]. 제약은 없다.
+# 제네릭 클래스와 메서드 [D16].
 class Box<T> extends Base<T> implements Holder<T> {
     private T value;
 
@@ -85,3 +85,80 @@ class Box<T> extends Base<T> implements Holder<T> {
 }
 Box<int>* b = new Box<int>(3);
 Box<Box<int>>* nested = new Box<Box<int>>(b);
+#---
+# 제네릭 경계. T extends Number 처럼 상위 타입을 지정한다.
+class Box<T extends Number> {
+    private T value;
+
+    constructor(T v) {
+        self->value = v;
+    }
+}
+fn FindMax<T extends Number>(T a, T b) -> T {
+    return max(a, b);
+}
+interface Mapper<T extends Comparable<T>> {
+    fn apply(T value) -> T;
+}
+#---
+# 생성자 오버로딩. 같은 클래스에 생성자를 여러 개 둘 수 있다.
+class Point {
+    int x;
+    int y;
+
+    constructor(int x) {
+        self->x = x;
+        self->y = 0;
+    }
+
+    constructor(int x, int y) {
+        self->x = x;
+        self->y = y;
+    }
+}
+#---
+# enum 메서드. 멤버 뒤에 세미콜론을 쓰고 메서드를 이어 붙인다.
+enum Color {
+    Red, Green, Blue;
+
+    public fn isWarm() -> bool {
+        return self == Color.Red;
+    }
+}
+enum Shape {
+    Circle(float r), Empty;
+
+    public fn area() -> float {
+        switch (self) {
+            case Shape.Circle(r) { return 3.14159 * r * r; }
+            case Shape.Empty { return 0.0; }
+        }
+    }
+}
+#---
+# 패턴 가드(when)와 중첩 패턴
+fn classify(Shape s) -> str {
+    switch (s) {
+        case Shape.Circle(r) when r > 1.0 { return "big"; }
+        case Shape.Circle(_) { return "small"; }
+        case Shape.Empty { return "none"; }
+    }
+    return "?";
+}
+#---
+fn headOf(list<int> xs) -> int {
+    switch (xs) {
+        case [] { return -1; }
+        case [a, *rest] { return a; }
+    }
+    return -2;
+}
+#---
+fn label(dict<str, str> d) -> str {
+    switch (d) {
+        case {"name": n, "role": r} { return n + "/" + r; }
+        case {"name": n, **others} { return n; }
+        case {} { return "empty"; }
+        default { return "?"; }
+    }
+}

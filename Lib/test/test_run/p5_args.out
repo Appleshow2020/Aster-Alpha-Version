@@ -1,0 +1,13 @@
+Bom, 20, user
+Kim, 30, user
+Asp, 20, admin
+Lee, 20, guest
+111
+16
+105
+args: [1, 2, 3]
+kwargs: {}
+args: ['a', 'b']
+kwargs: {'x': 1, 'y': 2}
+Hello, Aster!
+Hi, Bob!

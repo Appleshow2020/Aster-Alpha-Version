@@ -1,0 +1,12 @@
+import System.stdout.*;
+
+enum Color {
+    Red, Green, Blue;
+
+    public fn isWarm() -> bool {
+        return self == Color.Red;
+    }
+}
+
+Color c = Color.Red;
+println(c.isWarm(1));

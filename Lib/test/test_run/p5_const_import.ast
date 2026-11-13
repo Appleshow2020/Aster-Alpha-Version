@@ -1,0 +1,7 @@
+import System.stdout.*;
+
+from modules.consts import MAX as LIMIT, cap as clip;
+
+println(LIMIT);
+println(clip(42));
+println(clip(4));

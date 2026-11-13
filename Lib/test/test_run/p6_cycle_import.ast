@@ -1,0 +1,19 @@
+import System.stdout.*;
+import cycle.a;
+import cycle.b;
+from cycle.a import A;
+from cycle.b import B;
+
+println(a.fa(3));
+println(b.makeA());
+
+A* p = new A(7);
+println(p->ping());
+
+B* q = new B(9);
+println(q->ping());
+println(q->doubled());
+
+A* up = q;
+println(up->ping());
+println(a.OFFSET);

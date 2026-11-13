@@ -1,0 +1,6 @@
+import System.stdout.*;
+
+from modules.consts import MAX, cap;
+
+MAX = 11;
+println(MAX);

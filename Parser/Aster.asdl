@@ -1,4 +1,4 @@
--- Aster AST 정의. syntax/nodes.py는 이 파일과 1:1로 대응한다.
+-- Aster AST 정의.
 -- (Tools/check_conformance.py가 두 파일이 어긋나면 오류를 낸다.)
 --
 -- 자료구조 자체가 문법 규칙을 담도록 설계했다.
@@ -12,17 +12,19 @@ module Aster
 {
      mod = Module(identifier* package, stmt* body)
  
-     stmt = FunctionDef(identifier name, identifier* type_params, param* params,
+     stmt = FunctionDef(identifier name, type_param* type_params, param* params,
                         ret returns, stmt* body, int is_extern)
-          | ClassDef(identifier name, identifier* type_params, typeref? base,
+          | ClassDef(identifier name, type_param* type_params, typeref? base,
                      typeref* interfaces, member* members)
-          | InterfaceDef(identifier name, signature* methods)
+          | InterfaceDef(identifier name, type_param* type_params,
+                        signature* methods)
           -- alias가 있으면 typedef struct, 없으면 plain struct
           | StructDef(identifier tag, identifier? alias, struct_member* members)
           | VarDecl(typeref ty, identifier name, initializer init, int is_const)
           -- enum Color { RED, GREEN, BLUE }  (값은 선언 순서 ordinal)
           -- enum Shape { Circle(float r), Rect(float w, float h), Empty }
-          | EnumDef(identifier name, enum_member* members)
+          -- members 뒤 ';' 다음에 메서드를 둘 수 있다.
+          | EnumDef(identifier name, enum_member* members, member* methods)
           -- 'var (a, b) = expr;' 또는 '(a, b) = expr;'
           | Destructure(identifier* names, expr value)
           | Assert(expr test, expr? message)
@@ -49,9 +51,9 @@ module Aster
           -- wildcard가 1이면 'import a.b.*;' 이다. (ASDL에는 bool이 없으므로 int를 쓴다.)
           -- alias가 있으면 'import a.b as c;' 이다.
           | Import(identifier* path, int wildcard, identifier? alias)
-          -- name이 None이면 'from m import *;' 이다.
-          -- alias가 있으면 'from m import C as D;' 이다.
-          | ImportFrom(identifier* module, identifier? name, identifier? alias)
+          -- names가 비어 있으면 'from m import *;' 이다.
+          -- 'from m import A, B as C;' 처럼 여러 이름을 한 번에 가져올 수 있다.
+          | ImportFrom(identifier* module, import_name* names)
           -- 'export <선언>' — 모듈에서 공개할 선언을 표시한다.
           | Export(stmt body)
           -- 'exception 이름 [extends 부모];'
@@ -62,6 +64,8 @@ module Aster
     -- params가 빈 리스트면 '() => ...' 형태이다.
      expr = Lambda(lparam* params, ret returns, expr body)
           | Pipe(expr value, expr func)
+          -- test ? body : orelse (C 스타일 삼항 연산자)
+          | Ternary(expr test, expr body, expr orelse)
           | Coalesce(expr left, expr right)
           | BoolOp(boolop op, expr left, expr right)
           | UnaryOp(unaryop op, expr operand)
@@ -73,7 +77,7 @@ module Aster
           | AddressOf(expr value)
           | Deref(expr value)
           | SizeOf(typeref ty)
-          | Call(expr func, expr* args)
+          | Call(expr func, expr* args, keyword* keywords)
           -- 결과는 주소(Cls*)이다.
           | New(identifier cls, typeref* type_args, expr* args)
           | Attribute(expr value, identifier attr)
@@ -125,7 +129,15 @@ module Aster
  
      ret = VoidRet | ValueRet(typeref ty)
  
-     param = (typeref ty, identifier name)
+     -- 제네릭 타입 매개변수. bound는 'T extends Number'의 Number이다.
+     type_param = (identifier name, typeref? bound)
+ 
+     -- 매개변수. default는 기본 인자, variadic은 0=일반 1=vararg 2=varkwarg.
+     param = (typeref ty, identifier name, expr? default_value, int variadic)
+     -- 호출의 이름 있는 인자: f(name = 값)
+     keyword = (identifier name, expr value)
+     -- 'from m import A as B;'의 한 항목
+     import_name = (identifier name, identifier? alias)
      -- 람다의 단일 매개변수는 타입을 생략할 수 있다.
      lparam = (typeref? ty, identifier name)
      signature = (access? access, identifier name, param* params, ret returns)
@@ -133,14 +145,21 @@ module Aster
      range_expr = (expr start, expr stop, expr? step)
      enum_member = (identifier name, param* params, expr? value)
  
-     -- switch의 case 하나. pattern이 맞으면 body를 실행하고 끝난다 (fallthrough 없음).
-     match_case = (match_pattern pattern, stmt* body)
+     -- switch의 case 하나. pattern이 맞으면 guard를 검사하고 body를 실행한다.
+     -- guard가 없거나(None) guard가 참이면 그 case가 선택된다 (fallthrough 없음).
+     match_case = (match_pattern pattern, expr? guard, stmt* body)
      -- PLiteral: 1, "x", true, null 같은 리터럴 상수
      -- PVariant: Shape.Circle(r) 처럼 타입.변형(하위 패턴...) 형태
      -- PBind: 이름 하나로 아무 값이나 받는다 (_는 바인딩하지 않는 와일드카드)
+     -- PList: [a, b] 처럼 리스트를 분해한다. rest가 있으면 [a, *rest] 형태.
+     -- PDict: {"k": v} 처럼 딕셔너리를 분해한다. rest가 있으면 {**rest} 형태.
      match_pattern = PLiteral(expr value)
                    | PVariant(expr path, match_pattern* items)
                    | PBind(identifier name)
+                   | PList(match_pattern* items, identifier? rest)
+                   | PDict(pdict_item* items, identifier? rest)
+     -- 딕셔너리 패턴의 한 항목. key는 문자열/정수 같은 리터럴 식이다.
+     pdict_item = (expr key, match_pattern value)
  
      initializer = NoInit
                  | ExprInit(expr value)
@@ -152,7 +171,7 @@ module Aster
  
      -- access가 None이면 기본값(private)을 의미 분석에서 적용한다.
      member = Field(access? access, typeref ty, identifier name, expr? value, int is_static)
-            | Method(access? access, identifier name, identifier* type_params,
+            | Method(access? access, identifier name, type_param* type_params,
                      param* params, ret returns, stmt* body, int is_static)
             | Constructor(param* params, stmt* body)
             | Property(access? access, typeref ty, identifier name)

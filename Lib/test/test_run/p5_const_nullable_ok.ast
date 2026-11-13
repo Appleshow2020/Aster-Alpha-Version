@@ -1,0 +1,25 @@
+import System.stdout.*;
+
+const int LIMIT = 3;
+
+class Node {
+    public int value;
+    constructor(int v) { self->value = v; }
+}
+
+fn maybe(bool ok) -> Node? {
+    if (ok) {
+        return new Node(7);
+    }
+    return null;
+}
+
+Node? a = null;
+Node* p = null;
+println(LIMIT);
+println(a == null, p == null);
+Node? b = maybe(true);
+if (b != null) {
+    println(b->value);
+}
+println(maybe(false) == null);

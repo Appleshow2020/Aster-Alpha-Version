@@ -111,8 +111,7 @@ class Gen:
         o = ["/* 자동 생성: Parser/asdl_c.py (원본: Parser/Aster.asdl). 직접 고치지 마세요. */",
              "#include <stdio.h>", "#include <stdlib.h>", '#include "internal/ast.h"',
              '#include "internal/object.h"', "",
-             "static void missing(const char *field, const char *node)",
-             "{",
+             "static void missing(const char *field, const char *node) {",
              '    fprintf(stderr, "내부 오류: %s의 필수 필드 \'%s\'가 비어 있습니다\\n", node, field);',
              "    abort();", "}", ""]
         for name, d in self.dfns.items():
@@ -127,7 +126,7 @@ class Gen:
         return "\n".join(o) + "\n"
 
     def constructor(self, cname, rtype, sname, fields, attrs, kind):
-        o = [self.proto(cname, rtype, fields, attrs), "{", f"    {rtype} p;"]
+        o = [self.proto(cname, rtype, fields, attrs) + " {", f"    {rtype} p;"]
         for f in fields:
             if self.needs_check(f):
                 o.append(f'    if (!{f.name}) missing("{f.name}", "{cname}");')
@@ -158,8 +157,7 @@ class Gen:
              "static void dump_int(FILE *out, int i) { fprintf(out, \"%d\", i); }",
              "static void dump_constant(FILE *out, Value v) { Aster_Value_Repr(out, v); }",
              "static void dumpv_identifier(FILE *out, void *p) { dump_identifier(out, (identifier)p); }",
-             "static void dump_seq(FILE *out, asdl_seq *s, void (*fn)(FILE *, void *))",
-             "{",
+             "static void dump_seq(FILE *out, asdl_seq *s, void (*fn)(FILE *, void *)) {",
              "    size_t i;",
              "    fputc('[', out);",
              "    for (i = 0; i < asdl_seq_LEN(s); i++) { if (i) fputs(\", \", out); fn(out, asdl_seq_GET(s, i)); }",
@@ -172,8 +170,7 @@ class Gen:
         o.append("")
         for name, d in self.dfns.items():
             t = f"{name}_ty"
-            o.append(f"static void dump_{name}(FILE *out, {t} n)")
-            o.append("{")
+            o.append(f"static void dump_{name}(FILE *out, {t} n) {{")
             if d.simple:
                 o.append('    if (!n) { fputs("None", out); return; }')
                 o.append("    switch (n) {")
@@ -192,7 +189,7 @@ class Gen:
                 o += ["    " + line for line in self.dump_fields(c.name, c.fields, f"n->v.{c.name}.")]
                 o.append("        break;")
             o += ["    }", "}", ""]
-        o += ["void Aster_AST_Dump(FILE *f, mod_ty mod)", "{", "    dump_mod(f, mod);", "    fputc('\\n', f);", "}"]
+        o += ["void Aster_AST_Dump(FILE *f, mod_ty mod) {", "    dump_mod(f, mod);", "    fputc('\\n', f);", "}"]
         return o
 
     def dump_fields(self, cname, fields, prefix):

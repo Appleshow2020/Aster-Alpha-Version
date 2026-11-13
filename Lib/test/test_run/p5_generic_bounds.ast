@@ -1,0 +1,23 @@
+import System.stdout.*;
+from aster.lang.Number import Number;
+
+class Box<T extends Number> {
+    private T value;
+
+    constructor(T v) {
+        self->value = v;
+    }
+
+    public fn get() -> T {
+        return self->value;
+    }
+}
+
+fn FindMax<T extends Number>(T a, T b) -> T {
+    return max(a, b);
+}
+
+Box<int>* b = new Box<int>(42);
+println(b->get());
+println(FindMax(3, 9));
+println(FindMax(1.5, 2.5));

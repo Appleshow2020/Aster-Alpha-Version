@@ -1,0 +1,5 @@
+case guard: expected bool but got int
+case pattern expects a list but the subject is str
+case pattern expects a dict but the subject is int
+switch on enum 'Color' is missing case 'Color.Red'
+switch on enum 'Color' is missing case 'Color.Blue'

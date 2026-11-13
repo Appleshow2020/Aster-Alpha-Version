@@ -1,0 +1,6 @@
+import System.stdout.*;
+import cycle.counter;
+import cycle.other;
+
+println(counter.BASE);
+println(other.SEED);

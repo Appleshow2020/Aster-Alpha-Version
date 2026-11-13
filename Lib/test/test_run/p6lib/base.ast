@@ -1,0 +1,15 @@
+export class Animal {
+    protected str name;
+
+    constructor(str n) {
+        self->name = n;
+    }
+
+    public fn speak() -> str {
+        return self->name;
+    }
+}
+
+export interface Greeter {
+    fn greet() -> str;
+}

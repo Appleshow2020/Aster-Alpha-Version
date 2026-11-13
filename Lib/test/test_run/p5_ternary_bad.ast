@@ -1,0 +1,4 @@
+import System.stdout.*;
+
+int x = 5;
+println(x > 0 ? "a" : 1);

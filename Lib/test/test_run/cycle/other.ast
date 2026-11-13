@@ -1,0 +1,3 @@
+import cycle.counter;
+
+export int SEED = counter.BASE + 10;

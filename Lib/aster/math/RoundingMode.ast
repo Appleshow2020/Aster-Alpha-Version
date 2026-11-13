@@ -1,5 +1,6 @@
 /* aster.math.RoundingMode: Java java.math.RoundingMode 스타일 열거형.
-   Aster의 enum에는 메서드가 없으므로 이름/서수 헬퍼 함수를 함께 공개한다. */
+   Java의 RoundingMode에도 인스턴스 메서드가 없으므로 name/ordinal은 enum
+   속성을 쓰고, 이름 기반 조회만 컴패니언 함수로 제공한다. */
 
 enum RoundingMode {
     UP,

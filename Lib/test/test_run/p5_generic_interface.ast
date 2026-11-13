@@ -1,0 +1,48 @@
+import System.stdout.*;
+
+interface Mapper<T> {
+    fn map(T value) -> T;
+}
+
+interface Runnable {
+    fn run(int n) -> void;
+}
+
+class Doubler implements Mapper<int> {
+    public fn map(int value) -> int {
+        return value * 2;
+    }
+}
+
+class Echoer<T> implements Mapper<T> {
+    public fn map(T value) -> T {
+        return value;
+    }
+}
+
+fn apply(Mapper<int> mapper, int value) -> int {
+    return mapper.map(value);
+}
+
+fn runTwice(Runnable action, int n) -> void {
+    action.run(n);
+    action.run(n + 1);
+}
+
+Mapper<int> doubled = new Doubler();
+println(doubled.map(21));
+
+Mapper<int> echoed = new Echoer<int>();
+println(echoed.map(5));
+
+Mapper<int> lambda_mapper = (int x) -> int => x + 100;
+println(lambda_mapper.map(1));
+
+Runnable printer = (int n) -> void => println("lambda " + str(n));
+printer.run(7);
+
+printer = (int n) -> void => println("second " + str(n));
+printer.run(8);
+
+println(apply((int x) -> int => x * x, 6));
+runTwice((int n) -> void => println("twice " + str(n)), 3);

@@ -1,6 +1,7 @@
 import System.stdout.*;
 import aster.lang.String as StrLib;
-from System.io import readLine as read_line;
+from aster.io import readLines as read_lines;
+from aster.time import LocalTime, DayOfWeek as Dow;
 
 exception AppError extends Exception;
 

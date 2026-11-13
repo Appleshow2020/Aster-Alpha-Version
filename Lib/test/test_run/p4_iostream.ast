@@ -80,11 +80,10 @@ fn trace(int value) -> void {
     println("trace " + str(value));
 }
 
-/* Aster type-checks interface implementation but cannot use an imported
-   interface as a value type, so the classes are exercised directly. */
-Doubler doubler = new Doubler();
-Adder adder = new Adder();
-Greeter greeter = new Greeter();
+/* Imported interfaces work as value types; calls dispatch on the instance. */
+IntUnaryOperator doubler = new Doubler();
+IntBinaryOperator adder = new Adder();
+Function greeter = new Greeter();
 println(doubler.applyAsInt(21));
 println(adder.applyAsInt(2, 3));
 println(greeter.apply("aster"));

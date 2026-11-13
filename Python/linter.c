@@ -103,6 +103,11 @@ static void walk_expr(Linter *l, expr_ty e, int as_target) {
         walk_expr(l, e->v.Pipe.value, 0);
         walk_expr(l, e->v.Pipe.func, 0);
         break;
+    case Ternary_kind:
+        walk_expr(l, e->v.Ternary.test, 0);
+        walk_expr(l, e->v.Ternary.body, 0);
+        walk_expr(l, e->v.Ternary.orelse, 0);
+        break;
     case Coalesce_kind:
         walk_expr(l, e->v.Coalesce.left, 0);
         walk_expr(l, e->v.Coalesce.right, 0);
@@ -142,6 +147,10 @@ static void walk_expr(Linter *l, expr_ty e, int as_target) {
         walk_expr(l, e->v.Call.func, 0);
         for (i = 0; i < asdl_seq_LEN(e->v.Call.args); i++)
             walk_expr(l, (expr_ty)asdl_seq_GET(e->v.Call.args, i), 0);
+        for (i = 0; i < asdl_seq_LEN(e->v.Call.keywords); i++) {
+            keyword_ty kw = asdl_seq_GET(e->v.Call.keywords, i);
+            walk_expr(l, kw->value, 0);
+        }
         break;
     case New_kind:
         for (i = 0; i < asdl_seq_LEN(e->v.New.args); i++)
@@ -307,6 +316,8 @@ static void walk_stmt(Linter *l, stmt_ty s) {
         walk_expr(l, s->v.Switch.subject, 0);
         for (i = 0; i < asdl_seq_LEN(s->v.Switch.cases); i++) {
             match_case_ty c = (match_case_ty)asdl_seq_GET(s->v.Switch.cases, i);
+            if (c->guard)
+                walk_expr(l, c->guard, 0);
             check_block(l, c->body);
         }
         break;

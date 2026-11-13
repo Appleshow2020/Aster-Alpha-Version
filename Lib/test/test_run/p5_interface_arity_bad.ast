@@ -1,0 +1,9 @@
+interface Mapper<T> {
+    fn map(T value) -> T;
+}
+
+class Bad implements Mapper {
+    public fn map(int x) -> int {
+        return x;
+    }
+}

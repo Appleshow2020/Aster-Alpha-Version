@@ -1,0 +1,5 @@
+import cycle.broken;
+
+export fn caller() -> int {
+    return broken.answer();
+}

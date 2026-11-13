@@ -1,0 +1,26 @@
+class Node {
+    public int value;
+}
+
+const int LIMIT = 3;
+
+fn touch() -> int {
+    LIMIT = 4;
+    return LIMIT;
+}
+
+const str NAME;
+
+fn empty() -> Node {
+    return null;
+}
+
+fn take(Node n) -> int {
+    return n->value;
+}
+
+fn call() -> int {
+    return take(null);
+}
+
+Node direct = null;

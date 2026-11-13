@@ -1,5 +1,6 @@
 /* aster.time.DayOfWeek: ISO-8601 요일 (월요일 = 1, 일요일 = 7).
-   열거형에는 메서드를 둘 수 없으므로 값 변환은 컴패니언 함수로 제공한다. */
+   Java의 인스턴스 메서드는 enum 메서드로 제공하고, 정적 of(...)에 해당하는
+   생성 헬퍼만 컴패니언 함수로 둔다. */
 
 enum DayOfWeek {
     MONDAY,
@@ -8,7 +9,36 @@ enum DayOfWeek {
     THURSDAY,
     FRIDAY,
     SATURDAY,
-    SUNDAY
+    SUNDAY;
+
+    /* Java DayOfWeek.getValue(): 월요일 1 ~ 일요일 7. */
+    public fn getValue() -> int {
+        return self.ordinal + 1;
+    }
+
+    /* Java DayOfWeek.plus(long). */
+    public fn plus(int days) -> DayOfWeek {
+        return dayOfWeekPlus(self, days);
+    }
+
+    /* Java DayOfWeek.minus(long). */
+    public fn minus(int days) -> DayOfWeek {
+        return dayOfWeekMinus(self, days);
+    }
+
+    /* 영어 전체 이름 (Monday ... Sunday). */
+    public fn fullName() -> str {
+        return dayOfWeekFullName(self);
+    }
+
+    /* 영어 3글자 이름 (Mon ... Sun). */
+    public fn shortName() -> str {
+        return dayOfWeekShortName(self);
+    }
+
+    public fn isWeekend() -> bool {
+        return self == DayOfWeek.SATURDAY or self == DayOfWeek.SUNDAY;
+    }
 }
 
 /* ISO-8601 값 (월요일 1 ~ 일요일 7). */

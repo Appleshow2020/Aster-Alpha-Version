@@ -1,0 +1,19 @@
+import System.stdout.*;
+
+class Pair {
+    int a;
+    int b;
+
+    constructor(int a, int b) {
+        self->a = a;
+        self->b = b;
+    }
+
+    constructor(int a) {
+        self->a = a;
+        self->b = 0;
+    }
+}
+
+Pair p = new Pair(1, 2, 3);
+println(p.a);

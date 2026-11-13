@@ -1,0 +1,16 @@
+import System.stdout.*;
+fn grade(int score) -> str {
+    return score >= 90 ? 'A' : score >= 60 ? 'B' : 'C';
+}
+int x = 5;
+println(x > 0 ? 'pos' : 'neg');
+println(x > 10 ? 'big' : x > 3 ? 'mid' : 'small');
+println(grade(95), grade(70), grade(10));
+int? maybe = x > 3 ? null : 7;
+println(maybe == null);
+str? name = x == 5 ? 'aster' : null;
+println(name ?? 'none');
+float ratio = x > 0 ? 1 : 2.5;
+println(ratio);
+var list = [x > 2 ? 1 : 2, x > 9 ? 3 : 4];
+println(list);

@@ -1,7 +1,8 @@
 # Aster 언어 명세
 
 이 문서는 Aster의 문법과 실행 의미를 설명합니다. 설치 방법은 [README](../README.md)를,
-내장 함수와 표준 입출력은 [stdlib.md](stdlib.md), 패키지는 [packages.md](packages.md)를 봅니다.
+내장 함수와 표준 입출력은 [stdlib.md](stdlib.md), 패키지는 [packages.md](packages.md),
+키워드·내장 함수·모듈 확장은 [extending.md](extending.md)를 봅니다.
 
 문법의 형식 정의는 [Grammar/aster.gram](../Grammar/aster.gram)에 있습니다.
 
@@ -95,9 +96,11 @@ System.err.println("error");
 self public protected private internal if else while for break continue return
 throw try catch finally switch case default typedef struct and or not is in
 true false sizeof int float bool str null void super exception export yield`
-- **소프트 키워드**: `const static enum assert extern constructor getter setter property`.
+- **소프트 키워드**: `const static enum assert extern constructor getter setter property
+when vararg varkwarg`.
   지정된 위치에서만 키워드로 취급되므로 변수 이름으로도 쓸 수 있습니다.
-  (`yield`는 하드 키워드입니다.)
+  (`yield`는 하드 키워드입니다. `vararg`/`varkwarg`는 매개변수 목록에서만,
+  `when`은 `case` 패턴 뒤에서만 키워드입니다.)
 - **오버로드**: 별도 키워드가 없습니다. 같은 이름의 함수/메서드를 여러 번 선언하면
   오버로드 묶음이 됩니다.
 
@@ -139,14 +142,17 @@ list<fn(int) -> bool> predicates = [];
 ```
 
 함수 타입은 변수, 매개변수, 반환 타입, 제네릭 인자에 모두 쓸 수 있습니다. 다만
-**람다를 선언할 때는 함수 타입을 붙이지 않습니다.** 람다는 `var`(또는 타입 생략)나
-람다의 반환 타입을 씁니다.
+**람다를 선언할 때는 함수 타입을 붙이지 않습니다.** 람다는 `var`(또는 타입 생략),
+람다의 반환 타입, 또는 **메서드가 하나뿐인 인터페이스**를 씁니다.
 
 ```aster
 var a = (int x) -> int => x * 2;
 float b = (int x) -> float => (float)x;
 
 fn(int) -> int c = (int x) -> int => x * 2;   # 오류
+
+interface Mapper { fn map(int value) -> int; }
+Mapper m = (int x) -> int => x + 1;           # OK: 함수형 인터페이스
 ```
 
 ### 합집합 타입
@@ -179,8 +185,10 @@ const int LIMIT = 3;    # 재대입 불가
 var xs = [1, 2, 3];     # list<int>
 ```
 
-`var`와 `any`는 "타입을 검사하지 않음"을 뜻합니다. `const`가 붙은 변수에 다시
-대입하면 타입 검사 단계와 실행 단계 모두에서 오류가 납니다.
+`var`와 `any`는 "타입을 검사하지 않음"을 뜻합니다. `const`가 붙은 변수는
+**선언할 때 반드시 초기화**해야 하고, 다시 대입하면 타입 검사 단계에서
+`cannot assign to const variable` 오류가 납니다(검사를 건너뛴 경로도 실행
+단계에서 한 번 더 막습니다). import한 `const`도 같은 규칙이 적용됩니다.
 
 ### 선언과 기본값
 
@@ -201,6 +209,7 @@ Point p3 = { .y = 2, .x = 1 };
 | 연산자                         | 설명                               |
 | ------------------------------ | ---------------------------------- |
 | `params -> T => 식`            | 람다                               |
+| `c ? a : b`                    | 삼항 (조건이 참이면 `a`, 아니면 `b`) |
 | `a \|> f`                      | 파이프 ( `f(a)` )                  |
 | `a ?? b`                       | null 병합 (왼쪽이 null이면 오른쪽) |
 | `or`                           | 논리 합 (단락 평가)                |
@@ -213,6 +222,11 @@ Point p3 = { .y = 2, .x = 1 };
 | `**`                           | 거듭제곱 (오른쪽 결합)             |
 | `+ - ++ -- & * **`             | 단항                               |
 | `. -> ?. () [] ++ --`          | 후위                               |
+
+`c ? a : b`는 C와 같은 삼항 연산자입니다. 오른쪽으로 결합하므로
+`a ? b : c ? d : e`는 `a ? b : (c ? d : e)`입니다. 두 가지의 타입이 다르면
+공통 타입으로 합쳐지고(`int`와 `float` → `float`), 한쪽이 `null`이면 결과는
+nullable입니다.
 
 ### 산술
 
@@ -246,6 +260,11 @@ int n = maybe?.length() ?? 0;
 ```
 
 `?.`는 왼쪽이 null이면 오른쪽을 평가하지 않고 `null`을 돌려줍니다.
+
+`null`은 **nullable 타입(`?`, `null` 멤버를 가진 합집합)이나 포인터에만** 넣을
+수 있습니다. `Node n = null;`, `fn f() -> Node { return null; }`, `take(null)`
+처럼 null을 비-nullable 타입에 넘기면 타입 검사 단계에서 오류가 납니다.
+`Node?`, `Node*`, `var`는 null을 담을 수 있습니다.
 
 ### 캐스트, 변환, sizeof
 
@@ -311,7 +330,7 @@ if (x > 0) {
 }
 ```
 
-괄호는 필수입니다. 3항 연산자(`? :`)는 없습니다.
+괄호는 필수입니다. 식으로 값을 고를 때는 3항 연산자(`? :`)를 씁니다.
 
 ### switch와 패턴
 
@@ -334,7 +353,7 @@ switch (s) {
 }
 ```
 
-패턴은 다음 세 가지입니다.
+패턴은 다음 다섯 가지입니다.
 
 - **리터럴**: 정수(음수 포함), 실수, 문자열, `true`, `false`, `null`. `==`로 비교하며,
   타입 검사기는 리터럴이 주체 타입에 대입 가능한지도 확인합니다(예: `int` 주체에
@@ -343,6 +362,11 @@ switch (s) {
   `_`는 아무것도 묶지 않는 와일드카드이며 `default`와 같습니다.
 - **열거형 변형**: `Type.Variant` 또는 `Type.Variant(하위패턴...)`. 타입·변형·페이로드
   개수가 모두 같아야 하고, 하위 패턴도 차례로 매칭됩니다.
+- **리스트**: `[p1, p2]`는 길이가 정확히 같은 리스트(또는 튜플)와 일치합니다.
+  `[a, *rest]`는 앞의 패턴을 맞춘 나머지를 `rest`에 리스트로 묶고, `[*rest]`처럼
+  앞부분 없이 쓸 수도 있습니다. `rest`는 패턴의 마지막에만 옵니다.
+- **딕셔너리**: `{"k": p}`는 키 `"k"`의 값이 `p`와 맞는 딕셔너리와 일치합니다.
+  `{**rest}`는 패턴에 쓰지 않은 나머지 항목을 `rest`에 딕셔너리로 묶습니다.
 
 ```aster
 enum Shape {
@@ -353,20 +377,48 @@ enum Shape {
 
 fn describe(Shape s) -> str {
     switch (s) {
+        case Shape.Circle(r) when r == 0.0 { return "point"; }
         case Shape.Circle(r) { return "circle " + str(r); }
+        case Shape.Rect(w, h) when w == h { return "square " + str(w); }
         case Shape.Rect(w, h) { return "rect " + str(w) + "x" + str(h); }
         case Shape.Empty { return "empty"; }
     }
     return "unknown";
 }
+
+fn first(list<int> xs) -> int {
+    switch (xs) {
+        case [] { return -1; }
+        case [a, *rest] { return a; }
+    }
+    return -1;
+}
+
+fn name(dict<str, str> person) -> str {
+    switch (person) {
+        case {"name": n, "role": r} { return n + "/" + r; }
+        case {"name": n, **others} { return n; }
+        default { return "anonymous"; }
+    }
+}
 ```
 
+- **가드**: `case 패턴 when 식`은 패턴이 맞은 뒤 `식`이 `true`일 때만 그 가지를
+  고릅니다. 거짓이면 다음 `case`로 넘어갑니다. 가드 식은 `bool`이어야 합니다.
 - 주체 식은 한 번만 평가합니다. 각 `case`는 별도의 자식 스코프를 가지므로 패턴이
   묶은 이름은 그 블록 안에서만 보입니다.
 - 매칭되는 패턴이 없으면 아무것도 하지 않고 다음 문장으로 넘어갑니다.
 - `default`는 `_` 패턴과 같아서 위치상 그 뒤의 `case`가 있으면 안 됩니다. `default`를
   두 번 쓰면 문법 오류입니다.
 - 변형 패턴의 경로가 열거형 변형을 가리키지 않으면 `TypeError`입니다.
+
+**완전성 검사.** 주체가 열거형이면 `default` 없이도 모든 변형을 처리했는지
+컴파일할 때 확인합니다. 하나라도 빠지면 `switch on enum 'Color' is missing case
+'Color.Blue'`처럼 오류를 냅니다(Java의 sealed 타입 switch와 같습니다). 나중에
+열거형에 변형을 추가하면 그 열거형을 다루는 모든 `switch`가 곧바로 오류를 냅니다.
+`default`나 `_` 바인딩이 하나 있으면 완전성 검사를 생략합니다. 가드가 붙은
+`case`는 그 변형을 처리한 것으로 치지 않으므로, `switch`를 완전하게 만들려면
+가드 없는 `case`가 필요합니다.
 
 ### 반복문
 
@@ -425,6 +477,43 @@ int r = add(1, 2);
 반환 타입은 생략할 수 없습니다. 매개변수는 항상 `타입 이름` 형태입니다.
 블록 안에 중첩 함수를 선언할 수 있습니다.
 
+### 기본값, 이름 있는 인자, 가변 인자
+
+매개변수에 기본값을 주면 호출에서 생략할 수 있습니다. 기본값은 호출 시점에
+앞쪽 매개변수가 바인딩된 환경에서 평가됩니다. 기본값이 없는 매개변수 뒤에만
+기본값을 둘 수 있습니다.
+
+```aster
+fn myuser(str name, int age = 20, str role = "user") -> void {
+    println(f"{name}, {age}, {role}");
+}
+
+myuser("Bom");                          # Bom, 20, user
+myuser("Kim", 30);                      # Kim, 30, user
+myuser(role = "admin", name = "Asp");   # Asp, 20, admin
+myuser("Lee", role = "guest");          # Lee, 20, guest
+```
+
+이름 있는 인자는 위치 인자 뒤에만 쓸 수 있습니다. 모르는 이름, 중복 지정,
+필수 인자 누락은 컴파일 오류입니다.
+
+`vararg`는 남는 위치 인자를 리스트로, `varkwarg`는 남는 이름 있는 인자를
+`dict<str, T>`로 받습니다. 둘 다 있으면 `vararg`가 `varkwarg`보다 앞에 와야
+합니다.
+
+```aster
+fn printinfo<T>(vararg T args, varkwarg T kwarg) -> void {
+    println("args:", args);
+    println("kwargs:", kwarg);
+}
+
+printinfo(1, 2, 3);            # args: [1, 2, 3] / kwargs: {}
+printinfo("a", "b", x = 1);    # args: ['a', 'b'] / kwargs: {'x': 1}
+```
+
+기본 인자와 이름 있는 인자는 메서드 호출에도 똑같이 적용됩니다. 생성자
+호출(`new`)은 위치 인자만 받습니다.
+
 ### 제네릭 함수
 
 ```aster
@@ -433,6 +522,22 @@ int x = id(3);              # T는 호출 시 추론
 ```
 
 타입 인자를 명시하는 호출 문법(`id<int>(3)`)은 없습니다.
+
+타입 매개변수에는 `extends`로 경계를 붙일 수 있습니다.
+
+```aster
+from aster.lang.Number import Number;
+
+fn FindMax<T extends Number>(T a, T b) -> T {
+    return max(a, b);
+}
+
+println(FindMax(3, 9));       # int
+println(FindMax(1.5, 2.5));   # float
+```
+
+호출 시 추론된 타입 인자가 경계를 만족하지 않으면 컴파일 오류입니다. `int`와
+`float`는 `Number` 경계를 만족합니다.
 
 ### 람다
 
@@ -448,8 +553,11 @@ float half = (int x) -> float => (float)x;   # 선언 타입 = 람다의 반환 
 - 형식은 `매개변수 -> 반환타입 => 본문`입니다. 반환 타입은 필수입니다.
 - 매개변수는 `(타입 이름, ...)` 괄호 목록입니다. 이름만 쓸 수도 있습니다.
 - 본문은 식 하나입니다. 포인터 멤버 접근(`p->x`)도 그대로 쓸 수 있습니다.
-- 람다를 변수에 넣을 때 선언 타입은 `var`이거나 **람다의 반환 타입**입니다.
-  함수 타입 `fn(...) -> T`을 붙이면 오류입니다.
+- 람다를 변수에 넣을 때 선언 타입은 `var`, **람다의 반환 타입**, 또는
+  **메서드가 하나뿐인 인터페이스**입니다. 함수 타입 `fn(...) -> T`을 붙이면 오류입니다.
+- 인터페이스에 대입할 때는 그 메서드의 매개변수 개수·타입과 반환 타입이 맞아야
+  합니다(타입 검사기가 확인). 실행 시에는 람다가 그 인터페이스의 메서드 이름으로
+  호출됩니다.
 - 옛 문법 `x => 식 -> 타입`, `(int a, int b) => 식 -> 타입`도 계속 동작합니다.
   옛 문법에서 본문 최상위의 `->`는 반환 타입 화살표로 읽히므로 포인터 멤버
   접근은 괄호로 감쌉니다: `x => (p->v) -> int`.
@@ -472,9 +580,9 @@ list<fn(int) -> bool> predicates = [];
 ```
 
 함수 타입 값에는 일반 함수, 람다, 메서드 참조를 넣을 수 있습니다. 다만 람다를
-변수로 선언할 때 함수 타입을 붙이지 말고 `var`나 람다의 반환 타입을 씁니다.
-타입 검사기는 매개변수 개수와 타입, 반환 타입이 같은지를 검사합니다
-(`int`→`float` 허용 규칙은 함수 타입에도 적용됩니다).
+변수로 선언할 때 함수 타입을 붙이지 말고 `var`, 람다의 반환 타입, 또는 함수형
+인터페이스를 씁니다. 타입 검사기는 매개변수 개수와 타입, 반환 타입이 같은지를
+검사합니다(`int`→`float` 허용 규칙은 함수 타입에도 적용됩니다).
 
 ### extern
 
@@ -627,6 +735,29 @@ println(p->sum());
   `private`는 선언한 클래스 안에서만, `protected`는 그 클래스와 하위 클래스에서만
   쓸 수 있습니다. `internal`은 모듈 밖에서도 쓸 수 있습니다(현재 검사 없음).
 - 생성자는 `constructor(...)`로 쓰고 반환 타입을 쓰지 않습니다.
+- 생성자는 **오버로드**할 수 있습니다. 같은 클래스에 인자 모양이 다른 생성자를 여러
+  개 두면 호출 시 인자 수와 타입으로 고릅니다. 하위 클래스 생성자는
+  `super(...)`로 부모 생성자 중 인자에 맞는 것을 호출합니다.
+
+  ```aster
+  class Point {
+      int x;
+      int y;
+
+      constructor(int x) {
+          self->x = x;
+          self->y = 0;
+      }
+
+      constructor(int x, int y) {
+          self->x = x;
+          self->y = y;
+      }
+  }
+
+  Point a = new Point(1);
+  Point b = new Point(1, 2);
+  ```
 - 인스턴스에는 `self`, 멤버 접근에는 `->`를 씁니다. 타입 이름이 붙은 정적 멤버에는
   `.`을 씁니다.
 - 상속은 `extends`, 인터페이스는 `implements`입니다.
@@ -697,6 +828,29 @@ class Circle implements Shape {
 계약**입니다. 인터페이스를 구현했다고 선언해도 메서드 존재 여부를 실행 시점에
 검사하지 않습니다.
 
+인터페이스에는 타입 매개변수를 붙일 수 있습니다. `implements`할 때 타입 인자
+개수가 맞아야 하며, 메서드 서명은 타입 인자를 지운 상태(erasure)로 검사합니다.
+
+```aster
+interface Mapper<T> {
+    fn map(T value) -> T;
+}
+
+class Doubler implements Mapper<int> {
+    public fn map(int value) -> int { return value * 2; }
+}
+
+Mapper<int> m = new Doubler();
+println(m.map(21));                         # 42
+
+Mapper<int> plus_one = (int x) -> int => x + 1;
+println(plus_one.map(41));                  # 42
+```
+
+메서드가 하나뿐인 인터페이스는 함수형 인터페이스로 취급되어 람다를 바로 대입할
+수 있습니다. 람다를 인터페이스 매개변수에 넘기거나, 인터페이스 타입 변수에
+다시 대입하는 것도 됩니다.
+
 ### 제네릭 클래스
 
 ```aster
@@ -709,7 +863,9 @@ class Box<T> {
 Box<int>* b = new Box<int>(3);
 ```
 
-제네릭 매개변수에 제약(`T extends ...`)은 없습니다. 타입은 실행 시 지워집니다.
+제네릭 매개변수에는 `T extends Number`처럼 상위 타입 경계를 붙일 수 있습니다.
+`new Box<int>(3)`처럼 쓰면 타입 인자 개수와 경계를 검사합니다. 타입 인자는
+실행 시 지워집니다.
 
 ### 구조체
 
@@ -761,6 +917,26 @@ try {
 
 `catch`는 예외 클래스 계층을 따라 매칭합니다. 잡힌 값에는 `.message`와 `.name`이
 있습니다. `finally`는 정상 종료와 예외 모두에서 실행됩니다.
+
+`catch` 없이 `finally`만 붙일 수 있고, `try`를 단독으로도 쓸 수 있습니다.
+
+```aster
+try {
+    risky();
+} finally {
+    println("정리");
+}
+
+try {
+    println("실패해도 계속");
+    throw "무시됨";
+    println("여기는 실행되지 않는다");
+}
+println("이어서 실행");
+```
+
+`try` 단독은 본문에서 던져진 예외를 조용히 삼킵니다(예외 없는 try).
+`try-finally`는 `finally`를 실행한 뒤 보류 중이던 예외를 그대로 다시 던집니다.
 
 잡히지 않은 예외는 호출 스택과 함께 표준 에러로 출력되고 종료 코드는 1이 됩니다.
 
@@ -839,6 +1015,49 @@ fn area(Shape s) -> float {
     return 0.0;
 }
 ```
+
+### enum 메서드
+
+멤버를 모두 적은 뒤 `;`를 쓰고 메서드를 선언하면 열거형 값마다 그 메서드가
+바인딩됩니다. 메서드 안에서 `self`는 그 값 자체이고, `.name`, `.ordinal`,
+`.payload` 같은 접근자를 그대로 쓸 수 있습니다.
+
+```aster
+enum Color {
+    Red, Green, Blue;
+
+    public fn isWarm() -> bool {
+        return self == Color.Red;
+    }
+
+    public fn label() -> str {
+        return self.name;
+    }
+}
+
+println(Color.Red.isWarm());     # true
+println(Color.Blue.label());     # Blue
+```
+
+페이로드 변형에도 메서드를 붙일 수 있고, `switch (self)`로 변형을 분기합니다.
+
+```aster
+enum Shape {
+    Circle(float r), Rect(float w, float h), Empty;
+
+    public fn area() -> float {
+        switch (self) {
+            case Shape.Circle(r) { return 3.14159 * r * r; }
+            case Shape.Rect(w, h) { return w * h; }
+            case Shape.Empty { return 0.0; }
+        }
+    }
+}
+
+println(Shape.Circle(1.0).area());   # 3.14159
+```
+
+같은 이름의 메서드를 여러 개 선언하면 클래스와 같은 규칙으로 오버로드됩니다.
 
 ## 10. 컬렉션
 
@@ -959,11 +1178,13 @@ println(h.answer);
 
 from helper import greet;
 from helper import answer as a;
+from helper import greet, answer as a;
 from helper import *;
 ```
 
-`from`은 한 번에 이름 하나만 가져옵니다(콤마 목록은 지원하지 않습니다). 여러
-이름이 필요하면 `from`을 여러 번 쓰거나 모듈 전체를 가져옵니다.
+`from`은 콤마로 여러 이름을 한 번에 가져올 수 있고, 각 이름에 `as` 별칭을
+붙일 수 있습니다. `*`는 공개 이름을 모두 가져오며 다른 이름과 섞어 쓸 수
+없습니다.
 
 - 모듈 경로의 `.`은 디렉터리 구분자입니다. `import a.b`는 `a/b.ast` 또는
   `a/b/__init__.ast`를 찾습니다.
@@ -976,6 +1197,89 @@ from helper import *;
   `export`가 없으면 밑줄로 시작하지 않는 모든 이름을 공개합니다.
 - 모듈은 이름별로 한 번만 로드되고 캐시됩니다.
 - `import *`는 공개 이름을 현재 범위로 가져옵니다.
+- import한 모듈이 공개한 클래스·인터페이스의 상속·구현 관계를 타입 검사기가
+  해석합니다. 모듈을 넘는 `extends`, `implements`, 인터페이스 메서드 계약 검사가
+  그대로 동작합니다.
+
+```aster
+# shapes.ast
+export class Animal {
+    protected str name;
+    constructor(str n) { self->name = n; }
+    public fn speak() -> str { return self->name; }
+}
+
+export interface Greeter {
+    fn greet() -> str;
+}
+
+# main.ast
+import shapes.*;
+
+class Dog extends Animal implements Greeter {
+    constructor(str n) { super(n); }
+    public fn greet() -> str { return "woof " + self->name; }
+}
+```
+
+`Dog`가 `greet`를 구현하지 않으면 `shapes`의 인터페이스 정의를 근거로
+컴파일 오류가 납니다. 상속된 멤버의 접근 제어(`protected`)도 모듈 경계를 넘어
+적용됩니다.
+
+### 순환 import
+
+순환 import는 C#처럼 허용됩니다. `a`가 `b`를, `b`가 `a`를 import해도 서로의
+함수·클래스·인터페이스를 사용할 수 있습니다.
+
+```aster
+# a.ast
+import cycle.b;
+export class A { ... }
+export fn fa(int x) -> int { return b.fb(x) + 1; }
+
+# b.ast
+import cycle.a;
+export class B extends A { ... }          # 순환해도 기반 클래스 해석됨
+export fn fb(int x) -> int { return x * 2; }
+```
+
+타입 검사는 모듈 그래프를 먼저 읽는 3단계로 진행됩니다.
+
+1. 각 모듈의 클래스·구조체·열거형 **이름과 모양**을 먼저 등록합니다.
+2. import한 모듈의 상속·인터페이스·본문을 검사합니다.
+3. 최상위 모듈을 검사합니다.
+
+이 덕분에 순환 관계에서도 `extends`/`implements`가 올바르게 해석되고, import한
+모듈에서 발생한 타입 오류도 그대로 보고됩니다.
+
+런타임은 모듈 본문을 실행하기 전에 전역 변수를 **타입 기본값**으로 미리 묶습니다.
+따라서 순환 import 중 아직 초기화되지 않은 변수를 읽으면 C#의 정적 필드처럼 다음
+기본값을 봅니다.
+
+| 선언 타입 | 기본값 |
+| --- | --- |
+| `int` | `0` |
+| `float` | `0.0` |
+| `bool` | `false` |
+| `str` | `""` |
+| `list`/`dict`/`set` 등 | 빈 컬렉션 |
+| 클래스·구조체·`null` | `null` |
+
+```aster
+# counter.ast
+import cycle.other;
+export int BASE = other.SEED + 1;         # 초기화 전 other.SEED는 0으로 보임
+
+# other.ast
+import cycle.counter;
+export int SEED = counter.BASE + 10;      # 초기화 전 counter.BASE는 0
+```
+
+`var x = ...`처럼 타입을 쓰지 않은 변수는 초기화식 모양으로 기본값을 정합니다
+(정수/실수/불/문자열 리터럴, 리스트·딕셔너리·튜플·집합 리터럴). 그 밖의 계산식은
+`null`로 시작하므로, 순환 초기화에서 읽히는 변수는 가능하면 타입을 명시하는 것이
+안전합니다.
+
 - `package 이름;` 문장은 파싱되지만 현재 로더 동작에는 영향을 주지 않습니다.
 
 표준 라이브러리의 내장 클래스도 같은 방식으로 가져옵니다.
@@ -1020,24 +1324,40 @@ Aster는 실행 전에 정적 타입 검사를 합니다.
 
 검사기는 **보수적**입니다. 확실한 오류만 보고하고, 추론할 수 없는 값은 `any`로
 처리합니다. 주 모듈과 함께, import한 모듈(표준 라이브러리 포함)도 읽어서
-검사하고 공개 이름의 타입을 가져옵니다. 순환 import는 한 번만 검사합니다.
+검사하고 공개 이름의 타입을 가져옵니다. 순환 import는 C#처럼 허용되며, 모듈
+그래프 전체의 타입 모양을 먼저 모은 뒤 상속·본문을 검사합니다(§12 참조).
 
 검사하는 것:
 
-- 지역 변수, 함수, 클래스, 구조체 선언과 사용
-- 함수 호출 인자 수/타입(오버로드 선택 포함), 반환 타입
-- import한 모듈에 없는 이름 접근
-- 인터페이스가 요구하는 메서드의 존재와 서명
-- 명시한 `private`/`protected` 멤버의 접근 범위
+- 지역 변수, 함수, 클래스, 구조체, enum 선언과 사용. 선언 없이 읽는 이름은 오류입니다.
+- `var` 초기화식의 타입 추론, 선언 타입과 초기화식·대입식·필드 대입·반환식의 일치
+- 함수 호출 인자 개수·타입·이름, 오버로드 선택, 생성자 선택, 제네릭 경계
+- 값을 돌려주는 함수가 모든 경로에서 `return` 하는지(`if`/`while`/`for`/`switch`/`try` 분석)
+- 컬렉션 메서드의 이름과 인자 타입. 예를 들어 `list<int>`의 `append`는 `int`만 받습니다.
+  list/tuple/dict/set/frozenset의 메서드 표를 검사기가 알고 있습니다.
+- 구조체 필드, 클래스 멤버, enum 변형 이름의 존재
+- 서브스크립트: 리스트/튜플/문자열 인덱스는 `int`, 딕셔너리 키는 키 타입,
+  set/frozenset은 서브스크립트 불가
+- 인터페이스 구현(메서드 존재와 서명), `private`/`protected` 접근 범위
+- `const` 재대입, null이 될 수 있는 값의 직접 접근(`?.` 또는 null 검사 필요)
+- `yield`는 함수 안에서만 쓸 수 있고, 값 타입은 함수 반환 타입의 원소 타입과
+  일치해야 합니다. 제너레이터가 아닌 함수에서는 값 없는 `return;`만 허용됩니다.
+- switch의 enum 완전성(모든 변형을 다루거나 `default`/바인딩 패턴 필요),
+  패턴 타입, 가드의 `bool`
+- 람다를 함수 타입으로 선언하는 것(§6), 모듈에 없는 이름 접근
 
 검사하지 않는 것:
 
-- 객체의 동적 속성 존재 여부
-- 배열/딕셔너리 인덱스의 범위
-- 함수 타입 값의 실제 대상 검사(대입 시 서명만 비교)
+- `any`로 추론된 값의 멤버·인덱스(동적 접근)
+- 배열/딕셔너리 인덱스의 범위(실행 시 검사)
+- 함수 타입 값의 실제 대상(대입 시 서명만 비교)
+- `System.stdout`/`System.stderr` 외 모듈을 `*`로 import해 들어온 이름
+  (해당 모듈의 공개 이름은 `any`로 취급)
 
 `extern` 선언의 구현 확인은 타입 검사가 아니라 로드(선언 처리) 단계에서 합니다.
-오류 메시지는 모두 영어로 출력됩니다.
+오류 메시지는 모두 영어로 출력됩니다. 같은 위치에서 같은 진단은 한 번만 나옵니다.
+`Tools/check_random.py`는 정상 프로그램뿐 아니라 **거부되어야 하는** 프로그램
+(정의되지 않은 이름, 타입 불일치, 누락된 `return` 등)도 매번 생성해 검사합니다.
 
 ## 15. 실행 모델과 제한
 
@@ -1053,7 +1373,6 @@ Aster는 실행 전에 정적 타입 검사를 합니다.
 - 호출 깊이 제한 기본값은 512입니다. 넘으면 `RecursionError`가 납니다.
   `System.setRecursionLimit(n)`으로 바꾸고 `System.getRecursionLimit()`으로 읽습니다
   (1 이상 100000 이하).
-- 3항 연산자(`? :`)와 예외 없는 `try` 블록은 없습니다.
 - `--format`은 주석을 보존하지 않습니다. 정규화된 코드만 필요할 때 씁니다.
 - 바이트코드 VM은 아직 없습니다. 성능·메모리 상한이 필요하면 트리 워킹의 한계를
   전제로 해야 합니다.

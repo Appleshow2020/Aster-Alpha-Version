@@ -24,7 +24,7 @@
 #include "internal/runtime.h"
 #include "internal/typecheck.h"
 
-#define ASTER_VERSION "Alpha 1.1.0"
+#define ASTER_VERSION "Alpha 1.2.0"
 
 static char *read_stream(FILE *f, size_t *size) {
     size_t cap = 4096;

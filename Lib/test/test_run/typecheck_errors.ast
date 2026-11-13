@@ -28,8 +28,7 @@ class Vault {
     }
 }
 
-from aster.math import sqrt;
-from aster.math import nosuch;
+from aster.math import sqrt, nosuch;
 
 Vault v = new Vault(3);
 println(v->secret);

@@ -5883,7 +5883,9 @@ void Interp_Init(Interp *in) {
     scanner_cls->methods[5].fn = make_builtin_method(in, "hasNext", scanner_hasnextline);
     scanner_cls->methods[6].name = "close";
     scanner_cls->methods[6].fn = make_builtin_method(in, "close", scanner_close);
-    scanner_cls->ctor = make_builtin_method(in, "Scanner", scanner_ctor);
+    scanner_cls->nctors = 1;
+    scanner_cls->ctors = Arena_Alloc(in->arena, sizeof(AstFn *));
+    scanner_cls->ctors[0] = make_builtin_method(in, "Scanner", scanner_ctor);
     {
         AstClass *cls = Arena_Alloc(in->arena, sizeof(AstClass));
         *cls = *scanner_cls;

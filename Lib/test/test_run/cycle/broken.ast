@@ -1,0 +1,5 @@
+import cycle.bad_main;
+
+export fn answer() -> int {
+    return "not an int";
+}

@@ -63,6 +63,7 @@ check: $(BIN)
 	$(PYTHON) Tools/check_runtime.py
 	$(PYTHON) Tools/check_repl.py
 	$(PYTHON) Tools/check_tools.py
+	$(PYTHON) Tools/check_random.py
 
 regen:
 	$(PYTHON) Tools/build/generate_token.py Grammar/Tokens Include/internal/token.h Parser/token.c

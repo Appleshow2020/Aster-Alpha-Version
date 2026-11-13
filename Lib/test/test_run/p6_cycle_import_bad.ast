@@ -1,0 +1,4 @@
+import System.stdout.*;
+import cycle.bad_main;
+
+println(bad_main.caller());

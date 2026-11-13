@@ -1,0 +1,12 @@
+class Box<T extends Number> {
+    private T value;
+    public fn map<U extends Number>(U other) -> U { return other; }
+}
+
+interface Mapper<T extends Comparable<T>> {
+    fn apply(T value) -> T;
+}
+
+fn FindMax<T extends Number>(T a, T b) -> T {
+    return max(a, b);
+}

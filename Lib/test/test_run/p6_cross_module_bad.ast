@@ -1,0 +1,7 @@
+import p6lib.base.*;
+
+class Cat extends Animal implements Greeter {
+    constructor(str n) {
+        super(n);
+    }
+}

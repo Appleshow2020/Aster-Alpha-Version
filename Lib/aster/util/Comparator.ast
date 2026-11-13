@@ -1,6 +1,6 @@
 /* aster.util.Comparator: 두 값을 비교하는 계약.
-   음수/0/양수를 돌려준다. 람다는 인터페이스 타입에 담을 수 없으므로
-   Comparator가 필요한 곳에는 이 인터페이스를 구현한 클래스 인스턴스를 넘긴다. */
+   음수/0/양수를 돌려준다. 메서드 서명이 맞는 람다는 이 인터페이스 타입
+   변수에 담을 수 있고, 구현 클래스 인스턴스도 그대로 넘길 수 있다. */
 
 export interface Comparator {
     fn compare(any a, any b) -> int;

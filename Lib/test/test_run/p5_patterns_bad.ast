@@ -1,0 +1,57 @@
+import System.stdout.*;
+
+fn badGuard(int n) -> str {
+    switch (n) {
+        case 1 when n {
+            return "one";
+        }
+        default {
+            return "other";
+        }
+    }
+}
+
+fn badList(str s) -> int {
+    switch (s) {
+        case [a] {
+            return a;
+        }
+        default {
+            return 0;
+        }
+    }
+}
+
+fn badDict(int n) -> str {
+    switch (n) {
+        case {"k": v} {
+            return v;
+        }
+        default {
+            return "?";
+        }
+    }
+}
+
+enum Color {
+    Red,
+    Green,
+    Blue
+}
+
+fn guarded(Color c) -> str {
+    switch (c) {
+        case Color.Red when c == Color.Red {
+            return "r";
+        }
+        case Color.Green {
+            return "g";
+        }
+    }
+    return "?";
+}
+
+println(badGuard(1));
+println(badList("x"));
+println(badDict(1));
+println(guarded(Color.Red));

@@ -1,0 +1,5 @@
+interface Mapper<T> {
+    fn map(T value) -> T;
+}
+
+Mapper<int> bad = (str s) -> str => s;

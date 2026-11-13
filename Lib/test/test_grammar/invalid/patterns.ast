@@ -1,0 +1,39 @@
+# 리스트 패턴의 rest는 마지막에만 올 수 있다
+fn f(list<int> xs) -> int {
+    switch (xs) {
+        case [a, *rest, b] { return a; }
+        default { return 0; }
+    }
+}
+#---
+# 딕셔너리 패턴의 rest는 마지막에만 올 수 있다
+fn g(dict<str, int> d) -> int {
+    switch (d) {
+        case {"a": x, **rest, "b": y} { return x; }
+        default { return 0; }
+    }
+}
+#---
+# 리스트 패턴은 닫는 대괄호가 필요하다
+fn h(list<int> xs) -> int {
+    switch (xs) {
+        case [a, b { return a; }
+        default { return 0; }
+    }
+}
+#---
+# 딕셔너리 패턴 항목은 '키: 패턴' 꼴이다
+fn k(dict<str, int> d) -> int {
+    switch (d) {
+        case {"a"} { return 0; }
+        default { return 1; }
+    }
+}
+#---
+# when 뒤에는 식이 와야 한다
+fn m(int n) -> int {
+    switch (n) {
+        case 1 when { return 1; }
+        default { return 0; }
+    }
+}

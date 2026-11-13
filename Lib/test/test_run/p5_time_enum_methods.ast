@@ -1,0 +1,22 @@
+import System.stdout.*;
+import aster.time.DayOfWeek;
+import aster.time.Month;
+
+println(DayOfWeek.MONDAY.getValue());
+println(DayOfWeek.SUNDAY.plus(1).name);
+println(DayOfWeek.MONDAY.minus(1).name);
+println(DayOfWeek.SATURDAY.isWeekend());
+println(DayOfWeek.WEDNESDAY.isWeekend());
+println(DayOfWeek.TUESDAY.fullName());
+println(DayOfWeek.THURSDAY.shortName());
+
+println(Month.FEBRUARY.length(true));
+println(Month.FEBRUARY.length(false));
+println(Month.APRIL.length(false));
+println(Month.JANUARY.firstDayOfYear(false));
+println(Month.MARCH.firstDayOfYear(true));
+println(Month.DECEMBER.plus(1).name);
+println(Month.JANUARY.minus(1).name);
+println(Month.AUGUST.fullName());
+println(Month.SEPTEMBER.shortName());
+println(Month.JUNE.getValue());

@@ -1,0 +1,17 @@
+import cycle.b;
+
+export const int OFFSET = 1;
+
+export class A {
+    public int value;
+    constructor(int value) {
+        self->value = value;
+    }
+    public fn ping() -> int {
+        return self->value;
+    }
+}
+
+export fn fa(int x) -> int {
+    return b.fb(x) + OFFSET;
+}

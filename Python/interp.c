@@ -35,7 +35,7 @@ static RValue *eval(Interp *in, expr_ty e, Env *env);
 static Signal exec_block(Interp *in, asdl_seq *body, Env *env);
 static Signal exec_stmt(Interp *in, stmt_ty s, Env *env);
 static Signal exec_decl(Interp *in, stmt_ty s, Env *env);
-static void predeclare(Interp *in, Env *env, asdl_seq *body);
+static void predeclare(Interp *in, Env *env, asdl_seq *body, int define_vars);
 static RValue *call_fn(Interp *in, AstFn *fn, RValue **args, size_t nargs);
 static RValue *apply_binop(Interp *in, operator_ty op, RValue *left, RValue *right);
 static RValue *get_attr(Interp *in, RValue *base, const char *name);
@@ -44,7 +44,7 @@ static int value_is_type(Interp *in, RValue *value, typeref_ty ty);
 static RValue *make_exception(Interp *in, RValue *value, const char *exc_type);
 static AstStructType *struct_type_from_typeref(Interp *in, Env *env, typeref_ty ty);
 static RValue *property_read(Interp *in, PropDesc *prop, RValue *self);
-static AstFn *find_ctor(AstClass *cls);
+static AstFn *find_ctor(Interp *in, AstClass *cls, RValue **args, size_t nargs);
 
 /* ---- 공통 ---- */
 
@@ -173,6 +173,7 @@ static int initializer_escapes_env(initializer_ty init) {
 }
 
 static int pattern_escapes_env(match_pattern_ty p) {
+    size_t i;
     if (!p)
         return 0;
     switch (p->kind) {
@@ -182,6 +183,18 @@ static int pattern_escapes_env(match_pattern_ty p) {
         return expr_escapes_env(p->v.PVariant.path) ||
                exprs_escape_env(p->v.PVariant.items);
     case PBind_kind:
+        return 0;
+    case PList_kind:
+        for (i = 0; i < asdl_seq_LEN(p->v.PList.items); i++)
+            if (pattern_escapes_env(asdl_seq_GET(p->v.PList.items, i)))
+                return 1;
+        return 0;
+    case PDict_kind:
+        for (i = 0; i < asdl_seq_LEN(p->v.PDict.items); i++) {
+            pdict_item_ty d = asdl_seq_GET(p->v.PDict.items, i);
+            if (expr_escapes_env(d->key) || pattern_escapes_env(d->value))
+                return 1;
+        }
         return 0;
     }
     return 1;
@@ -199,6 +212,10 @@ static int expr_escapes_env(expr_ty e) {
         return 1;
     case Pipe_kind:
         return expr_escapes_env(e->v.Pipe.value) || expr_escapes_env(e->v.Pipe.func);
+    case Ternary_kind:
+        return expr_escapes_env(e->v.Ternary.test) ||
+               expr_escapes_env(e->v.Ternary.body) ||
+               expr_escapes_env(e->v.Ternary.orelse);
     case Coalesce_kind:
         return expr_escapes_env(e->v.Coalesce.left) ||
                expr_escapes_env(e->v.Coalesce.right);
@@ -221,8 +238,17 @@ static int expr_escapes_env(expr_ty e) {
         return expr_escapes_env(e->v.Deref.value);
     case SizeOf_kind:
         return 0;
-    case Call_kind:
-        return expr_escapes_env(e->v.Call.func) || exprs_escape_env(e->v.Call.args);
+    case Call_kind: {
+        size_t i;
+        if (expr_escapes_env(e->v.Call.func) || exprs_escape_env(e->v.Call.args))
+            return 1;
+        for (i = 0; i < asdl_seq_LEN(e->v.Call.keywords); i++) {
+            keyword_ty kw = asdl_seq_GET(e->v.Call.keywords, i);
+            if (expr_escapes_env(kw->value))
+                return 1;
+        }
+        return 0;
+    }
     case New_kind:
         return exprs_escape_env(e->v.New.args);
     case Attribute_kind:
@@ -328,7 +354,8 @@ static int stmt_escapes_env(stmt_ty s) {
             return 1;
         for (i = 0; i < asdl_seq_LEN(s->v.Switch.cases); i++) {
             match_case_ty mc = asdl_seq_GET(s->v.Switch.cases, i);
-            if (pattern_escapes_env(mc->pattern) || body_escapes_env(mc->body))
+            if (pattern_escapes_env(mc->pattern) || expr_escapes_env(mc->guard) ||
+                body_escapes_env(mc->body))
                 return 1;
         }
         return 0;
@@ -419,26 +446,174 @@ static void overload_append(Interp *in, AstOverload *overload, AstFn *fn) {
 
 /* ---- 함수 호출 ---- */
 
-static int bind_params(Interp *in, AstFn *fn, Env *env, RValue **args, size_t nargs) {
+/*
+ * 위치 인자와 키워드 인자를 매개변수에 바인딩한다. 기본값은 호출 시점에
+ * 앞쪽 매개변수가 바인딩된 환경에서 평가하고, 남는 위치 인자는 vararg
+ * 리스트로, 남는 키워드 인자는 varkwarg 딕셔너리로 묶는다.
+ */
+static int bind_params_ex(Interp *in, AstFn *fn, Env *env, RValue **args, size_t nargs,
+                          const char **kwn, RValue **kwv, size_t nkw) {
     size_t nparams = asdl_seq_LEN(fn->params);
-    size_t i;
+    const char *fname = fn->name ? fn->name : "lambda";
+    size_t i, k, nnormal = 0;
+    RValue **slot;
+    unsigned char *given;
+    int has_vararg = 0, has_varkwarg = 0;
+    const char *vararg_name = NULL, *varkwarg_name = NULL;
 
-    if (nparams != nargs) {
-        RT_Throw(in, "TypeError", "'%s' takes %zu argument(s) but %zu were given",
-                 fn->name ? fn->name : "lambda", nparams, nargs);
-        return 0;
+    if (fn->params_are_lambda) {
+        RValue **lslot = nparams ? Arena_Alloc(in->arena, nparams * sizeof(RValue *)) : NULL;
+        unsigned char *lgiven = nparams ? Arena_Alloc(in->arena, nparams) : NULL;
+        if (nargs > nparams) {
+            RT_Throw(in, "TypeError", "'%s' takes %zu argument(s) but %zu were given",
+                     fname, nparams, nargs);
+            return 0;
+        }
+        for (i = 0; i < nparams; i++) {
+            lslot[i] = NULL;
+            lgiven[i] = 0;
+        }
+        for (i = 0; i < nargs; i++) {
+            lslot[i] = args[i];
+            lgiven[i] = 1;
+        }
+        for (k = 0; k < nkw; k++) {
+            int found = -1;
+            for (i = 0; i < nparams; i++) {
+                lparam_ty p = asdl_seq_GET(fn->params, i);
+                if (!strcmp(p->name, kwn[k])) {
+                    found = (int)i;
+                    break;
+                }
+            }
+            if (found < 0) {
+                RT_Throw(in, "TypeError", "'%s' got an unexpected keyword argument '%s'",
+                         fname, kwn[k]);
+                return 0;
+            }
+            if (lgiven[found]) {
+                RT_Throw(in, "TypeError", "'%s' got multiple values for argument '%s'",
+                         fname, kwn[k]);
+                return 0;
+            }
+            lslot[found] = kwv[k];
+            lgiven[found] = 1;
+        }
+        for (i = 0; i < nparams; i++) {
+            lparam_ty p = asdl_seq_GET(fn->params, i);
+            if (!lgiven[i]) {
+                RT_Throw(in, "TypeError", "'%s' missing required argument '%s'",
+                         fname, p->name);
+                return 0;
+            }
+            Env_Define(in, env, p->name, RValue_Copy(in, lslot[i]));
+        }
+        return 1;
     }
     for (i = 0; i < nparams; i++) {
-        const char *name;
-        if (fn->params_are_lambda) {
-            lparam_ty p = asdl_seq_GET(fn->params, i);
-            name = p->name;
+        param_ty p = asdl_seq_GET(fn->params, i);
+        if (p->variadic == 1) {
+            has_vararg = 1;
+            vararg_name = p->name;
+        }
+        else if (p->variadic == 2) {
+            has_varkwarg = 1;
+            varkwarg_name = p->name;
+        }
+        else
+            nnormal++;
+    }
+    if (nargs > nnormal && !has_vararg) {
+        RT_Throw(in, "TypeError", "'%s' takes %zu argument(s) but %zu were given",
+                 fname, nnormal, nargs);
+        return 0;
+    }
+    slot = nnormal ? Arena_Alloc(in->arena, nnormal * sizeof(RValue *)) : NULL;
+    given = nnormal ? Arena_Alloc(in->arena, nnormal) : NULL;
+    for (i = 0; i < nnormal; i++) {
+        slot[i] = NULL;
+        given[i] = 0;
+    }
+    for (i = 0; i < nargs && i < nnormal; i++) {
+        slot[i] = args[i];
+        given[i] = 1;
+    }
+    for (k = 0; k < nkw; k++) {
+        int found = -1;
+        size_t idx = 0;
+        for (i = 0; i < nparams; i++) {
+            param_ty p = asdl_seq_GET(fn->params, i);
+            if (p->variadic)
+                continue;
+            if (!strcmp(p->name, kwn[k])) {
+                found = (int)idx;
+                break;
+            }
+            idx++;
+        }
+        if (found >= 0) {
+            if (given[found]) {
+                RT_Throw(in, "TypeError", "'%s' got multiple values for argument '%s'",
+                         fname, kwn[k]);
+                return 0;
+            }
+            slot[found] = kwv[k];
+            given[found] = 1;
+        }
+        else if (!has_varkwarg) {
+            RT_Throw(in, "TypeError", "'%s' got an unexpected keyword argument '%s'",
+                     fname, kwn[k]);
+            return 0;
+        }
+    }
+    k = 0;
+    for (i = 0; i < nparams; i++) {
+        param_ty p = asdl_seq_GET(fn->params, i);
+        RValue *value;
+        if (p->variadic)
+            continue;
+        if (given[k])
+            value = slot[k];
+        else if (p->default_value) {
+            value = eval(in, p->default_value, env);
+            if (in->sig != SIG_OK)
+                return 0;
         }
         else {
-            param_ty p = asdl_seq_GET(fn->params, i);
-            name = p->name;
+            RT_Throw(in, "TypeError", "'%s' missing required argument '%s'",
+                     fname, p->name);
+            return 0;
         }
-        Env_Define(in, env, name, RValue_Copy(in, args ? args[i] : NULL));
+        Env_Define(in, env, p->name, RValue_Copy(in, value));
+        k++;
+    }
+    if (has_vararg) {
+        AsterList *list = List_New(in);
+        for (i = nnormal; i < nargs; i++)
+            List_Append(in, list, RValue_Copy(in, args[i]));
+        Env_Define(in, env, vararg_name, RValue_List(in, list));
+    }
+    if (has_varkwarg) {
+        AsterDict *dict = Dict_New(in);
+        int ok = 1;
+        for (k = 0; k < nkw; k++) {
+            int found = 0;
+            for (i = 0; i < nparams; i++) {
+                param_ty p = asdl_seq_GET(fn->params, i);
+                if (p->variadic)
+                    continue;
+                if (!strcmp(p->name, kwn[k])) {
+                    found = 1;
+                    break;
+                }
+            }
+            if (found)
+                continue;
+            if (!Dict_Set(in, dict, RValue_Str(in, AsterString_FromCStr(kwn[k])),
+                          RValue_Copy(in, kwv[k]), &ok))
+                return 0;
+        }
+        Env_Define(in, env, varkwarg_name, RValue_Dict(in, dict));
     }
     return 1;
 }
@@ -486,14 +661,19 @@ static int fn_env_bind_sites(AstFn *fn) {
     return n;
 }
 
-static RValue *call_fn(Interp *in, AstFn *fn, RValue **args, size_t nargs) {
+static RValue *call_fn_ex(Interp *in, AstFn *fn, RValue **args, size_t nargs,
+                          const char **kwn, RValue **kwv, size_t nkw) {
     Env *env;
     RValue *result;
     size_t nspare;
     int reuse = 0;
 
-    if (fn->kind == FN_BUILTIN)
+    if (fn->kind == FN_BUILTIN) {
+        if (nkw > 0)
+            return RT_ThrowValue(in, "TypeError", "builtin '%s' does not accept keyword arguments",
+                                 fn->name ? fn->name : "function");
         return fn->builtin.fn(in, fn->self ? fn->self : fn->builtin.self, args, nargs);
+    }
     if (in->sig != SIG_OK)
         return NULL;
 
@@ -518,7 +698,7 @@ static RValue *call_fn(Interp *in, AstFn *fn, RValue **args, size_t nargs) {
         Env_Define(in, env, "super",
                    RValue_Super(in, fn->owner, fn->self));
     }
-    if (!bind_params(in, fn, env, args, nargs)) {
+    if (!bind_params_ex(in, fn, env, args, nargs, kwn, kwv, nkw)) {
         in->depth--;
         if (reuse)
             Env_ReleaseCall(in, env);
@@ -577,35 +757,160 @@ static RValue *call_fn(Interp *in, AstFn *fn, RValue **args, size_t nargs) {
     return null_value(in);
 }
 
-static int fn_accepts(Interp *in, AstFn *fn, RValue **args, size_t nargs) {
-    size_t i, nparams = asdl_seq_LEN(fn->params);
-    if (nparams != nargs)
-        return 0;
-    if (fn->params_are_lambda)
-        return 1;
-    for (i = 0; i < nparams; i++) {
-        param_ty p = asdl_seq_GET(fn->params, i);
-        if (!p->ty)
-            continue;
-        if (value_is_type(in, args[i], p->ty))
-            continue;
-        /* int 인자는 float 매개변수에 맞는다. */
-        if (p->ty->kind == Primitive_kind && p->ty->v.Primitive.kind == FloatT &&
-            args[i] && args[i]->kind == RV_INT)
-            continue;
-        return 0;
-    }
-    return 1;
+static RValue *call_fn(Interp *in, AstFn *fn, RValue **args, size_t nargs) {
+    return call_fn_ex(in, fn, args, nargs, NULL, NULL, 0);
 }
 
-static RValue *call_value(Interp *in, RValue *callee, RValue **args, size_t nargs) {
+static int value_matches_param(Interp *in, RValue *value, typeref_ty ty) {
+    if (!ty)
+        return 1;
+    if (value_is_type(in, value, ty))
+        return 1;
+    /* int 인자는 float 매개변수에 맞는다. */
+    if (ty->kind == Primitive_kind && ty->v.Primitive.kind == FloatT &&
+        value && value->kind == RV_INT)
+        return 1;
+    return 0;
+}
+
+/*
+ * 오버로드 후보가 이 인자들을 받아들일 수 있는지 판정한다.
+ * -1이면 인자 틀(개수/이름)이 맞지 않고, 0이면 타입이 맞지 않으며, 1이면 맞는다.
+ */
+static int fn_accepts_ex(Interp *in, AstFn *fn, RValue **args, size_t nargs,
+                         const char **kwn, RValue **kwv, size_t nkw) {
+    size_t nparams = asdl_seq_LEN(fn->params);
+    size_t i, k, nnormal = 0;
+    RValue **slot;
+    unsigned char *given;
+    int has_vararg = 0, has_varkwarg = 0;
+    int type_ok = 1;
+
+    if (fn->params_are_lambda) {
+        if (nargs > nparams)
+            return -1;
+        for (k = 0; k < nkw; k++) {
+            int found = -1;
+            for (i = 0; i < nparams; i++) {
+                lparam_ty p = asdl_seq_GET(fn->params, i);
+                if (!strcmp(p->name, kwn[k])) {
+                    found = (int)i;
+                    break;
+                }
+            }
+            if (found < 0 || found < (int)nargs)
+                return -1;
+            for (i = 0; i < k; i++)
+                if (!strcmp(kwn[i], kwn[k]))
+                    return -1;
+        }
+        return nargs + nkw == nparams ? 1 : -1;
+    }
+    for (i = 0; i < nparams; i++) {
+        param_ty p = asdl_seq_GET(fn->params, i);
+        if (p->variadic == 1)
+            has_vararg = 1;
+        else if (p->variadic == 2)
+            has_varkwarg = 1;
+        else
+            nnormal++;
+    }
+    if (nargs > nnormal && !has_vararg)
+        return -1;
+    slot = nnormal ? Arena_Alloc(in->arena, nnormal * sizeof(RValue *)) : NULL;
+    given = nnormal ? Arena_Alloc(in->arena, nnormal) : NULL;
+    for (i = 0; i < nnormal; i++) {
+        slot[i] = NULL;
+        given[i] = 0;
+    }
+    for (i = 0; i < nargs && i < nnormal; i++) {
+        slot[i] = args[i];
+        given[i] = 1;
+    }
+    for (k = 0; k < nkw; k++) {
+        int found = -1;
+        size_t idx = 0;
+        for (i = 0; i < nparams; i++) {
+            param_ty p = asdl_seq_GET(fn->params, i);
+            if (p->variadic)
+                continue;
+            if (!strcmp(p->name, kwn[k])) {
+                found = (int)idx;
+                break;
+            }
+            idx++;
+        }
+        if (found >= 0) {
+            if (given[found])
+                return -1;
+            slot[found] = kwv[k];
+            given[found] = 1;
+        }
+        else if (!has_varkwarg)
+            return -1;
+    }
+    k = 0;
+    for (i = 0; i < nparams; i++) {
+        param_ty p = asdl_seq_GET(fn->params, i);
+        if (p->variadic)
+            continue;
+        if (!given[k] && !p->default_value)
+            return -1;
+        if (given[k] && !value_matches_param(in, slot[k], p->ty))
+            type_ok = 0;
+        k++;
+    }
+    if (has_vararg) {
+        typeref_ty elem = NULL;
+        for (i = 0; i < nparams; i++) {
+            param_ty p = asdl_seq_GET(fn->params, i);
+            if (p->variadic == 1) {
+                elem = p->ty;
+                break;
+            }
+        }
+        for (i = nnormal; i < nargs; i++)
+            if (!value_matches_param(in, args[i], elem))
+                type_ok = 0;
+    }
+    if (has_varkwarg) {
+        typeref_ty elem = NULL;
+        for (i = 0; i < nparams; i++) {
+            param_ty p = asdl_seq_GET(fn->params, i);
+            if (p->variadic == 2) {
+                elem = p->ty;
+                break;
+            }
+        }
+        for (k = 0; k < nkw; k++) {
+            int is_normal = 0;
+            for (i = 0; i < nparams; i++) {
+                param_ty p = asdl_seq_GET(fn->params, i);
+                if (p->variadic)
+                    continue;
+                if (!strcmp(p->name, kwn[k])) {
+                    is_normal = 1;
+                    break;
+                }
+            }
+            if (!is_normal && !value_matches_param(in, kwv[k], elem))
+                type_ok = 0;
+        }
+    }
+    return type_ok;
+}
+
+static RValue *call_value_ex(Interp *in, RValue *callee, RValue **args, size_t nargs,
+                             const char **kwn, RValue **kwv, size_t nkw) {
     if (!callee) {
         return RT_ThrowValue(in, "TypeError", "value is not callable");
     }
     switch (callee->kind) {
     case RV_FUNC:
-        return call_fn(in, callee->u.fn, args, nargs);
+        return call_fn_ex(in, callee->u.fn, args, nargs, kwn, kwv, nkw);
     case RV_BUILTIN:
+        if (nkw > 0)
+            return RT_ThrowValue(in, "TypeError", "builtin does not accept keyword arguments");
         return callee->u.builtin->fn(in, callee->u.builtin->self, args, nargs);
     case RV_OVERLOAD: {
         AstOverload *ov = callee->u.overload;
@@ -613,23 +918,29 @@ static RValue *call_value(Interp *in, RValue *callee, RValue **args, size_t narg
         size_t i;
         for (i = 0; i < ov->count; i++) {
             AstFn *fn = ov->fns[i];
-            if (asdl_seq_LEN(fn->params) == nargs) {
-                if (!fallback)
-                    fallback = fn;
-                if (fn_accepts(in, fn, args, nargs))
-                    return call_fn(in, fn, args, nargs);
-            }
+            int m = fn_accepts_ex(in, fn, args, nargs, kwn, kwv, nkw);
+            if (m < 0)
+                continue;
+            if (!fallback)
+                fallback = fn;
+            if (m > 0)
+                return call_fn_ex(in, fn, args, nargs, kwn, kwv, nkw);
         }
         if (fallback)
-            return call_fn(in, fallback, args, nargs);
+            return call_fn_ex(in, fallback, args, nargs, kwn, kwv, nkw);
         return RT_ThrowValue(in, "TypeError", "no definition of '%s' accepts %zu argument(s)",
                              ov->count ? ov->fns[0]->name : "overload", nargs);
     }
     case RV_SUPER: {
         AstClass *base = callee->u.super->owner ? callee->u.super->owner->base : NULL;
-        AstFn *ctor = find_ctor(base);
+        AstFn *ctor;
+        if (nkw > 0)
+            return RT_ThrowValue(in, "TypeError",
+                                 "super constructor does not accept keyword arguments");
+        ctor = find_ctor(in, base, args, nargs);
         if (!ctor)
-            return RT_ThrowValue(in, "TypeError", "base class has no constructor");
+            return RT_ThrowValue(in, "TypeError",
+                                 "base class has no constructor accepting %zu argument(s)", nargs);
         call_fn(in, bind_method(in, ctor, callee->u.super->self), args, nargs);
         return in->sig == SIG_OK ? null_value(in) : NULL;
     }
@@ -656,6 +967,10 @@ static RValue *call_value(Interp *in, RValue *callee, RValue **args, size_t narg
     default:
         return RT_ThrowValue(in, "TypeError", "value is not callable");
     }
+}
+
+static RValue *call_value(Interp *in, RValue *callee, RValue **args, size_t nargs) {
+    return call_value_ex(in, callee, args, nargs, NULL, NULL, 0);
 }
 
 RValue *Interp_CallValue(Interp *in, RValue *callee, RValue **args, size_t nargs) {
@@ -1303,6 +1618,17 @@ static RValue *get_attr(Interp *in, RValue *base, const char *name) {
             AstEnumMember *m = &base->u.en.type->members[base->u.en.index];
             return m->value ? m->value : RValue_Int(in, (int64_t)base->u.en.index);
         }
+        {
+            AstEnumType *et = base->u.en.type;
+            size_t i;
+            for (i = 0; i < et->nmethods; i++) {
+                if (!strcmp(et->methods[i].name, name)) {
+                    if (et->methods[i].overload)
+                        return bind_overload(in, et->methods[i].overload, base, NULL);
+                    return RValue_Func(in, bind_method(in, et->methods[i].fn, base));
+                }
+            }
+        }
         return RT_ThrowValue(in, "AttributeError", "enum value has no attribute '%s'", name);
     case RV_ENUMTYPE: {
         size_t i;
@@ -1322,6 +1648,11 @@ static RValue *get_attr(Interp *in, RValue *base, const char *name) {
         if (!strcmp(name, "name"))
             return RValue_Str(in, AsterString_FromCStr(base->u.exc->name));
         return RT_ThrowValue(in, "AttributeError", "exception value has no attribute '%s'", name);
+    case RV_FUNC:
+    case RV_BUILTIN:
+    case RV_OVERLOAD:
+        /* 함수형 인터페이스에 대입된 함수는 어떤 메서드 이름으로도 호출된다. */
+        return base;
     default:
         return RT_ThrowValue(in, "AttributeError", "this value has no attribute '%s'", name);
     }
@@ -1550,12 +1881,59 @@ static void init_instance_fields(Interp *in, AstClass *cls, AstInstance *obj, En
     }
 }
 
-static AstFn *find_ctor(AstClass *cls) {
+static int ctor_takes(AstFn *fn, size_t nargs) {
+    size_t nparams = asdl_seq_LEN(fn->params);
+    size_t nrequired = 0;
+    size_t i;
+    int has_vararg = 0;
+    /* 내장 생성자는 인자 목록이 없고 어떤 인자든 받는다. */
+    if (fn->kind == FN_BUILTIN && !fn->params)
+        return 1;
+    if (fn->params_are_lambda)
+        return nparams == nargs;
+    for (i = 0; i < nparams; i++) {
+        param_ty p = asdl_seq_GET(fn->params, i);
+        if (p->variadic == 1) {
+            has_vararg = 1;
+            continue;
+        }
+        if (p->variadic == 2)
+            continue;
+        if (!p->default_value)
+            nrequired++;
+    }
+    return nargs >= nrequired && (has_vararg || nargs <= nparams);
+}
+
+static AstFn *find_ctor(Interp *in, AstClass *cls, RValue **args, size_t nargs) {
     for (; cls; cls = cls->base) {
-        if (cls->ctor)
-            return cls->ctor;
+        AstFn *fallback = NULL;
+        size_t i;
+        if (cls->nctors == 0)
+            continue;
+        for (i = 0; i < cls->nctors; i++) {
+            AstFn *fn = cls->ctors[i];
+            if (!ctor_takes(fn, nargs))
+                continue;
+            if (!fallback)
+                fallback = fn;
+            if (fn->kind == FN_BUILTIN ||
+                fn_accepts_ex(in, fn, args, nargs, NULL, NULL, 0) > 0)
+                return fn;
+        }
+        if (fallback)
+            return fallback;
+        return NULL;             /* 생성자를 선언했지만 인자 수가 맞지 않는다 */
     }
     return NULL;
+}
+
+static int class_has_ctor(AstClass *cls) {
+    for (; cls; cls = cls->base) {
+        if (cls->nctors)
+            return 1;
+    }
+    return 0;
 }
 
 static RValue *instantiate_class(Interp *in, AstClass *cls, RValue **args, size_t nargs) {
@@ -1576,11 +1954,16 @@ static RValue *instantiate_class(Interp *in, AstClass *cls, RValue **args, size_
     if (in->sig != SIG_OK)
         return NULL;
 
-    ctor = find_ctor(cls);
+    ctor = find_ctor(in, cls, args, nargs);
     if (ctor) {
         call_fn(in, bind_method(in, ctor, self), args, nargs);
         if (in->sig != SIG_OK)
             return NULL;
+    }
+    else if (class_has_ctor(cls)) {
+        return RT_ThrowValue(in, "TypeError",
+                             "no constructor of '%s' accepts %zu argument(s)",
+                             cls->name, nargs);
     }
     else if (nargs != 0) {
         return RT_ThrowValue(in, "TypeError", "'%s' has no constructor", cls->name);
@@ -1681,10 +2064,10 @@ static AstClass *build_class(Interp *in, stmt_ty s, Env *env) {
     AstClass *cls = Arena_Alloc(in->arena, sizeof(AstClass));
     asdl_seq *members = s->v.ClassDef.members;
     size_t n = asdl_seq_LEN(members);
-    size_t nfields = 0, nmethods = 0, nprops = 0;
+    size_t nfields = 0, nmethods = 0, nprops = 0, nctors = 0;
     const char **prop_names;
     size_t i;
-    size_t fi = 0, mi = 0;
+    size_t fi = 0, mi = 0, ci = 0;
 
     cls->name = s->v.ClassDef.name;
     cls->env = env;
@@ -1736,6 +2119,10 @@ static AstClass *build_class(Interp *in, stmt_ty s, Env *env) {
             nfields++;
             continue;
         }
+        if (m->kind == Constructor_kind) {
+            nctors++;
+            continue;
+        }
         if (m->kind != Method_kind)
             continue;
         /* 같은 이름의 메서드는 하나의 오버로드 묶음으로 센다. */
@@ -1758,6 +2145,8 @@ static AstClass *build_class(Interp *in, stmt_ty s, Env *env) {
     cls->methods = nmethods ? Arena_Alloc(in->arena, nmethods * sizeof(MethodDesc)) : NULL;
     cls->nprops = nprops;
     cls->props = nprops ? Arena_Alloc(in->arena, nprops * sizeof(PropDesc)) : NULL;
+    cls->nctors = nctors;
+    cls->ctors = nctors ? Arena_Alloc(in->arena, nctors * sizeof(AstFn *)) : NULL;
     for (i = 0; i < nprops; i++)
         cls->props[i].name = prop_names[i];
 
@@ -1802,11 +2191,13 @@ static AstClass *build_class(Interp *in, stmt_ty s, Env *env) {
             }
             break;
         }
-        case Constructor_kind:
-            cls->ctor = make_fn(in, env, cls->name, m->v.Constructor.params, 0, NULL,
+        case Constructor_kind: {
+            AstFn *fn = make_fn(in, env, cls->name, m->v.Constructor.params, 0, NULL,
                                 m->v.Constructor.body, NULL);
-            cls->ctor->owner = cls;
+            fn->owner = cls;
+            cls->ctors[ci++] = fn;
             break;
+        }
         case Getter_kind: {
             PropDesc *prop = class_property_slot(cls, m->v.Getter.name);
             if (prop) {
@@ -2210,6 +2601,40 @@ static Signal exec_decl(Interp *in, stmt_ty s, Env *env) {
                     et->members[i].value = RValue_Int(in, (int64_t)i);
                 }
             }
+            {
+                size_t nm = asdl_seq_LEN(s->v.EnumDef.methods);
+                size_t k, mi = 0;
+                et->nmethods = nm;
+                et->methods = nm ? Arena_Alloc(in->arena, nm * sizeof(MethodDesc)) : NULL;
+                for (k = 0; k < nm; k++) {
+                    member_ty m = asdl_seq_GET(s->v.EnumDef.methods, k);
+                    AstFn *fn;
+                    MethodDesc *slot;
+                    if (m->kind != Method_kind)
+                        continue;
+                    fn = make_fn(in, env, m->v.Method.name, m->v.Method.params, 0,
+                                 m->v.Method.returns, m->v.Method.body, NULL);
+                    slot = find_method_slot(et->methods, mi, m->v.Method.name);
+                    if (!slot) {
+                        et->methods[mi].name = m->v.Method.name;
+                        et->methods[mi].fn = fn;
+                        et->methods[mi].overload = NULL;
+                        mi++;
+                    }
+                    else if (!slot->overload) {
+                        AstOverload *ov = Arena_Alloc(in->arena, sizeof(AstOverload));
+                        ov->count = ov->cap = 0;
+                        ov->fns = NULL;
+                        overload_append(in, ov, slot->fn);
+                        overload_append(in, ov, fn);
+                        slot->overload = ov;
+                    }
+                    else {
+                        overload_append(in, slot->overload, fn);
+                    }
+                }
+                et->nmethods = mi;
+            }
             Env_Define(in, env, et->name, RValue_EnumType(in, et));
         }
         return SIG_OK;
@@ -2218,7 +2643,83 @@ static Signal exec_decl(Interp *in, stmt_ty s, Env *env) {
     }
 }
 
-static void predeclare_one(Interp *in, Env *env, stmt_ty s) {
+/* 모듈 전역 변수의 타입 기본값. 순환 import에서 아직 초기화되지 않은
+   변수를 읽으면 C#의 정적 필드처럼 기본값을 본다. 타입을 알 수 없으면
+   NULL을 돌려 호출자가 초기화식으로 추론하게 한다. */
+static RValue *module_var_default(Interp *in, typeref_ty ty) {
+    if (!ty)
+        return NULL;
+    switch (ty->kind) {
+    case Primitive_kind:
+        switch (ty->v.Primitive.kind) {
+        case IntT:
+            return RValue_Int(in, 0);
+        case FloatT:
+            return RValue_Float(in, 0.0);
+        case BoolT:
+            return RValue_Bool(in, 0);
+        case StrT:
+            return RValue_Str(in, AsterString_FromCStr(""));
+        case NullT:
+            return RValue_Null(in);
+        }
+        return RValue_Null(in);
+    case Named_kind: {
+        const char *name = ty->v.Named.name;
+        if (!strcmp(name, "list"))
+            return RValue_List(in, List_New(in));
+        if (!strcmp(name, "tuple"))
+            return RValue_Tuple(in, Tuple_New(in, 0));
+        if (!strcmp(name, "dict") || !strcmp(name, "map"))
+            return RValue_Dict(in, Dict_New(in));
+        if (!strcmp(name, "set"))
+            return RValue_Set(in, Set_New(in));
+        if (!strcmp(name, "frozenset"))
+            return RValue_FrozenSet(in, Set_New(in));
+        if (!strcmp(name, "var") || !strcmp(name, "any"))
+            return NULL;
+        return RValue_Null(in);
+    }
+    default:
+        return RValue_Null(in);
+    }
+}
+
+/* 타입 없이 `var x = ...`로 선언된 모듈 변수의 기본값. 초기화식 모양으로
+   타입을 흉내 낸다. C#의 `var`가 초기화식에서 정적 타입을 얻는 것과 같다. */
+static RValue *initializer_default(Interp *in, initializer_ty init) {
+    if (!init || init->kind != ExprInit_kind)
+        return RValue_Null(in);
+    switch (init->v.ExprInit.value->kind) {
+    case Constant_kind: {
+        Value v = init->v.ExprInit.value->v.Constant.value;
+        switch (v.tag) {
+        case VT_INT:
+            return RValue_Int(in, 0);
+        case VT_FLOAT:
+            return RValue_Float(in, 0.0);
+        case VT_BOOL:
+            return RValue_Bool(in, 0);
+        case VT_OBJ:
+            return RValue_Str(in, AsterString_FromCStr(""));
+        default:
+            return RValue_Null(in);
+        }
+    }
+    case List_kind:
+        return RValue_List(in, List_New(in));
+    case Tuple_kind:
+        return RValue_Tuple(in, Tuple_New(in, 0));
+    case Dict_kind:
+        return RValue_Dict(in, Dict_New(in));
+    case Set_kind:
+        return RValue_Set(in, Set_New(in));
+    default:
+        return RValue_Null(in);
+    }
+}
+
+static void predeclare_one(Interp *in, Env *env, stmt_ty s, int define_vars) {
     switch (s->kind) {
     case FunctionDef_kind:
     case ClassDef_kind:
@@ -2228,19 +2729,32 @@ static void predeclare_one(Interp *in, Env *env, stmt_ty s) {
     case EnumDef_kind:
         exec_decl(in, s, env);
         break;
+    case VarDecl_kind:
+        /* 순환 import에서도 이름이 보이도록 타입 기본값으로 미리 묶는다.
+           주 모듈은 실행 전에 이름이 보이면 안 되므로 import 모듈만 해당한다. */
+        if (define_vars && !Env_HasLocal(env, s->v.VarDecl.name)) {
+            RValue *value = module_var_default(in, s->v.VarDecl.ty);
+            if (!value)
+                value = initializer_default(in, s->v.VarDecl.init);
+            if (s->v.VarDecl.is_const)
+                Env_DefineConst(in, env, s->v.VarDecl.name, value);
+            else
+                Env_Define(in, env, s->v.VarDecl.name, value);
+        }
+        break;
     case Export_kind:
-        predeclare_one(in, env, s->v.Export.body);
+        predeclare_one(in, env, s->v.Export.body, define_vars);
         break;
     default:
         break;
     }
 }
 
-static void predeclare(Interp *in, Env *env, asdl_seq *body) {
+static void predeclare(Interp *in, Env *env, asdl_seq *body, int define_vars) {
     size_t i;
     in->predeclaring++;
     for (i = 0; i < asdl_seq_LEN(body); i++) {
-        predeclare_one(in, env, asdl_seq_GET(body, i));
+        predeclare_one(in, env, asdl_seq_GET(body, i), define_vars);
         if (in->sig != SIG_OK)
             break;
     }
@@ -2312,6 +2826,11 @@ static Signal exec_var_decl(Interp *in, stmt_ty s, Env *env) {
     RValue *value = eval_initializer(in, env, s->v.VarDecl.ty, init);
     if (in->sig != SIG_OK)
         return in->sig;
+    /* 정적 타입 검사기는 int를 float 자리에 허용한다. 런타임 값도 맞춘다. */
+    if (value && value->kind == RV_INT && s->v.VarDecl.ty &&
+        s->v.VarDecl.ty->kind == Primitive_kind &&
+        s->v.VarDecl.ty->v.Primitive.kind == FloatT)
+        value = RValue_Float(in, (double)value->u.i);
     if (!lambda_init && !check_declared_value(in, s->v.VarDecl.ty, value))
         return in->sig;
     if (s->v.VarDecl.is_const)
@@ -3050,6 +3569,14 @@ static Signal exec_try(Interp *in, stmt_ty s, Env *env) {
                 break;
             }
         }
+        if (sig == SIG_THROW && asdl_seq_LEN(handlers) == 0 &&
+            asdl_seq_LEN(s->v.Try.finalbody) == 0) {
+            /* 예외 없는 try: 던져진 예외를 조용히 삼킨다. */
+            in->exc = NULL;
+            in->sig = SIG_OK;
+            Interp_FrameTruncate(in, saved_frames);
+            sig = SIG_OK;
+        }
     }
 
     if (asdl_seq_LEN(s->v.Try.finalbody) > 0) {
@@ -3251,7 +3778,7 @@ static AstModule *load_module(Interp *in, asdl_seq *path) {
     module = Module_New(in, name, Arena_Strndup(in->arena, file, strlen(file)));
     module->loading = 1;
     module_cache_add(in, module);
-    predeclare(in, module->env, mod->v.Module.body);
+    predeclare(in, module->env, mod->v.Module.body, 1);
     collect_module_exports(in, module, mod->v.Module.body);
     if (in->sig == SIG_OK) {
         free(source);
@@ -3316,22 +3843,25 @@ static Signal exec_import(Interp *in, stmt_ty s, Env *env) {
 
 static Signal exec_import_from(Interp *in, stmt_ty s, Env *env) {
     AstModule *module = load_module(in, s->v.ImportFrom.module);
+    asdl_seq *names = s->v.ImportFrom.names;
 
     if (!module)
         return in->sig;
-    if (s->v.ImportFrom.name) {
-        const char *name = s->v.ImportFrom.name;
+    if (asdl_seq_LEN(names) == 0) {
+        import_public_names(in, env, module);
+        return SIG_OK;
+    }
+    for (size_t i = 0; i < asdl_seq_LEN(names); i++) {
+        import_name_ty item = asdl_seq_GET(names, i);
+        const char *name = item->name;
         RValue *value = Module_GetExported(in, module, name);
         if (!value) {
             RT_Throw(in, "ImportError", "module '%s' has no member '%s'",
                      module->name, name);
             return SIG_THROW;
         }
-        Env_Define(in, env, s->v.ImportFrom.alias ? s->v.ImportFrom.alias : name,
+        Env_Define(in, env, item->alias ? item->alias : name,
                    RValue_Copy(in, value));
-    }
-    else {
-        import_public_names(in, env, module);
     }
     return SIG_OK;
 }
@@ -3390,6 +3920,84 @@ static int match_pattern(Interp *in, match_pattern_ty pat, RValue *value,
         }
         return 1;
     }
+    case PList_kind: {
+        asdl_seq *items = pat->v.PList.items;
+        size_t nitems = asdl_seq_LEN(items), n, i;
+        RValue **elems;
+        if (value->kind == RV_LIST) {
+            elems = value->u.list->items;
+            n = value->u.list->len;
+        }
+        else if (value->kind == RV_TUPLE) {
+            elems = value->u.tuple->items;
+            n = value->u.tuple->len;
+        }
+        else {
+            return 0;
+        }
+        if (pat->v.PList.rest ? n < nitems : n != nitems)
+            return 0;
+        for (i = 0; i < nitems; i++) {
+            int sub_ok = 1;
+            if (!match_pattern(in, asdl_seq_GET(items, i), elems[i], env, &sub_ok))
+                return 0;
+            if (!sub_ok) {
+                *ok = 0;
+                return 0;
+            }
+        }
+        if (pat->v.PList.rest && strcmp(pat->v.PList.rest, "_")) {
+            AsterList *rest = List_New(in);
+            for (i = nitems; i < n; i++)
+                List_Append(in, rest, RValue_Copy(in, elems[i]));
+            Env_Define(in, env, pat->v.PList.rest, RValue_List(in, rest));
+        }
+        return 1;
+    }
+    case PDict_kind: {
+        asdl_seq *items = pat->v.PDict.items;
+        size_t nitems = asdl_seq_LEN(items), i;
+        unsigned char *seen;
+        if (value->kind != RV_DICT)
+            return 0;
+        seen = Arena_Alloc(in->arena, value->u.dict->len);
+        memset(seen, 0, value->u.dict->len);
+        for (i = 0; i < nitems; i++) {
+            pdict_item_ty d = asdl_seq_GET(items, i);
+            RValue *key = eval(in, d->key, env);
+            RValue *found;
+            long idx;
+            int sub_ok = 1;
+            if (in->sig != SIG_OK) {
+                *ok = 0;
+                return 0;
+            }
+            found = Dict_Lookup(value->u.dict, key);
+            if (!found)
+                return 0;
+            idx = Dict_FindIndex(value->u.dict, key);
+            if (idx >= 0)
+                seen[idx] = 1;
+            if (!match_pattern(in, d->value, found, env, &sub_ok))
+                return 0;
+            if (!sub_ok) {
+                *ok = 0;
+                return 0;
+            }
+        }
+        if (pat->v.PDict.rest && strcmp(pat->v.PDict.rest, "_")) {
+            AsterDict *rest = Dict_New(in);
+            for (i = 0; i < value->u.dict->len; i++) {
+                int set_ok = 1;
+                if (seen[i])
+                    continue;
+                Dict_Set(in, rest, value->u.dict->entries[i].key,
+                         RValue_Copy(in, value->u.dict->entries[i].value), &set_ok);
+            }
+            Env_Define(in, env, pat->v.PDict.rest, RValue_Dict(in, rest));
+        }
+        return 1;
+    }
     }
     *ok = 0;
     return 0;
@@ -3406,8 +4014,16 @@ static Signal exec_switch(Interp *in, stmt_ty s, Env *env) {
         match_case_ty mc = asdl_seq_GET(cases, i);
         Env *case_env = Env_New(in, env);
         int ok = 1;
-        if (match_pattern(in, mc->pattern, subject, case_env, &ok))
+        if (match_pattern(in, mc->pattern, subject, case_env, &ok)) {
+            if (mc->guard) {
+                RValue *g = eval(in, mc->guard, case_env);
+                if (in->sig != SIG_OK)
+                    return in->sig;
+                if (!RValue_Truthy(g))
+                    continue;
+            }
             return exec_block(in, mc->body, case_env);
+        }
         if (!ok)
             return in->sig;
     }
@@ -4362,7 +4978,10 @@ static RValue *eval(Interp *in, expr_ty e, Env *env) {
         RValue *callee;
         RValue *small[8];
         RValue **args;
-        size_t nargs;
+        RValue **kwv = NULL;
+        const char **kwn = NULL;
+        size_t nargs, nkw;
+        size_t i;
         if (e->v.Call.func->kind == OptionalAttribute_kind) {
             expr_ty attr = e->v.Call.func;
             RValue *base = eval(in, attr->v.OptionalAttribute.value, env);
@@ -4382,7 +5001,19 @@ static RValue *eval(Interp *in, expr_ty e, Env *env) {
             return NULL;
         if (!eval_args(in, e->v.Call.args, env, small, 8, &args, &nargs))
             return NULL;
-        return call_value(in, callee, args, nargs);
+        nkw = asdl_seq_LEN(e->v.Call.keywords);
+        if (nkw) {
+            kwn = Arena_Alloc(in->arena, nkw * sizeof(const char *));
+            kwv = Arena_Alloc(in->arena, nkw * sizeof(RValue *));
+            for (i = 0; i < nkw; i++) {
+                keyword_ty kw = asdl_seq_GET(e->v.Call.keywords, i);
+                kwn[i] = kw->name;
+                kwv[i] = eval(in, kw->value, env);
+                if (in->sig != SIG_OK)
+                    return NULL;
+            }
+        }
+        return call_value_ex(in, callee, args, nargs, kwn, kwv, nkw);
     }
     case New_kind:
         return eval_new(in, e, env);
@@ -4420,6 +5051,13 @@ static RValue *eval(Interp *in, expr_ty e, Env *env) {
             return NULL;
         args[0] = value;
         return call_value(in, func, args, 1);
+    }
+    case Ternary_kind: {
+        RValue *test = eval(in, e->v.Ternary.test, env);
+        if (in->sig != SIG_OK)
+            return NULL;
+        return eval(in, RValue_Truthy(test) ? e->v.Ternary.body : e->v.Ternary.orelse,
+                    env);
     }
     case Coalesce_kind: {
         RValue *left = eval(in, e->v.Coalesce.left, env);
@@ -4573,7 +5211,7 @@ static RValue *eval(Interp *in, expr_ty e, Env *env) {
 /* ---- 진입점 ---- */
 
 int Interp_RunModule(Interp *in, mod_ty mod) {
-    predeclare(in, in->globals, mod->v.Module.body);
+    predeclare(in, in->globals, mod->v.Module.body, 0);
     if (in->sig != SIG_OK)
         return 1;
     exec_block(in, mod->v.Module.body, in->globals);

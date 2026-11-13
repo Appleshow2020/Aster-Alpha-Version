@@ -1,0 +1,34 @@
+import System.stdout.*;
+
+fn boom() -> void {
+    throw "boom";
+}
+
+fn withfinally() -> str {
+    try {
+        boom();
+    } finally {
+        println("cleanup");
+    }
+    return "done";
+}
+
+try {
+    println("one");
+} finally {
+    println("two");
+}
+
+try {
+    println("three");
+    boom();
+    println("never");
+}
+println("four");
+
+try {
+    withfinally();
+} catch (Exception e) {
+    println("caught", e.message);
+}
+println("five");

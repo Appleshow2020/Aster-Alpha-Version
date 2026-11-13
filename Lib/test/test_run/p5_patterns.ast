@@ -1,0 +1,133 @@
+import System.stdout.*;
+
+enum Shape {
+    Circle(float r),
+    Rect(float w, float h),
+    Empty
+}
+
+fn describe(Shape s) -> str {
+    switch (s) {
+        case Shape.Circle(r) when r == 0.0 {
+            return "point";
+        }
+        case Shape.Circle(r) when r > 10.0 {
+            return "big " + str(r);
+        }
+        case Shape.Circle(r) {
+            return "circle " + str(r);
+        }
+        case Shape.Rect(w, h) when w == h {
+            return "square " + str(w);
+        }
+        case Shape.Rect(w, h) {
+            return "rect " + str(w) + "x" + str(h);
+        }
+        case Shape.Empty {
+            return "empty";
+        }
+    }
+    return "?";
+}
+
+println(describe(Shape.Circle(0.0)));
+println(describe(Shape.Circle(11.0)));
+println(describe(Shape.Circle(2.5)));
+println(describe(Shape.Rect(2.0, 2.0)));
+println(describe(Shape.Rect(2.0, 5.0)));
+println(describe(Shape.Empty));
+
+fn head(list<int> xs) -> int {
+    switch (xs) {
+        case [] {
+            return -1;
+        }
+        case [a, *rest] {
+            return a;
+        }
+    }
+    return -2;
+}
+
+println(head([]));
+println(head([7, 8, 9]));
+println(head([4]));
+
+fn tagSummary(list<str> tags) -> str {
+    switch (tags) {
+        case [] {
+            return "none";
+        }
+        case [only] {
+            return only;
+        }
+        case [first, *rest] {
+            return first + " +" + str(len(rest)) + " more";
+        }
+    }
+    return "?";
+}
+
+println(tagSummary([]));
+println(tagSummary(["solo"]));
+println(tagSummary(["a", "b", "c"]));
+
+fn personLabel(dict<str, str> p) -> str {
+    switch (p) {
+        case {"name": n, "role": r} {
+            return n + " (" + r + ")";
+        }
+        case {"name": n} {
+            return n;
+        }
+        default {
+            return "anonymous";
+        }
+    }
+}
+
+println(personLabel({"name": "Asp", "role": "admin"}));
+println(personLabel({"name": "Asp", "age": "3"}));
+println(personLabel({"x": "1"}));
+
+fn extras(dict<str, int> m) -> str {
+    switch (m) {
+        case {"a": x, **others} {
+            return str(x) + "/" + str(len(others));
+        }
+        default {
+            return "none";
+        }
+    }
+}
+
+println(extras({"a": 1, "b": 2, "c": 3}));
+println(extras({"b": 2}));
+
+enum Bag {
+    Items(list<str> names),
+    EmptyBag
+}
+
+fn bag(Bag b) -> str {
+    switch (b) {
+        case Bag.Items([first, *rest]) when len(rest) > 0 {
+            return first + "..." + str(len(rest));
+        }
+        case Bag.Items([only]) {
+            return only;
+        }
+        case Bag.Items([]) {
+            return "empty list";
+        }
+        case Bag.EmptyBag {
+            return "empty bag";
+        }
+    }
+    return "?";
+}
+
+println(bag(Bag.Items(["a", "b", "c"])));
+println(bag(Bag.Items(["a"])));
+println(bag(Bag.Items([])));
+println(bag(Bag.EmptyBag));

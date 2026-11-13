@@ -78,7 +78,8 @@ import_stmt:
     | 'import' dotted_name '.' '*' ';'          # [D12a] import aster.lang.String.*;
     | 'import' dotted_name ['as' NAME] ';'      # import math as m;
     | 'from' dotted_name 'import' '*' ';'       # [D12a] from aster.lang.String import *;
-    | 'from' dotted_name 'import' NAME ['as' NAME] ';'
+    | 'from' dotted_name 'import' import_name (',' import_name)* ';'
+    # import_name: NAME ['as' NAME]  —  from m import A, B as C;
 
 return_stmt: 'return' [expression] ';'
 # generator: 본문에 yield가 하나라도 있으면 호출 시 제너레이터를 돌려준다.
@@ -102,6 +103,7 @@ expr_stmt: expression ';'
 # 구조 분해: var (a, b) = 식;   또는   타입 (a, b) = 식;
 # (여기서 'var'는 타입 이름처럼 읽힌다. 이름이 하나뿐인 T(x)는 호출문과
 #  구분되지 않으므로 구조 분해로 읽지 않는다. 타입은 typecheck에서 무시된다.)
+# const는 선언과 동시에 초기화해야 한다 (타입 검사 단계에서 거부).
 var_decl: ['const'] var_decl_core ';'
 var_decl_core:
     | type NAME '=' initializer        # int c = 3;  Point* p = new Point(1, 2);
@@ -174,9 +176,18 @@ function_def: 'fn' NAME [type_params] '(' [parameters] ')' '->' return_type bloc
 # (파서는 compound_stmt 목록에서 시도하지만 실제 형태는 simple_stmt에 가깝다.)
 # 실행 시 프로세스의 같은 이름 C 심볼을 찾아 호출한다 (dlsym / LoadLibrary).
 extern_def: 'extern' 'fn' NAME '(' [parameters] ')' '->' return_type ';'
-type_params: '<' NAME (',' NAME)* '>'
+type_params: '<' type_param (',' type_param)* '>'
+# [D16a] 제네릭 경계. T extends Number 처럼 상위 타입을 하나 지정할 수 있다.
+# 경계는 호출/생성 시 추론된 타입 인자에 대해 검사한다 (int/float는 Number를 만족).
+type_param: NAME ['extends' type]
 parameters: parameter (',' parameter)*
-parameter: type NAME
+# [D17] 세 가지 인자 형태.
+#   parameter: type NAME
+#   기본 인자: type NAME '=' expression      (기본값을 가진 매개변수는 뒤에 와야 한다)
+#   가변 인자: 'vararg' type NAME            (남는 위치 인자를 리스트로 받는다)
+#   키워드 가변 인자: 'varkwarg' type NAME   (남는 이름 있는 인자를 딕셔너리로 받는다)
+# vararg 뒤에는 varkwarg만 올 수 있고, 각각 하나씩만 허용한다.
+parameter: ['vararg' | 'varkwarg'] type NAME ['=' expression]
 
 # export는 선언 앞에 붙인다. 모듈에서 import할 수 있게 된다.
 # (export fn/class/interface/exception/struct/typedef struct/변수)
@@ -200,12 +211,16 @@ exception_def: 'exception' NAME ['extends' NAME] ';'
 # enum Color { RED = 1, GREEN = 4 }      명시값
 # enum Shape { Circle(float r), Empty }  페이로드 변형. Shape.Circle(1.5)로 생성.
 # 멤버는 Color.RED.name / .ordinal / .value / .variant / .arity / .payload 로 읽는다.
-enum_def: 'enum' NAME '{' [enum_member (',' enum_member)* [',']] '}' [';']
+# 멤버 뒤에 ';'를 쓰면 메서드를 이어서 선언할 수 있다. 메서드는 값마다 바인딩된다.
+#   enum Color { Red, Green; public fn isWarm() -> bool { ... } }
+enum_def:
+    'enum' NAME '{' [enum_member (',' enum_member)* [',']]
+    [';' class_member*] '}'
 enum_member: NAME ['(' [param (',' param)*] ')'] ['=' expression]
 
 # ===== 클래스 =====
 
-# [D16] 제네릭 클래스. T에 제약(extends)은 없다.
+# [D16] 제네릭 클래스. 타입 매개변수에는 선택적으로 상위 타입 경계를 붙인다.
 class_def:
     'class' NAME [type_params] ['extends' named_type]
     ['implements' named_type (',' named_type)*]
@@ -294,19 +309,26 @@ for_step: assign_core | expression
 
 switch_stmt: 'switch' '(' expression ')' '{' switch_case* '}'
 switch_case:
-    | 'case' pattern block
+    | 'case' pattern ['when' expression] block
     | 'default' block                                       # PBind("_")로 표현한다
 
 # case 패턴. fallthrough가 없으므로 각 case는 자기 block을 가진다.
-# 'default'는 마지막에 한 번만 올 수 있다.
+# 'default'는 마지막에 한 번만 올 수 있다. guard('when')가 붙은 case는
+# switch 완전성 검사에서 그 변형을 처리한 것으로 치지 않는다.
 pattern:
     | INT | FLOAT | STRING | 'true' | 'false' | 'null' | '-' (INT | FLOAT)
     | NAME                                                  # 아무 값이나 받는 바인딩 (_는 와일드카드)
     | NAME ('.' NAME)* ['(' [pattern (',' pattern)* [',']] ')']   # Shape.Circle(r), Shape.Empty
+    | '[' [pattern (',' pattern)* [',']] ['*' NAME] ']'      # [a, b], [a, *rest]
+    | '{' ['**' NAME] '}'                                   # {"k": v}, {"k": v, **rest}
+    | '{' dict_pattern (',' dict_pattern)* [',' ['**' NAME]] '}'
+dict_pattern: expression ':' pattern
 
+# try 단독은 본문의 예외를 삼키고, catch가 없으면 finally만 붙일 수 있다.
 try_stmt:
     | 'try' block catch_clause+ ['finally' block]
     | 'try' block 'finally' block
+    | 'try' block
 # [D4][D14] 타입 이름은 파이썬 builtins의 예외 이름 (Exception, ValueError ...).
 # 변수 e는 포인터가 아니라 값이다 (typecheck에서 'Exception*' 등은 거부).
 catch_clause: 'catch' '(' type NAME ')' block
@@ -315,7 +337,12 @@ catch_clause: 'catch' '(' type NAME ')' block
 
 expression:
     | lambda_expr
-    | pipe_expr
+    | ternary_expr
+
+# C 스타일 삼항 연산자. 오른쪽으로 결합한다.
+#   score >= 60 ? "B" : "C"
+#   a ? b : c ? d : e  ==  a ? b : (c ? d : e)
+ternary_expr: pipe_expr ['?' expression ':' ternary_expr]
 
 # [D1][D6] 반환 타입 필수.
 #   새 문법:  매개변수 -> 반환타입 => 본문
@@ -448,4 +475,6 @@ sized_type:
     | 'struct' NAME pointer_suffix*
     | NAME &{ is_declared_type_name } [type_args] pointer_suffix*
 
-arguments: expression (',' expression)*
+# [D17] 위치 인자 뒤에 이름 있는 인자(NAME '=' expression)를 쓸 수 있다.
+arguments: argument (',' argument)*
+argument: expression | NAME '=' expression

@@ -1,0 +1,5 @@
+interface Runnable {
+    fn run(int n) -> void;
+}
+
+Runnable bad = (int n) -> int => n;

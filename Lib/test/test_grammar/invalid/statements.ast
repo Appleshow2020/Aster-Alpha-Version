@@ -49,8 +49,8 @@ import aster.time.;
 #---
 from aster.time import ;
 #---
-# from-import는 이름 하나씩
-from aster.time import a, b;
+# from-import 이름 목록은 콤마 뒤에 이름이 와야 한다
+from aster.time import a,;
 #---
 package a.b
 #---

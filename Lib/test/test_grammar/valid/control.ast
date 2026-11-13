@@ -40,6 +40,7 @@ try {
 #---
 try { } finally { }
 try { } catch (ValueError e) { } catch (KeyError e) { }
+try { }
 #---
 # throw의 세 가지 형태 [D14]
 throw "msg";

@@ -1,0 +1,13 @@
+import System.stdout.*;
+
+fn myuser(str name, int age = 20, str role = "user") -> void {
+    println(f"{name}, {age}, {role}");
+}
+
+fn printinfo<T>(vararg T args, varkwarg T kwarg) -> void {
+    println("args:", args);
+}
+
+myuser(role = "admin", name = "Asp");
+myuser("Lee", 31);
+printinfo(1, 2, x = 3);

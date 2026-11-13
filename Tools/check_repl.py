@@ -8,6 +8,8 @@ Lib/test/test_repl의 각 .in 파일을 REPL 표준 입력으로 넣고 표준 �
 사용법:
     python3 Tools/check_repl.py
     python3 Tools/check_repl.py -v
+    python3 Tools/check_repl.py --seed 1234   # 무작위 검증 재현
+    python3 Tools/check_repl.py --no-random   # 무작위 검증 생략
 """
 
 from __future__ import annotations
@@ -20,6 +22,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 REPL_DIR = ROOT / "Lib/test/test_repl"
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import random_suite  # noqa: E402
 
 
 def find_binary() -> Path:
@@ -45,6 +50,8 @@ def first_difference(expected: str, got: str) -> str:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("-v", "--verbose", action="store_true")
+    parser.add_argument("--seed", type=int, default=None, help="무작위 검증 시드 (기본: 매번 새로 뽑음)")
+    parser.add_argument("--no-random", action="store_true", help="무작위 검증을 생략한다")
     args = parser.parse_args()
 
     binary = find_binary()
@@ -89,7 +96,18 @@ def main() -> int:
 
     print()
     print(f"REPL: {total - len(failures)}/{total} 통과")
-    if failures:
+
+    random_failed = 0
+    if not args.no_random:
+        random_failed = random_suite.run_repl_random(
+            binary,
+            count=3,
+            seed=args.seed,
+            verbose=args.verbose,
+            repro="python3 Tools/check_repl.py",
+        )
+
+    if failures or random_failed:
         return 1
     print("모든 REPL 테스트 통과")
     return 0

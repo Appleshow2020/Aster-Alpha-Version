@@ -27,4 +27,9 @@ int s = sizeof(int) + sizeof(struct Point) + sizeof(int**);
 # 호출과 접근
 a.b.c(1, 2);
 p->f(1);
-self->value = new Counter()->value;
+self->value = new Counter()->value;#---
+# 삼항 연산자. 오른쪽 결합.
+str g = a > 0 ? "pos" : a < 0 ? "neg" : "zero";
+int h = a > 0 ? 1 : 2;
+int i2 = (a > 0 ? 1 : 2) + 3;
+var j = a > 0 ? b ?? 0 : c;

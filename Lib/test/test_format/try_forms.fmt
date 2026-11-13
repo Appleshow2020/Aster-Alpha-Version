@@ -1,0 +1,14 @@
+import System.stdout.*;
+fn risky() -> void {
+    throw 'boom';
+}
+try {
+    risky();
+} finally {
+    println('cleanup');
+}
+try {
+    risky();
+    println('never');
+}
+println('done');

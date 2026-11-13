@@ -1,0 +1,73 @@
+import System.stdout.*;
+
+class Animal {
+    protected str name;
+
+    constructor(str name) {
+        self->name = name;
+    }
+}
+
+class Dog extends Animal {
+    private str sound;
+
+    constructor() {
+        super("dog");
+        self->sound = "woof";
+    }
+
+    constructor(str name, str sound) {
+        super(name);
+        self->sound = sound;
+    }
+
+    public fn speak() -> str {
+        return self->sound + " " + self->name;
+    }
+}
+
+println(new Dog().speak());
+println(new Dog("rex", "bark").speak());
+
+class Box<T> {
+    T a;
+    T b;
+
+    constructor(T a) {
+        self->a = a;
+        self->b = a;
+    }
+
+    constructor(T a, T b) {
+        self->a = a;
+        self->b = b;
+    }
+
+    public fn second() -> T {
+        return self->b;
+    }
+}
+
+Box<int> one = new Box<int>(7);
+Box<str> two = new Box<str>("x", "y");
+println(one.second());
+println(two.second());
+
+/* 같은 인자 수라면 인자 타입으로 고른다. */
+class Tag {
+    str tag;
+
+    constructor(int x) {
+        self->tag = "int";
+    }
+
+    constructor(str s) {
+        self->tag = "str";
+    }
+
+    public fn show() -> str {
+        return self->tag;
+    }
+}
+
+println(new Tag(1).show(), new Tag("a").show());

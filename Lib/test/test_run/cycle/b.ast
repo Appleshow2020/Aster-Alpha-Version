@@ -1,0 +1,19 @@
+import cycle.a;
+
+export class B extends A {
+    constructor(int value) {
+        super(value);
+    }
+    public fn doubled() -> int {
+        return self->ping() * 2;
+    }
+}
+
+export fn fb(int x) -> int {
+    return x * 10;
+}
+
+export fn makeA() -> int {
+    A* p = new A(4);
+    return p->ping();
+}

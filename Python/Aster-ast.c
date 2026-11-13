@@ -62,13 +62,15 @@ stmt_ty _Aster_ClassDef(identifier name, asdl_seq *type_params, typeref_ty base,
     return p;
 }
 
-stmt_ty _Aster_InterfaceDef(identifier name, asdl_seq *methods, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena) {
+stmt_ty _Aster_InterfaceDef(identifier name, asdl_seq *type_params, asdl_seq *methods, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena) {
     stmt_ty p;
     if (!name) missing("name", "InterfaceDef");
+    if (!type_params) missing("type_params", "InterfaceDef");
     if (!methods) missing("methods", "InterfaceDef");
     p = Arena_Alloc(arena, sizeof(*p));
     p->kind = InterfaceDef_kind;
     p->v.InterfaceDef.name = name;
+    p->v.InterfaceDef.type_params = type_params;
     p->v.InterfaceDef.methods = methods;
     p->lineno = lineno;
     p->col_offset = col_offset;
@@ -111,14 +113,16 @@ stmt_ty _Aster_VarDecl(typeref_ty ty, identifier name, initializer_ty init, int 
     return p;
 }
 
-stmt_ty _Aster_EnumDef(identifier name, asdl_seq *members, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena) {
+stmt_ty _Aster_EnumDef(identifier name, asdl_seq *members, asdl_seq *methods, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena) {
     stmt_ty p;
     if (!name) missing("name", "EnumDef");
     if (!members) missing("members", "EnumDef");
+    if (!methods) missing("methods", "EnumDef");
     p = Arena_Alloc(arena, sizeof(*p));
     p->kind = EnumDef_kind;
     p->v.EnumDef.name = name;
     p->v.EnumDef.members = members;
+    p->v.EnumDef.methods = methods;
     p->lineno = lineno;
     p->col_offset = col_offset;
     p->end_lineno = end_lineno;
@@ -368,14 +372,14 @@ stmt_ty _Aster_Import(asdl_seq *path, int wildcard, identifier alias, int lineno
     return p;
 }
 
-stmt_ty _Aster_ImportFrom(asdl_seq *module, identifier name, identifier alias, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena) {
+stmt_ty _Aster_ImportFrom(asdl_seq *module, asdl_seq *names, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena) {
     stmt_ty p;
     if (!module) missing("module", "ImportFrom");
+    if (!names) missing("names", "ImportFrom");
     p = Arena_Alloc(arena, sizeof(*p));
     p->kind = ImportFrom_kind;
     p->v.ImportFrom.module = module;
-    p->v.ImportFrom.name = name;
-    p->v.ImportFrom.alias = alias;
+    p->v.ImportFrom.names = names;
     p->lineno = lineno;
     p->col_offset = col_offset;
     p->end_lineno = end_lineno;
@@ -448,6 +452,23 @@ expr_ty _Aster_Pipe(expr_ty value, expr_ty func, int lineno, int col_offset, int
     p->kind = Pipe_kind;
     p->v.Pipe.value = value;
     p->v.Pipe.func = func;
+    p->lineno = lineno;
+    p->col_offset = col_offset;
+    p->end_lineno = end_lineno;
+    p->end_col_offset = end_col_offset;
+    return p;
+}
+
+expr_ty _Aster_Ternary(expr_ty test, expr_ty body, expr_ty orelse, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena) {
+    expr_ty p;
+    if (!test) missing("test", "Ternary");
+    if (!body) missing("body", "Ternary");
+    if (!orelse) missing("orelse", "Ternary");
+    p = Arena_Alloc(arena, sizeof(*p));
+    p->kind = Ternary_kind;
+    p->v.Ternary.test = test;
+    p->v.Ternary.body = body;
+    p->v.Ternary.orelse = orelse;
     p->lineno = lineno;
     p->col_offset = col_offset;
     p->end_lineno = end_lineno;
@@ -620,14 +641,16 @@ expr_ty _Aster_SizeOf(typeref_ty ty, int lineno, int col_offset, int end_lineno,
     return p;
 }
 
-expr_ty _Aster_Call(expr_ty func, asdl_seq *args, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena) {
+expr_ty _Aster_Call(expr_ty func, asdl_seq *args, asdl_seq *keywords, int lineno, int col_offset, int end_lineno, int end_col_offset, Arena *arena) {
     expr_ty p;
     if (!func) missing("func", "Call");
     if (!args) missing("args", "Call");
+    if (!keywords) missing("keywords", "Call");
     p = Arena_Alloc(arena, sizeof(*p));
     p->kind = Call_kind;
     p->v.Call.func = func;
     p->v.Call.args = args;
+    p->v.Call.keywords = keywords;
     p->lineno = lineno;
     p->col_offset = col_offset;
     p->end_lineno = end_lineno;
@@ -1040,13 +1063,43 @@ ret_ty _Aster_ValueRet(typeref_ty ty, Arena *arena) {
     return p;
 }
 
-param_ty _Aster_param(typeref_ty ty, identifier name, Arena *arena) {
+type_param_ty _Aster_type_param(identifier name, typeref_ty bound, Arena *arena) {
+    type_param_ty p;
+    if (!name) missing("name", "type_param");
+    p = Arena_Alloc(arena, sizeof(*p));
+    p->name = name;
+    p->bound = bound;
+    return p;
+}
+
+param_ty _Aster_param(typeref_ty ty, identifier name, expr_ty default_value, int variadic, Arena *arena) {
     param_ty p;
     if (!ty) missing("ty", "param");
     if (!name) missing("name", "param");
     p = Arena_Alloc(arena, sizeof(*p));
     p->ty = ty;
     p->name = name;
+    p->default_value = default_value;
+    p->variadic = variadic;
+    return p;
+}
+
+keyword_ty _Aster_keyword(identifier name, expr_ty value, Arena *arena) {
+    keyword_ty p;
+    if (!name) missing("name", "keyword");
+    if (!value) missing("value", "keyword");
+    p = Arena_Alloc(arena, sizeof(*p));
+    p->name = name;
+    p->value = value;
+    return p;
+}
+
+import_name_ty _Aster_import_name(identifier name, identifier alias, Arena *arena) {
+    import_name_ty p;
+    if (!name) missing("name", "import_name");
+    p = Arena_Alloc(arena, sizeof(*p));
+    p->name = name;
+    p->alias = alias;
     return p;
 }
 
@@ -1106,12 +1159,13 @@ enum_member_ty _Aster_enum_member(identifier name, asdl_seq *params, expr_ty val
     return p;
 }
 
-match_case_ty _Aster_match_case(match_pattern_ty pattern, asdl_seq *body, Arena *arena) {
+match_case_ty _Aster_match_case(match_pattern_ty pattern, expr_ty guard, asdl_seq *body, Arena *arena) {
     match_case_ty p;
     if (!pattern) missing("pattern", "match_case");
     if (!body) missing("body", "match_case");
     p = Arena_Alloc(arena, sizeof(*p));
     p->pattern = pattern;
+    p->guard = guard;
     p->body = body;
     return p;
 }
@@ -1142,6 +1196,36 @@ match_pattern_ty _Aster_PBind(identifier name, Arena *arena) {
     p = Arena_Alloc(arena, sizeof(*p));
     p->kind = PBind_kind;
     p->v.PBind.name = name;
+    return p;
+}
+
+match_pattern_ty _Aster_PList(asdl_seq *items, identifier rest, Arena *arena) {
+    match_pattern_ty p;
+    if (!items) missing("items", "PList");
+    p = Arena_Alloc(arena, sizeof(*p));
+    p->kind = PList_kind;
+    p->v.PList.items = items;
+    p->v.PList.rest = rest;
+    return p;
+}
+
+match_pattern_ty _Aster_PDict(asdl_seq *items, identifier rest, Arena *arena) {
+    match_pattern_ty p;
+    if (!items) missing("items", "PDict");
+    p = Arena_Alloc(arena, sizeof(*p));
+    p->kind = PDict_kind;
+    p->v.PDict.items = items;
+    p->v.PDict.rest = rest;
+    return p;
+}
+
+pdict_item_ty _Aster_pdict_item(expr_ty key, match_pattern_ty value, Arena *arena) {
+    pdict_item_ty p;
+    if (!key) missing("key", "pdict_item");
+    if (!value) missing("value", "pdict_item");
+    p = Arena_Alloc(arena, sizeof(*p));
+    p->key = key;
+    p->value = value;
     return p;
 }
 
@@ -1352,8 +1436,14 @@ static void dump_prim(FILE *out, prim_ty n);
 static inline void dumpv_prim(FILE *out, void *p) { dump_prim(out, (prim_ty)p); }
 static void dump_ret(FILE *out, ret_ty n);
 static inline void dumpv_ret(FILE *out, void *p) { dump_ret(out, (ret_ty)p); }
+static void dump_type_param(FILE *out, type_param_ty n);
+static inline void dumpv_type_param(FILE *out, void *p) { dump_type_param(out, (type_param_ty)p); }
 static void dump_param(FILE *out, param_ty n);
 static inline void dumpv_param(FILE *out, void *p) { dump_param(out, (param_ty)p); }
+static void dump_keyword(FILE *out, keyword_ty n);
+static inline void dumpv_keyword(FILE *out, void *p) { dump_keyword(out, (keyword_ty)p); }
+static void dump_import_name(FILE *out, import_name_ty n);
+static inline void dumpv_import_name(FILE *out, void *p) { dump_import_name(out, (import_name_ty)p); }
 static void dump_lparam(FILE *out, lparam_ty n);
 static inline void dumpv_lparam(FILE *out, void *p) { dump_lparam(out, (lparam_ty)p); }
 static void dump_signature(FILE *out, signature_ty n);
@@ -1368,6 +1458,8 @@ static void dump_match_case(FILE *out, match_case_ty n);
 static inline void dumpv_match_case(FILE *out, void *p) { dump_match_case(out, (match_case_ty)p); }
 static void dump_match_pattern(FILE *out, match_pattern_ty n);
 static inline void dumpv_match_pattern(FILE *out, void *p) { dump_match_pattern(out, (match_pattern_ty)p); }
+static void dump_pdict_item(FILE *out, pdict_item_ty n);
+static inline void dumpv_pdict_item(FILE *out, void *p) { dump_pdict_item(out, (pdict_item_ty)p); }
 static void dump_initializer(FILE *out, initializer_ty n);
 static inline void dumpv_initializer(FILE *out, void *p) { dump_initializer(out, (initializer_ty)p); }
 static void dump_designation(FILE *out, designation_ty n);
@@ -1413,7 +1505,7 @@ static void dump_stmt(FILE *out, stmt_ty n) {
         fputs("name=", out);
         dump_identifier(out, n->v.FunctionDef.name);
         fputs(", type_params=", out);
-        dump_seq(out, n->v.FunctionDef.type_params, dumpv_identifier);
+        dump_seq(out, n->v.FunctionDef.type_params, dumpv_type_param);
         fputs(", params=", out);
         dump_seq(out, n->v.FunctionDef.params, dumpv_param);
         fputs(", returns=", out);
@@ -1429,7 +1521,7 @@ static void dump_stmt(FILE *out, stmt_ty n) {
         fputs("name=", out);
         dump_identifier(out, n->v.ClassDef.name);
         fputs(", type_params=", out);
-        dump_seq(out, n->v.ClassDef.type_params, dumpv_identifier);
+        dump_seq(out, n->v.ClassDef.type_params, dumpv_type_param);
         fputs(", base=", out);
         dump_typeref(out, n->v.ClassDef.base);
         fputs(", interfaces=", out);
@@ -1442,6 +1534,8 @@ static void dump_stmt(FILE *out, stmt_ty n) {
         fputs("InterfaceDef(", out);
         fputs("name=", out);
         dump_identifier(out, n->v.InterfaceDef.name);
+        fputs(", type_params=", out);
+        dump_seq(out, n->v.InterfaceDef.type_params, dumpv_type_param);
         fputs(", methods=", out);
         dump_seq(out, n->v.InterfaceDef.methods, dumpv_signature);
         fputc(')', out);
@@ -1474,6 +1568,8 @@ static void dump_stmt(FILE *out, stmt_ty n) {
         dump_identifier(out, n->v.EnumDef.name);
         fputs(", members=", out);
         dump_seq(out, n->v.EnumDef.members, dumpv_enum_member);
+        fputs(", methods=", out);
+        dump_seq(out, n->v.EnumDef.methods, dumpv_member);
         fputc(')', out);
         break;
     case Destructure_kind:
@@ -1614,10 +1710,8 @@ static void dump_stmt(FILE *out, stmt_ty n) {
         fputs("ImportFrom(", out);
         fputs("module=", out);
         dump_seq(out, n->v.ImportFrom.module, dumpv_identifier);
-        fputs(", name=", out);
-        dump_identifier(out, n->v.ImportFrom.name);
-        fputs(", alias=", out);
-        dump_identifier(out, n->v.ImportFrom.alias);
+        fputs(", names=", out);
+        dump_seq(out, n->v.ImportFrom.names, dumpv_import_name);
         fputc(')', out);
         break;
     case Export_kind:
@@ -1662,6 +1756,16 @@ static void dump_expr(FILE *out, expr_ty n) {
         dump_expr(out, n->v.Pipe.value);
         fputs(", func=", out);
         dump_expr(out, n->v.Pipe.func);
+        fputc(')', out);
+        break;
+    case Ternary_kind:
+        fputs("Ternary(", out);
+        fputs("test=", out);
+        dump_expr(out, n->v.Ternary.test);
+        fputs(", body=", out);
+        dump_expr(out, n->v.Ternary.body);
+        fputs(", orelse=", out);
+        dump_expr(out, n->v.Ternary.orelse);
         fputc(')', out);
         break;
     case Coalesce_kind:
@@ -1758,6 +1862,8 @@ static void dump_expr(FILE *out, expr_ty n) {
         dump_expr(out, n->v.Call.func);
         fputs(", args=", out);
         dump_seq(out, n->v.Call.args, dumpv_expr);
+        fputs(", keywords=", out);
+        dump_seq(out, n->v.Call.keywords, dumpv_keyword);
         fputc(')', out);
         break;
     case New_kind:
@@ -2020,6 +2126,16 @@ static void dump_ret(FILE *out, ret_ty n) {
     }
 }
 
+static void dump_type_param(FILE *out, type_param_ty n) {
+    if (!n) { fputs("None", out); return; }
+    fputs("type_param(", out);
+    fputs("name=", out);
+    dump_identifier(out, n->name);
+    fputs(", bound=", out);
+    dump_typeref(out, n->bound);
+    fputc(')', out);
+}
+
 static void dump_param(FILE *out, param_ty n) {
     if (!n) { fputs("None", out); return; }
     fputs("param(", out);
@@ -2027,6 +2143,30 @@ static void dump_param(FILE *out, param_ty n) {
     dump_typeref(out, n->ty);
     fputs(", name=", out);
     dump_identifier(out, n->name);
+    fputs(", default_value=", out);
+    dump_expr(out, n->default_value);
+    fputs(", variadic=", out);
+    dump_int(out, n->variadic);
+    fputc(')', out);
+}
+
+static void dump_keyword(FILE *out, keyword_ty n) {
+    if (!n) { fputs("None", out); return; }
+    fputs("keyword(", out);
+    fputs("name=", out);
+    dump_identifier(out, n->name);
+    fputs(", value=", out);
+    dump_expr(out, n->value);
+    fputc(')', out);
+}
+
+static void dump_import_name(FILE *out, import_name_ty n) {
+    if (!n) { fputs("None", out); return; }
+    fputs("import_name(", out);
+    fputs("name=", out);
+    dump_identifier(out, n->name);
+    fputs(", alias=", out);
+    dump_identifier(out, n->alias);
     fputc(')', out);
 }
 
@@ -2095,6 +2235,8 @@ static void dump_match_case(FILE *out, match_case_ty n) {
     fputs("match_case(", out);
     fputs("pattern=", out);
     dump_match_pattern(out, n->pattern);
+    fputs(", guard=", out);
+    dump_expr(out, n->guard);
     fputs(", body=", out);
     dump_seq(out, n->body, dumpv_stmt);
     fputc(')', out);
@@ -2123,7 +2265,33 @@ static void dump_match_pattern(FILE *out, match_pattern_ty n) {
         dump_identifier(out, n->v.PBind.name);
         fputc(')', out);
         break;
+    case PList_kind:
+        fputs("PList(", out);
+        fputs("items=", out);
+        dump_seq(out, n->v.PList.items, dumpv_match_pattern);
+        fputs(", rest=", out);
+        dump_identifier(out, n->v.PList.rest);
+        fputc(')', out);
+        break;
+    case PDict_kind:
+        fputs("PDict(", out);
+        fputs("items=", out);
+        dump_seq(out, n->v.PDict.items, dumpv_pdict_item);
+        fputs(", rest=", out);
+        dump_identifier(out, n->v.PDict.rest);
+        fputc(')', out);
+        break;
     }
+}
+
+static void dump_pdict_item(FILE *out, pdict_item_ty n) {
+    if (!n) { fputs("None", out); return; }
+    fputs("pdict_item(", out);
+    fputs("key=", out);
+    dump_expr(out, n->key);
+    fputs(", value=", out);
+    dump_match_pattern(out, n->value);
+    fputc(')', out);
 }
 
 static void dump_initializer(FILE *out, initializer_ty n) {
@@ -2197,7 +2365,7 @@ static void dump_member(FILE *out, member_ty n) {
         fputs(", name=", out);
         dump_identifier(out, n->v.Method.name);
         fputs(", type_params=", out);
-        dump_seq(out, n->v.Method.type_params, dumpv_identifier);
+        dump_seq(out, n->v.Method.type_params, dumpv_type_param);
         fputs(", params=", out);
         dump_seq(out, n->v.Method.params, dumpv_param);
         fputs(", returns=", out);

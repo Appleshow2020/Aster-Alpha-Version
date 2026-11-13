@@ -1,0 +1,4 @@
+import cycle.counter;
+import cycle.other;
+
+export int BASE = other.SEED + 1;

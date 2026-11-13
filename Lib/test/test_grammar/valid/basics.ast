@@ -50,6 +50,7 @@ import aster.time.LocalTime;
 from aster.time import LocalTime;
 import aster.lang.String.*;
 from aster.lang.String import *;
+from aster.time import LocalTime, DayOfWeek as Dow;
 #---
 # 포인터: 주소, 역참조, 대입
 int v = 3;

@@ -1,0 +1,19 @@
+import System.stdout.*;
+import p6lib.base.*;
+
+class Dog extends Animal implements Greeter {
+    constructor(str n) {
+        super(n);
+    }
+
+    public fn greet() -> str {
+        return "woof " + self->name;
+    }
+}
+
+Dog* d = new Dog("rex");
+println(d->speak());
+println(d->greet());
+
+Greeter g = d;
+println(g->greet());

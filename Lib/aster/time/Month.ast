@@ -1,5 +1,6 @@
 /* aster.time.Month: 달 (1월 = 1, 12월 = 12).
-   열거형에는 메서드를 둘 수 없으므로 값 변환은 컴패니언 함수로 제공한다. */
+   Java의 인스턴스 메서드는 enum 메서드로 제공하고, 정적 of(...)에 해당하는
+   생성 헬퍼만 컴패니언 함수로 둔다. */
 
 enum Month {
     JANUARY,
@@ -13,7 +14,42 @@ enum Month {
     SEPTEMBER,
     OCTOBER,
     NOVEMBER,
-    DECEMBER
+    DECEMBER;
+
+    /* Java Month.getValue(): 1..12. */
+    public fn getValue() -> int {
+        return self.ordinal + 1;
+    }
+
+    /* Java Month.length(boolean leapYear). */
+    public fn length(bool leap) -> int {
+        return monthLength(self, leap);
+    }
+
+    /* Java Month.firstDayOfYear(boolean leapYear). */
+    public fn firstDayOfYear(bool leap) -> int {
+        return monthFirstDayOfYear(self, leap);
+    }
+
+    /* Java Month.plus(long). */
+    public fn plus(int months) -> Month {
+        return monthPlus(self, months);
+    }
+
+    /* Java Month.minus(long). */
+    public fn minus(int months) -> Month {
+        return monthMinus(self, months);
+    }
+
+    /* 영어 전체 이름 (January ... December). */
+    public fn fullName() -> str {
+        return monthFullName(self);
+    }
+
+    /* 영어 3글자 이름 (Jan ... Dec). */
+    public fn shortName() -> str {
+        return monthShortName(self);
+    }
 }
 
 /* 1..12 값. */

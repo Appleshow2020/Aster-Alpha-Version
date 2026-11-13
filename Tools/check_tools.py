@@ -11,6 +11,8 @@ test_debug:  X.in을 표준 입력으로 --debug를 실행해 stdout이 X.out과
 사용법:
     python3 Tools/check_tools.py
     python3 Tools/check_tools.py -v
+    python3 Tools/check_tools.py --seed 1234   # 무작위 검증 재현
+    python3 Tools/check_tools.py --no-random   # 무작위 검증 생략
 """
 
 from __future__ import annotations
@@ -22,6 +24,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import random_suite  # noqa: E402
 
 
 def find_binary() -> Path:
@@ -141,6 +146,8 @@ def check_debug(binary: Path, verbose: bool) -> list[tuple[str, list[str]]]:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("-v", "--verbose", action="store_true")
+    parser.add_argument("--seed", type=int, default=None, help="무작위 검증 시드 (기본: 매번 새로 뽑음)")
+    parser.add_argument("--no-random", action="store_true", help="무작위 검증을 생략한다")
     args = parser.parse_args()
 
     binary = find_binary()
@@ -161,7 +168,21 @@ def main() -> int:
 
     print()
     print(f"도구 테스트: {total - len(failures)}/{total} 통과")
-    if failures:
+
+    random_failed = 0
+    if not args.no_random:
+        seed = args.seed if args.seed is not None else random_suite.default_seed()
+        random_failed = random_suite.run_random(
+            binary,
+            count=len(random_suite.CATEGORIES),
+            seed=seed,
+            property_only=True,
+            verbose=args.verbose,
+            label="도구 무작위",
+            repro="python3 Tools/check_tools.py",
+        )
+
+    if failures or random_failed:
         return 1
     print("모든 도구 테스트 통과")
     return 0

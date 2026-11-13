@@ -20,8 +20,6 @@ for (;;) { }
 #---
 for (int i; i = 1) { }
 #---
-try { }
-#---
 catch (Exception e) { }
 #---
 try { } catch (Exception) { }

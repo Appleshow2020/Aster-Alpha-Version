@@ -1,8 +1,5 @@
 class A { };
 #---
-# 제네릭에 제약은 없다 [D16]
-class Box<T extends X> {}
-#---
 # 생성자는 반환 타입을 쓰지 않는다
 class A { constructor() -> void { } }
 #---
