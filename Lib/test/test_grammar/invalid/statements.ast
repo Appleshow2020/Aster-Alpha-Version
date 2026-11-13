@@ -59,3 +59,38 @@ public int x;
 #---
 # 키워드는 이름이 될 수 없다
 int class = 1;
+#---
+# 일반 문장은 ';' 없이 끝날 수 없다
+x = 1
+#---
+f()
+#---
+return 1
+#---
+break
+#---
+continue
+#---
+throw "msg"
+#---
+throw "msg" as ValueError
+#---
+assert true
+#---
+yield 1
+#---
+import System
+#---
+from aster.time import LocalDate
+#---
+const int X = 1
+#---
+class A { public int x }
+#---
+interface I { fn f() -> int }
+#---
+extern fn strlen(str s) -> int
+#---
+struct S { int x; }
+#---
+typedef struct S { int x; } T

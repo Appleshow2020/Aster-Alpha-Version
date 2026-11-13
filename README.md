@@ -268,8 +268,16 @@ python3 Tools/check_random.py --count 50
 python3 Tools/check_random.py --seed 1234 --keep
 ```
 
-`--seed`는 모든 검사 스크립트가 받으며, `ASTER_TEST_SEED` 환경 변수로도 고정할
-수 있습니다.
+`--seed`는 무작위 검증을 수행하는 검사 스크립트가 받습니다. Makefile을 통해
+고정하면 `--seed`를 지원하는 스크립트에만 자동으로 전달되고, 고정 코퍼스만
+검사하는 `check_lib.py`는 자동으로 건너뜁니다.
+
+```sh
+make check SEED=1234
+make check SEED=1234 VERBOSE=1
+```
+
+`ASTER_TEST_SEED` 환경 변수로도 고정할 수 있습니다.
 
 ```sh
 ASTER_TEST_SEED=1234 make check

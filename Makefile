@@ -63,20 +63,29 @@ $(BIN): $(SRCS) $(HEADERS)
 VERBOSE ?= $(V)
 CHECK_FLAGS = $(if $(filter 1 yes true on,$(VERBOSE)),-v,)
 
+# --seed를 지원하는 검사 스크립트에만 시드를 전달한다. 무작위 검증이 없는
+# check_lib.py는 제외한다. ASTER_TEST_SEED도 함께 내보내므로 random_suite를
+# 쓰는 스크립트는 플래그 없이도 같은 시드를 자동으로 사용한다.
+SEED ?=
+ifneq ($(strip $(SEED)),)
+SEED_ARG = --seed $(SEED)
+export ASTER_TEST_SEED = $(SEED)
+endif
+
 check: $(BIN)
-	$(PYTHON) Tools/check_frontend.py $(CHECK_FLAGS)
-	$(PYTHON) Tools/check_runtime.py $(CHECK_FLAGS)
+	$(PYTHON) Tools/check_frontend.py $(SEED_ARG) $(CHECK_FLAGS)
+	$(PYTHON) Tools/check_runtime.py $(SEED_ARG) $(CHECK_FLAGS)
 	$(PYTHON) Tools/check_lib.py $(CHECK_FLAGS)
-	$(PYTHON) Tools/check_repl.py $(CHECK_FLAGS)
-	$(PYTHON) Tools/check_tools.py $(CHECK_FLAGS)
-	$(PYTHON) Tools/check_random.py $(CHECK_FLAGS)
-	$(PYTHON) Tools/check_java.py $(CHECK_FLAGS)
+	$(PYTHON) Tools/check_repl.py $(SEED_ARG) $(CHECK_FLAGS)
+	$(PYTHON) Tools/check_tools.py $(SEED_ARG) $(CHECK_FLAGS)
+	$(PYTHON) Tools/check_random.py $(SEED_ARG) $(CHECK_FLAGS)
+	$(PYTHON) Tools/check_java.py $(SEED_ARG) $(CHECK_FLAGS)
 
 check-v:
 	$(MAKE) check VERBOSE=1
 
 check-java: $(BIN)
-	$(PYTHON) Tools/check_java.py --require-jdk $(CHECK_FLAGS)
+	$(PYTHON) Tools/check_java.py --require-jdk $(SEED_ARG) $(CHECK_FLAGS)
 
 regen:
 	$(PYTHON) Tools/build/generate_token.py Grammar/Tokens Include/internal/token.h Parser/token.c
